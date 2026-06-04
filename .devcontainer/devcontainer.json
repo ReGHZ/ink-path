@@ -1,0 +1,49 @@
+{
+  "name": "ink-path",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "node",
+
+  "forwardPorts": [4004, 9229, 15672, 6333],
+
+  "portsAttributes": {
+    "4004": {
+      "label": "Hono API",
+      "onAutoForward": "notify"
+    },
+    "9229": {
+      "label": "Node Inspector"
+    },
+    "15672": {
+      "label": "RabbitMQ Management"
+    },
+    "6333": {
+      "label": "Qdrant API / Dashboard"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Prisma.prisma",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "EditorConfig.EditorConfig",
+        "streetsidesoftware.code-spell-checker",
+        "usernamehw.errorlens",
+        "mikestead.dotenv",
+        "redhat.vscode-yaml",
+        "humao.rest-client"
+      ],
+      "settings": {
+        "js/ts.tsdk.path": "node_modules/typescript/lib",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "eslint.validate": ["javascript", "typescript"],
+        "files.eol": "\n"
+      }
+    }
+  }
+}
