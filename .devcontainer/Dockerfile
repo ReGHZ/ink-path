@@ -18,13 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fzf \
     zsh-autosuggestions \
     zsh-syntax-highlighting \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable
 
-RUN mkdir -p /home/node/.local/share/pnpm/store \
+RUN mkdir -p \
+    /home/node/.local/share/pnpm/store \
     /home/node/.cache/zsh \
-    && chown -R node:node /home/node
+    /workspace/node_modules \
+    && chown -R node:node /home/node /workspace
+
+RUN echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \
+    && chmod 0440 /etc/sudoers.d/node
 
 RUN chsh -s /usr/bin/zsh node
 
