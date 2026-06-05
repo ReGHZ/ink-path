@@ -41,7 +41,7 @@ function shutdown(signal: NodeJS.Signals) {
 
   server.close(async (error?: Error | null) => {
     if (error) {
-      logger.error(error, "Failed to close API server gracefully.");
+      logger.error({ err: error }, "Failed to close API server gracefully.");
       process.exit(1);
     }
 
@@ -50,7 +50,7 @@ function shutdown(signal: NodeJS.Signals) {
       await prisma.$disconnect();
       logger.info("Prisma disconnected successfully.");
     } catch (disconnectError) {
-      logger.error(disconnectError, "Failed to disconnect Prisma.");
+      logger.error({ err: disconnectError }, "Failed to disconnect Prisma.");
     }
 
     process.exit(0);
