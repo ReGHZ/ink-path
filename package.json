@@ -1,6 +1,6 @@
 {
   "name": "ink-path",
-  "version": "0.1",
+  "version": "0.0.1",
   "description": "writing tools backend",
   "scripts": {
     "dev": "tsx watch src/api.ts",
