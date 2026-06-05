@@ -1,14 +1,25 @@
 import {
-    createContainer,
-    InjectionMode,
-    type AwilixContainer,
-} from 'awilix'
+  createContainer,
+  InjectionMode,
+  asFunction,
+  type AwilixContainer,
+} from "awilix";
 
-export type AppCradle = Record<never, never>
+import { createPrismaClient } from "./prisma.js";
+
+import type { PrismaClient } from "../generated/prisma/client.js";
+
+export type AppCradle = {
+  prisma: PrismaClient;
+};
 
 export function createAppContainer(): AwilixContainer<AppCradle> {
-    return createContainer<AppCradle>({
-        injectionMode: InjectionMode.PROXY,
-        strict: true,
-    })
+  const container = createContainer<AppCradle>({
+    injectionMode: InjectionMode.PROXY,
+    strict: true,
+  });
+
+  container.register("prisma", asFunction(createPrismaClient).singleton());
+
+  return container;
 }

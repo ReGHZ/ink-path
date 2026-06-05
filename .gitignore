@@ -65,3 +65,4 @@ docker-compose.override.yml
 
 # Package manager
 .pnpm-debug.log
+/src/generated/prisma

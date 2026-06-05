@@ -39,10 +39,18 @@ const server = serve(
 function shutdown(signal: NodeJS.Signals) {
   logger.info(`Received ${signal}. Shutting down API server.`);
 
-  server.close((error?: Error | null) => {
+  server.close(async (error?: Error | null) => {
     if (error) {
       logger.error(error, "Failed to close API server gracefully.");
       process.exit(1);
+    }
+
+    try {
+      const prisma = container.resolve("prisma");
+      await prisma.$disconnect();
+      logger.info("Prisma disconnected successfully.");
+    } catch (disconnectError) {
+      logger.error(disconnectError, "Failed to disconnect Prisma.");
     }
 
     process.exit(0);
