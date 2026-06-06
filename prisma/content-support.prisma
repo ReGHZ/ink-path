@@ -1,0 +1,76 @@
+enum ContentEntityType {
+  layer
+  map
+  character
+  faction
+  world_element
+  event
+  plot
+  chapter
+}
+
+enum ContentRevisionChangeType {
+  create
+  update
+  delete
+}
+
+model ContentRevision {
+  id                String                    @id @default(uuid()) @db.Uuid
+  projectId         String                    @map("project_id") @db.Uuid
+  entityType        ContentEntityType         @map("entity_type")
+  entityId          String                    @map("entity_id") @db.Uuid
+  revisionNumber    Int                       @map("revision_number")
+  changedByUserId   String                    @map("changed_by_user_id") @db.Uuid
+  changeType        ContentRevisionChangeType @map("change_type")
+  summary           String?                   @db.Text
+  reason            String?                   @db.Text
+  beforeSnapshot    Json?                     @map("before_snapshot")
+  afterSnapshot     Json?                     @map("after_snapshot")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  changedByUser User    @relation(fields: [changedByUserId], references: [id], onDelete: Restrict)
+
+  // back-references dari current_revision_id di setiap content entity
+  currentLayer        Layer[]        @relation("LayerCurrentRevision")
+  currentMap          Map[]          @relation("MapCurrentRevision")
+  currentCharacter    Character[]    @relation("CharacterCurrentRevision")
+  currentFaction      Faction[]      @relation("FactionCurrentRevision")
+  currentWorldElement WorldElement[] @relation("WorldElementCurrentRevision")
+  currentEvent        Event[]        @relation("EventCurrentRevision")
+  currentPlot         Plot[]         @relation("PlotCurrentRevision")
+  currentChapter      Chapter[]      @relation("ChapterCurrentRevision")
+
+  aiUsageLogs AiUsageLog[]
+
+  @@unique([projectId, entityType, entityId, revisionNumber])
+  @@index([projectId])
+  @@index([projectId, entityType, entityId])
+  @@map("content_revisions")
+}
+
+model ContentRelationship {
+  id               String            @id @default(uuid()) @db.Uuid
+  projectId        String            @map("project_id") @db.Uuid
+  sourceEntityType ContentEntityType @map("source_entity_type")
+  sourceEntityId   String            @map("source_entity_id") @db.Uuid
+  targetEntityType ContentEntityType @map("target_entity_type")
+  targetEntityId   String            @map("target_entity_id") @db.Uuid
+  relationType     String            @map("relation_type")
+  note             String?           @db.Text
+  createdByUserId  String?           @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, relationType, sourceEntityType, sourceEntityId, targetEntityType, targetEntityId])
+  @@index([projectId])
+  @@index([projectId, sourceEntityType, sourceEntityId])
+  @@index([projectId, targetEntityType, targetEntityId])
+  @@index([projectId, relationType])
+  @@index([createdByUserId])
+  @@map("content_relationships")
+}

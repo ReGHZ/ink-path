@@ -1,0 +1,121 @@
+enum OutboxEventStatus {
+  pending
+  processing
+  published
+  failed
+  dead_lettered
+}
+
+enum DeadLetterEventStatus {
+  open
+  replayed
+  ignored
+  replay_failed
+}
+
+enum DeadLetterFailureSource {
+  outbox_publish
+}
+
+model OutboxEvent {
+  id                String            @id @default(uuid()) @db.Uuid
+  eventType         String            @map("event_type")
+  eventVersion      Int               @default(1) @map("event_version")
+  aggregateType     String            @map("aggregate_type")
+  aggregateId       String            @map("aggregate_id") @db.Uuid
+  projectId         String?           @map("project_id") @db.Uuid
+  triggeredByUserId String?           @map("triggered_by_user_id") @db.Uuid
+  payload           Json
+  status            OutboxEventStatus @default(pending)
+  routingKey        String            @map("routing_key")
+  exchange          String
+  retryCount        Int               @default(0) @map("retry_count")
+  maxRetries        Int               @default(10) @map("max_retries")
+  nextRetryAt       DateTime?         @map("next_retry_at")
+  lastErrorCode     String?           @map("last_error_code")
+  lastErrorMessage  String?           @map("last_error_message") @db.Text
+  lockedAt          DateTime?         @map("locked_at")
+  lockedBy          String?           @map("locked_by")
+  publishedAt       DateTime?         @map("published_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  project         Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  triggeredByUser User?    @relation(fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+
+  deadLetterEvents         DeadLetterEvent[] @relation("DeadLetterOutboxEvent")
+  rootDeadLetterEvents     DeadLetterEvent[] @relation("DeadLetterRootOutboxEvent")
+  replayedDeadLetterEvents DeadLetterEvent[] @relation("DeadLetterReplayedAsOutboxEvent")
+
+  @@index([status, createdAt])
+  @@index([status, nextRetryAt, createdAt])
+  @@index([eventType, createdAt])
+  @@index([eventType, status, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@index([projectId, createdAt])
+  @@index([triggeredByUserId, createdAt])
+  @@index([publishedAt])
+  @@map("outbox_events")
+}
+
+model DeadLetterEvent {
+  id                         String                  @id @default(uuid()) @db.Uuid
+
+  outboxEventId              String                  @map("outbox_event_id") @db.Uuid
+  rootOutboxEventId          String                  @map("root_outbox_event_id") @db.Uuid
+  replayedFromDeadLetterId   String?                 @map("replayed_from_dead_letter_id") @db.Uuid
+
+  failureSource              DeadLetterFailureSource @map("failure_source")
+
+  eventType                  String                  @map("event_type")
+  eventVersion               Int                     @map("event_version")
+  aggregateType              String                  @map("aggregate_type")
+  aggregateId                String                  @map("aggregate_id") @db.Uuid
+  projectId                  String?                 @map("project_id") @db.Uuid
+  triggeredByUserId          String?                 @map("triggered_by_user_id") @db.Uuid
+
+  exchange                   String
+  routingKey                 String                  @map("routing_key")
+  payload                    Json
+
+  retryCount                 Int                     @map("retry_count")
+  maxRetries                 Int                     @map("max_retries")
+
+  lastErrorCode              String?                 @map("last_error_code")
+  lastErrorMessage           String?                 @map("last_error_message") @db.Text
+  failedAt                   DateTime                @map("failed_at")
+
+  status                     DeadLetterEventStatus   @default(open)
+
+  replayAttemptCount         Int                     @default(0) @map("replay_attempt_count")
+  maxReplayAttempts          Int                     @default(1) @map("max_replay_attempts")
+
+  replayedAsOutboxEventId    String?                 @map("replayed_as_outbox_event_id") @db.Uuid
+
+  replayedAt                 DateTime?               @map("replayed_at")
+  ignoredAt                  DateTime?               @map("ignored_at")
+
+  lastReplayErrorCode        String?                 @map("last_replay_error_code")
+  lastReplayErrorMessage     String?                 @map("last_replay_error_message") @db.Text
+
+  createdAt                  DateTime                @default(now()) @map("created_at")
+  updatedAt                  DateTime                @updatedAt @map("updated_at")
+
+  outboxEvent                OutboxEvent             @relation("DeadLetterOutboxEvent", fields: [outboxEventId], references: [id], onDelete: Restrict)
+  rootOutboxEvent            OutboxEvent             @relation("DeadLetterRootOutboxEvent", fields: [rootOutboxEventId], references: [id], onDelete: Restrict)
+  replayedAsOutboxEvent      OutboxEvent?            @relation("DeadLetterReplayedAsOutboxEvent", fields: [replayedAsOutboxEventId], references: [id], onDelete: Restrict)
+
+  replayedFromDeadLetter     DeadLetterEvent?        @relation("DeadLetterReplayChain", fields: [replayedFromDeadLetterId], references: [id], onDelete: SetNull)
+  replayedDeadLetters        DeadLetterEvent[]       @relation("DeadLetterReplayChain")
+
+  project                    Project?                @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  triggeredByUser            User?                   @relation(fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+
+  @@index([outboxEventId])
+  @@index([rootOutboxEventId])
+  @@index([status, createdAt])
+  @@index([projectId, createdAt])
+  @@index([status, rootOutboxEventId])
+
+  @@map("dead_letter_events")
+}

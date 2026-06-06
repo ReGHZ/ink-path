@@ -1,0 +1,97 @@
+enum UserStatus {
+  active
+  disabled
+  deleted
+}
+
+enum RefreshTokenRevokedReason {
+  logout
+  rotation_reuse_detected
+  manual_revoke
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique @db.Citext
+  username        String?    @unique @db.Citext
+  passwordHash    String?    @map("password_hash")
+  displayName     String?    @map("display_name")
+  avatarUrl       String?    @map("avatar_url")
+  status          UserStatus @default(active)
+  emailVerifiedAt DateTime?  @map("email_verified_at")
+  lastLoginAt     DateTime?  @map("last_login_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  refreshTokens RefreshToken[]
+
+  // project.prisma back-references
+  ownedProjects   Project[] @relation("ProjectOwner")
+  createdProjects Project[] @relation("ProjectCreatedBy")
+
+  projectMemberships        UserProject[] @relation("UserProjectMember")
+  invitedProjectMemberships UserProject[] @relation("UserProjectInvitedBy")
+
+  projectInvitationsReceived ProjectInvitation[] @relation("ProjectInvitationInvitedUser")
+  projectInvitationsSent     ProjectInvitation[] @relation("ProjectInvitationInvitedBy")
+  projectInvitationsAccepted ProjectInvitation[] @relation("ProjectInvitationAcceptedBy")
+
+  ownershipTransfersFrom      ProjectOwnershipTransfer[] @relation("OwnershipTransferFromUser")
+  ownershipTransfersTo        ProjectOwnershipTransfer[] @relation("OwnershipTransferToUser")
+  ownershipTransfersRequested ProjectOwnershipTransfer[] @relation("OwnershipTransferRequestedBy")
+
+  // content domain back-references
+  layers               Layer[]
+  maps                 Map[]
+  worldElements        WorldElement[]
+  events               Event[]
+  characters           Character[]
+  factions             Faction[]
+  plots                Plot[]
+  chapters             Chapter[]
+  contentRevisions     ContentRevision[]
+  contentRelationships ContentRelationship[]
+
+  // ai domain back-references
+  validationRequests ValidationRequest[]
+  chatSessions       ChatSession[]
+  chatMessages       ChatMessage[]
+  aiUsageLogs        AiUsageLog[]
+
+  // feedback domain back-references
+  commentsCreated          Comment[]
+  validationResultsCreated ValidationResult[]
+
+  // infra domain back-references
+  triggeredOutboxEvents     OutboxEvent[]
+  triggeredDeadLetterEvents DeadLetterEvent[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id                String                     @id @default(uuid()) @db.Uuid
+  userId            String                     @map("user_id") @db.Uuid
+  tokenHash         String                     @unique @map("token_hash")
+  familyId          String                     @map("family_id") @db.Uuid
+  parentTokenId     String?                    @unique @map("parent_token_id") @db.Uuid
+  replacedByTokenId String? @unique @map("replaced_by_token_id") @db.Uuid
+  expiresAt         DateTime                   @map("expires_at")
+  revokedAt         DateTime?                  @map("revoked_at")
+  revokedReason     RefreshTokenRevokedReason? @map("revoked_reason")
+  lastUsedAt        DateTime?                  @map("last_used_at")
+  userAgent         String?                    @map("user_agent")
+  ipAddress         String?                    @map("ip_address")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentToken     RefreshToken? @relation("RefreshTokenParent", fields: [parentTokenId], references: [id], onDelete: SetNull)
+  childToken      RefreshToken? @relation("RefreshTokenParent")
+  replacedByToken RefreshToken? @relation("RefreshTokenReplacement", fields: [replacedByTokenId], references: [id], onDelete: SetNull)
+  replacedToken   RefreshToken? @relation("RefreshTokenReplacement")
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}

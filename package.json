@@ -2,6 +2,7 @@
   "name": "ink-path",
   "version": "0.0.1",
   "description": "writing tools backend",
+  "packageManager": "pnpm@11.5.2",
   "scripts": {
     "dev": "tsx watch src/api.ts",
     "worker:dev": "tsx watch src/worker.ts",
@@ -15,6 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",
+    "db:status": "prisma validate",
+    "db:check": "prisma migrate status",
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio"

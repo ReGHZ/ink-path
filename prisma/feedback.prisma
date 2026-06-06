@@ -1,0 +1,322 @@
+enum CommentType {
+  general
+  suggestion
+  issue
+  question
+}
+
+enum CommentStatus {
+  active
+  resolved
+  archived
+}
+
+enum CommentTargetRole {
+  primary
+}
+
+enum ValidationResultValue {
+  consistent
+  inconsistent
+  warning
+}
+
+enum ValidationSeverity {
+  critical
+  warning
+  info
+}
+
+enum ValidationResultSource {
+  ai
+  manual
+}
+
+enum ValidationResultStatus {
+  open
+  resolved
+  dismissed
+}
+
+enum ValidationResultTargetRole {
+  primary
+  related
+  context
+}
+
+model Comment {
+  id                 String        @id @default(uuid()) @db.Uuid
+  projectId          String        @map("project_id") @db.Uuid
+  content            String        @db.Text
+  type               CommentType
+  status             CommentStatus @default(active)
+  parentCommentId    String?       @map("parent_comment_id") @db.Uuid
+  validationResultId String?       @map("validation_result_id") @db.Uuid
+  createdByUserId    String        @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser    User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  parentComment    Comment?          @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Restrict)
+  replies          Comment[]         @relation("CommentReplies")
+  validationResult ValidationResult? @relation(fields: [validationResultId], references: [id], onDelete: Restrict)
+
+  target CommentTarget?
+
+  @@index([parentCommentId])
+  @@index([validationResultId])
+  @@index([createdByUserId, createdAt])
+  @@index([projectId, createdAt(sort: Desc)], map: "comments_project_id_created_at_idx")
+  @@map("comments")
+}
+
+model CommentTarget {
+  id        String            @id @default(uuid()) @db.Uuid
+  commentId String            @unique @map("comment_id") @db.Uuid
+  projectId String            @map("project_id") @db.Uuid
+  role      CommentTargetRole @default(primary)
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  layer        CommentTargetLayer?
+  map          CommentTargetMap?
+  character    CommentTargetCharacter?
+  faction      CommentTargetFaction?
+  worldElement CommentTargetWorldElement?
+  event        CommentTargetEvent?
+  plot         CommentTargetPlot?
+  chapter      CommentTargetChapter?
+
+  @@index([projectId])
+  @@map("comment_targets")
+}
+
+model CommentTargetLayer {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  layerId         String @map("layer_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  layer         Layer         @relation(fields: [layerId], references: [id], onDelete: Restrict)
+
+  @@index([layerId])
+  @@map("comment_target_layers")
+}
+
+model CommentTargetMap {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  mapId           String @map("map_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  map           Map           @relation(fields: [mapId], references: [id], onDelete: Restrict)
+
+  @@index([mapId])
+  @@map("comment_target_maps")
+}
+
+model CommentTargetCharacter {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  characterId     String @map("character_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  character     Character     @relation(fields: [characterId], references: [id], onDelete: Restrict)
+
+  @@index([characterId])
+  @@map("comment_target_characters")
+}
+
+model CommentTargetFaction {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  factionId       String @map("faction_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  faction       Faction       @relation(fields: [factionId], references: [id], onDelete: Restrict)
+
+  @@index([factionId])
+  @@map("comment_target_factions")
+}
+
+model CommentTargetWorldElement {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  worldElementId  String @map("world_element_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  worldElement  WorldElement  @relation(fields: [worldElementId], references: [id], onDelete: Restrict)
+
+  @@index([worldElementId])
+  @@map("comment_target_world_elements")
+}
+
+model CommentTargetEvent {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  eventId         String @map("event_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  event         Event         @relation(fields: [eventId], references: [id], onDelete: Restrict)
+
+  @@index([eventId])
+  @@map("comment_target_events")
+}
+
+model CommentTargetPlot {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  plotId          String @map("plot_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  plot          Plot          @relation(fields: [plotId], references: [id], onDelete: Restrict)
+
+  @@index([plotId])
+  @@map("comment_target_plots")
+}
+
+model CommentTargetChapter {
+  commentTargetId String @id @map("comment_target_id") @db.Uuid
+  chapterId       String @map("chapter_id") @db.Uuid
+
+  commentTarget CommentTarget @relation(fields: [commentTargetId], references: [id], onDelete: Cascade)
+  chapter       Chapter       @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+
+  @@index([chapterId])
+  @@map("comment_target_chapters")
+}
+
+model ValidationResult {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  projectId           String                 @map("project_id") @db.Uuid
+  result              ValidationResultValue
+  message             String                 @db.Text
+  severity            ValidationSeverity
+  source              ValidationResultSource
+  status              ValidationResultStatus @default(open)
+  validationRequestId String?                @unique @map("validation_request_id") @db.Uuid
+  createdByUserId     String?                @map("created_by_user_id") @db.Uuid
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @updatedAt @map("updated_at")
+
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser     User?              @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  validationRequest ValidationRequest? @relation("ValidationResultRequest", fields: [validationRequestId], references: [id], onDelete: Restrict)
+
+  comments           Comment[]
+  targets            ValidationResultTarget[]
+  publishedByRequests ValidationRequest[] @relation("ValidationRequestResult")
+
+  @@index([projectId, status])
+  @@index([createdByUserId, createdAt])
+  @@index([projectId, createdAt(sort: Desc)], map: "validation_results_project_id_created_at_idx")
+  @@map("validation_results")
+}
+
+model ValidationResultTarget {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  validationResultId String                     @map("validation_result_id") @db.Uuid
+  projectId          String                     @map("project_id") @db.Uuid
+  role               ValidationResultTargetRole
+  createdAt          DateTime                   @default(now()) @map("created_at")
+
+  validationResult ValidationResult @relation(fields: [validationResultId], references: [id], onDelete: Cascade)
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  layer        ValidationResultTargetLayer?
+  map          ValidationResultTargetMap?
+  character    ValidationResultTargetCharacter?
+  faction      ValidationResultTargetFaction?
+  worldElement ValidationResultTargetWorldElement?
+  event        ValidationResultTargetEvent?
+  plot         ValidationResultTargetPlot?
+  chapter      ValidationResultTargetChapter?
+
+  @@index([projectId])
+  @@index([validationResultId])
+  @@map("validation_result_targets")
+}
+
+model ValidationResultTargetLayer {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  layerId                  String @map("layer_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  layer                  Layer                  @relation(fields: [layerId], references: [id], onDelete: Restrict)
+
+  @@index([layerId])
+  @@map("validation_result_target_layers")
+}
+
+model ValidationResultTargetMap {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  mapId                    String @map("map_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  map                    Map                    @relation(fields: [mapId], references: [id], onDelete: Restrict)
+
+  @@index([mapId])
+  @@map("validation_result_target_maps")
+}
+
+model ValidationResultTargetCharacter {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  characterId              String @map("character_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  character              Character              @relation(fields: [characterId], references: [id], onDelete: Restrict)
+
+  @@index([characterId])
+  @@map("validation_result_target_characters")
+}
+
+model ValidationResultTargetFaction {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  factionId                String @map("faction_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  faction                Faction                @relation(fields: [factionId], references: [id], onDelete: Restrict)
+
+  @@index([factionId])
+  @@map("validation_result_target_factions")
+}
+
+model ValidationResultTargetWorldElement {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  worldElementId           String @map("world_element_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  worldElement           WorldElement           @relation(fields: [worldElementId], references: [id], onDelete: Restrict)
+
+  @@index([worldElementId])
+  @@map("validation_result_target_world_elements")
+}
+
+model ValidationResultTargetEvent {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  eventId                  String @map("event_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  event                  Event                  @relation(fields: [eventId], references: [id], onDelete: Restrict)
+
+  @@index([eventId])
+  @@map("validation_result_target_events")
+}
+
+model ValidationResultTargetPlot {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  plotId                   String @map("plot_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  plot                   Plot                   @relation(fields: [plotId], references: [id], onDelete: Restrict)
+
+  @@index([plotId])
+  @@map("validation_result_target_plots")
+}
+
+model ValidationResultTargetChapter {
+  validationResultTargetId String @id @map("validation_result_target_id") @db.Uuid
+  chapterId                String @map("chapter_id") @db.Uuid
+
+  validationResultTarget ValidationResultTarget @relation(fields: [validationResultTargetId], references: [id], onDelete: Cascade)
+  chapter                Chapter                @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+
+  @@index([chapterId])
+  @@map("validation_result_target_chapters")
+}

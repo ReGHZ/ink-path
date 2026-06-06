@@ -44,4 +44,7 @@ USER node
 
 ENV SHELL=/usr/bin/zsh
 ENV PNPM_HOME=/home/node/.local/share/pnpm
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ENV PATH="${PNPM_HOME}:${PATH}"
+
+RUN corepack prepare pnpm@11.5.2 --activate

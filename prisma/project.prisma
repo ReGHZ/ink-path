@@ -1,0 +1,187 @@
+enum ProjectVisibility {
+  private
+  shared
+  public
+}
+
+enum ProjectStatus {
+  draft
+  active
+  archived
+}
+
+enum ProjectRole {
+  writer
+  editor
+  reviewer
+}
+
+enum ProjectAiAccess {
+  none
+  limited
+  full
+}
+
+enum UserProjectStatus {
+  active
+  removed
+  left
+  disabled
+}
+
+enum ProjectInvitationStatus {
+  pending
+  accepted
+  rejected
+  expired
+  revoked
+}
+
+enum OwnershipTransferStatus {
+  pending
+  accepted
+  rejected
+  cancelled
+  expired
+}
+
+model Project {
+  id              String            @id @default(uuid()) @db.Uuid
+  ownerUserId     String            @map("owner_user_id") @db.Uuid
+  name            String
+  description     String?
+  genre           String?
+  tone            String?
+  style           String?
+  language        String?
+  visibility      ProjectVisibility @default(private)
+  status          ProjectStatus     @default(draft)
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  archivedAt      DateTime?         @map("archived_at")
+
+  owner     User @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  createdBy User @relation("ProjectCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  members            UserProject[]
+  invitations        ProjectInvitation[]
+  ownershipTransfers ProjectOwnershipTransfer[]
+
+  // content domain back-references
+  layers               Layer[]
+  maps                 Map[]
+  worldElements        WorldElement[]
+  events               Event[]
+  characters           Character[]
+  factions             Faction[]
+  plots                Plot[]
+  chapters             Chapter[]
+  contentRevisions     ContentRevision[]
+  contentRelationships ContentRelationship[]
+
+  // ai domain back-references
+  validationRequests  ValidationRequest[]
+  chatSessions        ChatSession[]
+  chatMessages        ChatMessage[]
+  aiUsageLogs         AiUsageLog[]
+
+  // feedback domain back-references
+  comments                Comment[]
+  commentTargets          CommentTarget[]
+  validationResults       ValidationResult[]
+  validationResultTargets ValidationResultTarget[]
+
+  // infra domain back-references
+  outboxEvents     OutboxEvent[]
+  deadLetterEvents DeadLetterEvent[]
+
+  @@index([ownerUserId])
+  @@index([createdByUserId])
+  @@index([status])
+  @@map("projects")
+}
+
+model UserProject {
+  id              String            @id @default(uuid()) @db.Uuid
+  projectId       String            @map("project_id") @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  role            ProjectRole
+  canDelete       Boolean           @default(false) @map("can_delete")
+  aiAccess        ProjectAiAccess   @default(none) @map("ai_access")
+  status          UserProjectStatus @default(active)
+  invitedByUserId String?           @map("invited_by_user_id") @db.Uuid
+  joinedAt        DateTime?         @map("joined_at")
+  removedAt       DateTime?         @map("removed_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user      User    @relation("UserProjectMember", fields: [userId], references: [id], onDelete: Restrict)
+  invitedBy User?   @relation("UserProjectInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([invitedByUserId])
+  @@index([projectId, status])
+  @@index([projectId, role, status])
+  @@map("user_projects")
+}
+
+model ProjectInvitation {
+  id               String                  @id @default(uuid()) @db.Uuid
+  projectId        String                  @map("project_id") @db.Uuid
+  email            String
+  invitedUserId    String?                 @map("invited_user_id") @db.Uuid
+  invitedByUserId  String                  @map("invited_by_user_id") @db.Uuid
+  offeredRole      ProjectRole             @map("offered_role")
+  offeredCanDelete Boolean                 @default(false) @map("offered_can_delete")
+  offeredAiAccess  ProjectAiAccess         @default(none) @map("offered_ai_access")
+  status           ProjectInvitationStatus @default(pending)
+  tokenHash        String                  @unique @map("token_hash")
+  expiresAt        DateTime                @map("expires_at")
+  acceptedAt       DateTime?               @map("accepted_at")
+  acceptedByUserId String?                 @map("accepted_by_user_id") @db.Uuid
+  revokedAt        DateTime?               @map("revoked_at")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  project        Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  invitedUser    User?   @relation("ProjectInvitationInvitedUser", fields: [invitedUserId], references: [id], onDelete: SetNull)
+  invitedByUser  User    @relation("ProjectInvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+  acceptedByUser User?   @relation("ProjectInvitationAcceptedBy", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([email])
+  @@index([invitedUserId])
+  @@index([invitedByUserId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("project_invitations")
+}
+
+model ProjectOwnershipTransfer {
+  id                String                  @id @default(uuid()) @db.Uuid
+  projectId         String                  @map("project_id") @db.Uuid
+  fromUserId        String                  @map("from_user_id") @db.Uuid
+  toUserId          String                  @map("to_user_id") @db.Uuid
+  status            OwnershipTransferStatus @default(pending)
+  requestedByUserId String                  @map("requested_by_user_id") @db.Uuid
+  acceptedAt        DateTime?               @map("accepted_at")
+  expiresAt         DateTime                @map("expires_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  fromUser    User    @relation("OwnershipTransferFromUser", fields: [fromUserId], references: [id], onDelete: Restrict)
+  toUser      User    @relation("OwnershipTransferToUser", fields: [toUserId], references: [id], onDelete: Restrict)
+  requestedBy User    @relation("OwnershipTransferRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([projectId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([requestedByUserId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("project_ownership_transfers")
+}

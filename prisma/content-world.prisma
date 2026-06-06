@@ -1,0 +1,149 @@
+enum LayerStatus {
+  draft
+  published
+  archived
+}
+
+enum MapStatus {
+  draft
+  published
+}
+
+enum WorldElementStatus {
+  draft
+  published
+}
+
+enum EventStatus {
+  draft
+  published
+}
+
+model Layer {
+  id                String      @id @default(uuid()) @db.Uuid
+  projectId         String      @map("project_id") @db.Uuid
+  createdByUserId   String      @map("created_by_user_id") @db.Uuid
+  parentId          String?     @map("parent_id") @db.Uuid
+  name              String
+  level             Int
+  exposure          String
+  description       String?     @db.Text
+  content           String?     @db.Text
+  status            LayerStatus @default(draft)
+  currentRevisionId String?     @map("current_revision_id") @db.Uuid
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  parent          Layer?           @relation("LayerHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children        Layer[]          @relation("LayerHierarchy")
+  currentRevision ContentRevision? @relation("LayerCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetLayer[]
+  validationResultTargets ValidationResultTargetLayer[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, name])
+  @@index([projectId, parentId])
+  @@map("layers")
+}
+
+model Map {
+  id                String    @id @default(uuid()) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  parentId          String?   @map("parent_id") @db.Uuid
+  name              String
+  scale             String?
+  terrain           String?
+  environment       String?
+  description       String?   @db.Text
+  content           String?   @db.Text
+  status            MapStatus @default(draft)
+  currentRevisionId String?   @map("current_revision_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  parent          Map?             @relation("MapHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children        Map[]            @relation("MapHierarchy")
+  currentRevision ContentRevision? @relation("MapCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetMap[]
+  validationResultTargets ValidationResultTargetMap[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, name])
+  @@index([projectId, parentId])
+  @@map("maps")
+}
+
+model WorldElement {
+  id                String             @id @default(uuid()) @db.Uuid
+  projectId         String             @map("project_id") @db.Uuid
+  createdByUserId   String             @map("created_by_user_id") @db.Uuid
+  name              String
+  description       String?            @db.Text
+  category          String
+  content           String?            @db.Text
+  status            WorldElementStatus @default(draft)
+  currentRevisionId String?            @map("current_revision_id") @db.Uuid
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("WorldElementCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetWorldElement[]
+  validationResultTargets ValidationResultTargetWorldElement[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, name])
+  @@index([projectId, category])
+  @@map("world_elements")
+}
+
+model Event {
+  id                String      @id @default(uuid()) @db.Uuid
+  projectId         String      @map("project_id") @db.Uuid
+  createdByUserId   String      @map("created_by_user_id") @db.Uuid
+  title             String
+  era               String?
+  timelineOrder     Int?        @map("timeline_order")
+  eventType         String?     @map("event_type")
+  significance      String?
+  description       String?     @db.Text
+  content           String?     @db.Text
+  status            EventStatus @default(draft)
+  currentRevisionId String?     @map("current_revision_id") @db.Uuid
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("EventCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetEvent[]
+  validationResultTargets ValidationResultTargetEvent[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, title])
+  @@index([projectId, timelineOrder])
+  @@index([projectId, eventType])
+  @@map("events")
+}

@@ -1,0 +1,145 @@
+enum CharacterStatus {
+  draft
+  active
+  archived
+}
+
+enum FactionStatus {
+  draft
+  active
+  archived
+}
+
+enum PlotStatus {
+  draft
+  active
+  completed
+}
+
+enum ChapterStatus {
+  outline
+  draft
+  review
+  published
+}
+
+model Character {
+  id                String          @id @default(uuid()) @db.Uuid
+  projectId         String          @map("project_id") @db.Uuid
+  createdByUserId   String          @map("created_by_user_id") @db.Uuid
+  name              String
+  archetype         String?
+  background        String?         @db.Text
+  personality       String?         @db.Text
+  goal              String?         @db.Text
+  description       String?         @db.Text
+  content           String?         @db.Text
+  status            CharacterStatus @default(draft)
+  currentRevisionId String?         @map("current_revision_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("CharacterCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetCharacter[]
+  validationResultTargets ValidationResultTargetCharacter[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, name])
+  @@map("characters")
+}
+
+model Faction {
+  id                String        @id @default(uuid()) @db.Uuid
+  projectId         String        @map("project_id") @db.Uuid
+  createdByUserId   String        @map("created_by_user_id") @db.Uuid
+  name              String
+  description       String?       @db.Text
+  background        String?       @db.Text
+  ideology          String?       @db.Text
+  size              String?
+  content           String?       @db.Text
+  status            FactionStatus @default(draft)
+  currentRevisionId String?       @map("current_revision_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("FactionCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetFaction[]
+  validationResultTargets ValidationResultTargetFaction[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, name])
+  @@map("factions")
+}
+
+model Plot {
+  id                String     @id @default(uuid()) @db.Uuid
+  projectId         String     @map("project_id") @db.Uuid
+  createdByUserId   String     @map("created_by_user_id") @db.Uuid
+  name              String
+  description       String?    @db.Text
+  theme             String?    @db.Text
+  conflict          String?    @db.Text
+  resolution        String?    @db.Text
+  content           String?    @db.Text
+  status            PlotStatus @default(draft)
+  currentRevisionId String?    @map("current_revision_id") @db.Uuid
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("PlotCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetPlot[]
+  validationResultTargets ValidationResultTargetPlot[]
+
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, name])
+  @@map("plots")
+}
+
+model Chapter {
+  id                String        @id @default(uuid()) @db.Uuid
+  projectId         String        @map("project_id") @db.Uuid
+  createdByUserId   String        @map("created_by_user_id") @db.Uuid
+  title             String
+  order             Int
+  summary           String?       @db.Text
+  content           String?       @db.Text
+  status            ChapterStatus @default(outline)
+  publishedAt       DateTime?     @map("published_at")
+  currentRevisionId String?       @map("current_revision_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("ChapterCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets          CommentTargetChapter[]
+  validationResultTargets ValidationResultTargetChapter[]
+
+  @@unique([projectId, order])
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([projectId, createdAt])
+  @@index([projectId, title])
+  @@map("chapters")
+}

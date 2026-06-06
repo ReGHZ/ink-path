@@ -1,0 +1,188 @@
+
+enum ValidationScopeType {
+  entity
+  project
+}
+
+enum ValidationRequestStatus {
+  pending
+  processing
+  result_published
+  success
+  failed
+}
+
+enum ValidationFailureStage {
+  ai_processing
+  publish_result
+  feedback_storage
+}
+
+enum ChatSessionStatus {
+  active
+  archived
+  deleted
+}
+
+enum ChatMessageRole {
+  user
+  assistant
+}
+
+enum AiUsagePurpose {
+  validation
+  discussion
+  generation
+  embedding
+}
+
+enum AiOperationType {
+  chat_completion
+  streaming_completion
+  embedding
+}
+
+enum AiUsageStatus {
+  in_progress
+  success
+  failed
+  cancelled
+}
+
+model ValidationRequest {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  projectId          String                   @map("project_id") @db.Uuid
+  requestedByUserId  String                   @map("requested_by_user_id") @db.Uuid
+  scopeType          ValidationScopeType      @map("scope_type")
+  targetEntityType   ContentEntityType?       @map("target_entity_type")
+  targetEntityId     String?                  @map("target_entity_id") @db.Uuid
+  snapshotPayload    Json                     @map("snapshot_payload")
+  snapshotHash       String                   @map("snapshot_hash")
+  status             ValidationRequestStatus  @default(pending)
+  validationResultId String?                  @map("validation_result_id") @db.Uuid
+  resultPublishedAt  DateTime?                @map("result_published_at")
+  attemptCount       Int                      @default(0) @map("attempt_count")
+  maxAttempts        Int                      @default(3) @map("max_attempts")
+  failureStage       ValidationFailureStage?  @map("failure_stage")
+  lastErrorCode      String?                  @map("last_error_code")
+  lastErrorMessage   String?                  @map("last_error_message") @db.Text
+  failedAt           DateTime?                @map("failed_at")
+  startedAt          DateTime?                @map("started_at")
+  completedAt        DateTime?                @map("completed_at")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  requestedByUser  User              @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  validationResult ValidationResult? @relation("ValidationRequestResult", fields: [validationResultId], references: [id], onDelete: SetNull)
+  result           ValidationResult? @relation("ValidationResultRequest")
+
+  usageLogs AiUsageLog[]
+
+  @@index([projectId, id])
+  @@index([projectId, requestedByUserId, createdAt])
+  @@index([status, createdAt])
+  @@index([validationResultId])
+  @@map("validation_requests")
+}
+
+model ChatSession {
+  id              String            @id @default(uuid()) @db.Uuid
+  projectId       String            @map("project_id") @db.Uuid
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  title           String?
+  status          ChatSessionStatus @default(active)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  archivedAt      DateTime?         @map("archived_at")
+  deletedAt       DateTime?         @map("deleted_at")
+
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser User    @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  messages ChatMessage[]
+
+  @@index([projectId, status, updatedAt])
+  @@index([projectId, createdByUserId, status, updatedAt])
+  @@index([createdByUserId, updatedAt])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id            String          @id @default(uuid()) @db.Uuid
+  sessionId     String          @map("session_id") @db.Uuid
+  projectId     String          @map("project_id") @db.Uuid
+  senderUserId  String?         @map("sender_user_id") @db.Uuid
+  role          ChatMessageRole
+  content       String          @db.Text
+  messageOrder  Int             @map("message_order")
+  modelProvider String?         @map("model_provider")
+  modelName     String?         @map("model_name")
+  inputTokens   Int?            @map("input_tokens")
+  outputTokens  Int?            @map("output_tokens")
+  totalTokens   Int?            @map("total_tokens")
+  latencyMs     Int?            @map("latency_ms")
+  finishReason  String?         @map("finish_reason")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  deletedAt     DateTime?       @map("deleted_at")
+
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  project    Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  senderUser User?       @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+
+  usageLogs AiUsageLog[]
+
+  @@unique([sessionId, messageOrder])
+  @@index([projectId, createdAt])
+  @@index([projectId, sessionId])
+  @@index([senderUserId, createdAt])
+  @@map("chat_messages")
+}
+
+model AiUsageLog {
+  id                    String             @id @default(uuid()) @db.Uuid
+  projectId             String             @map("project_id") @db.Uuid
+  triggeredByUserId     String             @map("triggered_by_user_id") @db.Uuid
+  purpose               AiUsagePurpose
+  provider              String
+  model                 String
+  operationType         AiOperationType    @map("operation_type")
+  status                AiUsageStatus      @default(in_progress)
+  validationRequestId   String?            @map("validation_request_id") @db.Uuid
+  chatMessageId         String?            @map("chat_message_id") @db.Uuid
+  contentRevisionId     String?            @map("content_revision_id") @db.Uuid
+  contextEntityType     ContentEntityType? @map("context_entity_type")
+  contextEntityId       String?            @map("context_entity_id") @db.Uuid
+  requestIdempotencyKey String?            @map("request_idempotency_key")
+  providerRequestId     String?            @map("provider_request_id")
+  inputTokens           Int?               @map("input_tokens")
+  outputTokens          Int?               @map("output_tokens")
+  totalTokens           Int?               @map("total_tokens")
+  costAmount            Decimal?           @map("cost_amount") @db.Decimal(12, 6)
+  costCurrency          String             @default("USD") @map("cost_currency")
+  latencyMs             Int?               @map("latency_ms")
+  errorCode             String?            @map("error_code")
+  errorMessage          String?            @map("error_message") @db.Text
+  startedAt             DateTime           @map("started_at")
+  completedAt           DateTime?          @map("completed_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  triggeredByUser   User               @relation(fields: [triggeredByUserId], references: [id], onDelete: Restrict)
+  validationRequest ValidationRequest? @relation(fields: [validationRequestId], references: [id], onDelete: SetNull)
+  chatMessage       ChatMessage?       @relation(fields: [chatMessageId], references: [id], onDelete: SetNull)
+  contentRevision   ContentRevision?   @relation(fields: [contentRevisionId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([triggeredByUserId, createdAt])
+  @@index([purpose, createdAt])
+  @@index([provider, model, createdAt])
+  @@index([validationRequestId])
+  @@index([chatMessageId])
+  @@index([contentRevisionId])
+  @@index([status, createdAt])
+  @@index([projectId, contextEntityType, contextEntityId, createdAt])
+  @@index([triggeredByUserId, purpose, createdAt])
+  @@index([projectId, purpose, createdAt])
+  @@map("ai_usage_logs")
+}
