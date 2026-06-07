@@ -19,9 +19,16 @@ import {
   createRabbitMqPublisher,
   type RabbitMqPublisher,
 } from "./queue/publisher.js";
+import { createJwtVerifier } from "../shared/auth/JoseJwtVerifier.js";
+import {
+  createAppAuthMiddleware,
+  type JwtVerifier,
+} from "../shared/middleware/AuthMiddleware.js";
 
 import type { RabbitMqManager } from "./queue/rabbitmqManager.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
+import type { AppEnvironment } from "../shared/http/context.js";
+import type { MiddlewareHandler } from "hono";
 
 export type AppCradle = {
   prisma: PrismaClient;
@@ -29,6 +36,8 @@ export type AppCradle = {
   rabbitMqPublisher: RabbitMqPublisher;
   outboxRepository: OutboxRepository;
   outboxDispatcher: OutboxDispatcher;
+  jwtVerifier: JwtVerifier;
+  authMiddleware: MiddlewareHandler<AppEnvironment>;
 };
 
 export function createAppContainer(): AwilixContainer<AppCradle> {
@@ -53,6 +62,11 @@ export function createAppContainer(): AwilixContainer<AppCradle> {
   container.register(
     "outboxDispatcher",
     asFunction(createOutboxDispatcher).singleton(),
+  );
+  container.register("jwtVerifier", asFunction(createJwtVerifier).singleton());
+  container.register(
+    "authMiddleware",
+    asFunction(createAppAuthMiddleware).singleton(),
   );
 
   return container;

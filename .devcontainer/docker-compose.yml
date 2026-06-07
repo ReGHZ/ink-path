@@ -16,6 +16,9 @@ services:
       - node_modules:/workspace/node_modules
       - pnpm_store:/home/node/.local/share/pnpm/store
       - zsh_history:/home/node/.cache/zsh
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-963}"
     environment:
       NODE_ENV: development
       PORT: 4004

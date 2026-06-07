@@ -31,7 +31,12 @@ export default defineConfig(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["eslint.config.mjs"],
+            allowDefaultProject: [
+              "eslint.config.mjs",
+              "vitest.config.ts",
+              "test/*.ts",
+              "test/integration/*.ts",
+            ],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -39,7 +44,7 @@ export default defineConfig(
   },
 
   {
-    files: ["src/**/*.ts", "tests/**/*.ts"],
+    files: ["src/**/*.ts", "test/**/*.ts", "tests/**/*.ts"],
 
     languageOptions: {
       ecmaVersion: "latest",
@@ -49,7 +54,12 @@ export default defineConfig(
       },
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["eslint.config.mjs", "prisma.config.ts"],
+            allowDefaultProject: [
+              "eslint.config.mjs",
+              "vitest.config.ts",
+              "test/*.ts",
+              "test/integration/*.ts",
+            ],
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -175,7 +185,7 @@ export default defineConfig(
   },
 
   {
-    files: ["tests/**/*.ts"],
+    files: ["test/**/*.ts", "tests/**/*.ts"],
 
     rules: {
       "@typescript-eslint/no-unsafe-assignment": "off",
