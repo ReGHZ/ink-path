@@ -1,0 +1,145 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
+import { logger } from "../logger.js";
+
+import type {
+  ClaimedOutboxEvent,
+  OutboxRepository,
+} from "./outboxRepository.js";
+import type { RabbitMqPublisher } from "../queue/publisher.js";
+
+type OutboxDispatcherOptions = {
+  workerId: string;
+  batchSize?: number;
+  pollIntervalMs?: number;
+  retryDelayMs?: number;
+};
+
+export class OutboxDispatcher {
+  private running = false;
+  private loop: Promise<void> | null = null;
+
+  private readonly batchSize: number;
+  private readonly pollIntervalMs: number;
+  private readonly retryDelayMs: number;
+  private readonly workerId: string;
+
+  constructor(
+    private readonly outboxRepository: OutboxRepository,
+    private readonly publisher: RabbitMqPublisher,
+    options: OutboxDispatcherOptions,
+  ) {
+    this.workerId = options.workerId;
+    this.batchSize = options.batchSize ?? 10;
+    this.pollIntervalMs = options.pollIntervalMs ?? 1000;
+    this.retryDelayMs = options.retryDelayMs ?? 30000;
+  }
+
+  private abortController: AbortController | null = null;
+
+  async start(): Promise<void> {
+    if (this.running) return;
+
+    this.running = true;
+    this.abortController = new AbortController();
+    await this.publisher.start();
+
+    this.loop = this.runLoop();
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    this.abortController?.abort();
+
+    await this.loop;
+    this.loop = null;
+    this.abortController = null;
+
+    await this.publisher.stop();
+  }
+
+  private async runLoop(): Promise<void> {
+    while (this.running) {
+      try {
+        await this.runOnce();
+        await sleep(this.pollIntervalMs, undefined, {
+          signal: this.abortController?.signal,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+
+        logger.error({ err: error }, "Outbox dispatcher run failed");
+      }
+    }
+  }
+
+  private async runOnce(): Promise<void> {
+    const events = await this.outboxRepository.claimDueEvents(
+      this.batchSize,
+      this.workerId,
+    );
+
+    for (const event of events) {
+      await this.publishEvent(event);
+    }
+  }
+
+  private async publishEvent(event: ClaimedOutboxEvent): Promise<void> {
+    try {
+      const published = await this.publisher.publish(
+        event.routingKey,
+        event.payload,
+      );
+
+      if (!published) {
+        throw new Error("RabbitMQ publish returned false");
+      }
+
+      const markedPublished = await this.outboxRepository.markPublished(
+        event.id,
+        this.workerId,
+      );
+
+      if (!markedPublished) {
+        logger.warn(
+          { outboxEventId: event.id, workerId: this.workerId },
+          "Outbox event publish succeeded but published status was not updated",
+        );
+      }
+    } catch (error) {
+      const markedFailed = await this.outboxRepository.markFailed({
+        eventId: event.id,
+        workerId: this.workerId,
+        errorCode: "OUTBOX_PUBLISH_FAILED",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        nextRetryAt: new Date(Date.now() + this.retryDelayMs),
+      });
+
+      logger.error(
+        { err: error, outboxEventId: event.id, workerId: this.workerId },
+        "Failed to publish outbox event",
+      );
+
+      if (!markedFailed) {
+        logger.warn(
+          { outboxEventId: event.id, workerId: this.workerId },
+          "Outbox event publish failed but failed status was not updated",
+        );
+      }
+    }
+  }
+}
+
+export function createOutboxDispatcher({
+  outboxRepository,
+  rabbitMqPublisher,
+}: {
+  outboxRepository: OutboxRepository;
+  rabbitMqPublisher: RabbitMqPublisher;
+}): OutboxDispatcher {
+  return new OutboxDispatcher(outboxRepository, rabbitMqPublisher, {
+    workerId: process.env.OUTBOX_DISPATCHER_WORKER_ID ?? `worker-${process.pid}`,
+  });
+}

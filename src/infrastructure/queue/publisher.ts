@@ -55,7 +55,7 @@ export class RabbitMqPublisher {
 }
 
 export function createRabbitMqPublisher(
-  rabbitmq: RabbitMqManager,
+  { rabbitmq }: { rabbitmq: RabbitMqManager },
 ): RabbitMqPublisher {
   return new RabbitMqPublisher(rabbitmq);
 }
