@@ -1,4 +1,5 @@
 import { DomainError } from "../../../../shared/errors/DomainError.js";
+import { DomainErrorCode } from "../../../../shared/errors/DomainErrorCode.js";
 
 export type RefreshTokenRevokedReason =
     | "logout"
@@ -141,15 +142,24 @@ export class RefreshToken {
 
     assertCanBeUsed(now: Date): void {
         if (this.isExpired(now)) {
-            throw new DomainError("Refresh token is expired");
+            throw new DomainError(
+                DomainErrorCode.REFRESH_TOKEN_EXPIRED,
+                "Refresh token is expired",
+            );
         }
 
         if (this.isReplaced()) {
-            throw new DomainError("Refresh token is already replaced");
+            throw new DomainError(
+                DomainErrorCode.REFRESH_TOKEN_REPLACED,
+                "Refresh token is already replaced",
+            );
         }
 
         if (this.isRevoked()) {
-            throw new DomainError("Refresh token is revoked");
+            throw new DomainError(
+                DomainErrorCode.REFRESH_TOKEN_REVOKED,
+                "Refresh token is revoked",
+            );
         }
     }
 
@@ -175,7 +185,10 @@ export class RefreshToken {
         RefreshToken.assertNonEmpty(replacementTokenId, "Replacement token id is required");
 
         if (replacementTokenId === this.props.id) {
-            throw new DomainError("Refresh token cannot replace itself");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token cannot replace itself",
+            );
         }
 
         this.props.replacedByTokenId = replacementTokenId;
@@ -218,23 +231,38 @@ export class RefreshToken {
         }
 
         if (props.parentTokenId === props.id) {
-            throw new DomainError("Refresh token cannot be its own parent");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token cannot be its own parent",
+            );
         }
 
         if (props.replacedByTokenId === props.id) {
-            throw new DomainError("Refresh token cannot replace itself");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token cannot replace itself",
+            );
         }
 
         if (props.expiresAt <= props.createdAt) {
-            throw new DomainError("Refresh token expiry must be after creation");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token expiry must be after creation",
+            );
         }
 
         if (props.lastUsedAt !== null && props.lastUsedAt < props.createdAt) {
-            throw new DomainError("Refresh token last used time is invalid");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token last used time is invalid",
+            );
         }
 
         if (props.revokedAt !== null && props.revokedAt < props.createdAt) {
-            throw new DomainError("Refresh token revocation time is invalid");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token revocation time is invalid",
+            );
         }
 
         if (props.revokedReason !== null) {
@@ -242,11 +270,17 @@ export class RefreshToken {
         }
 
         if (props.revokedReason !== null && props.revokedAt === null) {
-            throw new DomainError("Refresh token revocation reason requires revoked time");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Refresh token revocation reason requires revoked time",
+            );
         }
 
         if (props.replacedByTokenId !== null && props.revokedAt === null) {
-            throw new DomainError("Replaced refresh token must be revoked");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Replaced refresh token must be revoked",
+            );
         }
 
         if (
@@ -255,6 +289,7 @@ export class RefreshToken {
             props.replacedByTokenId === null
         ) {
             throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
                 "Revoked refresh token requires reason or replacement token",
             );
         }
@@ -262,13 +297,16 @@ export class RefreshToken {
 
     private static assertNonEmpty(value: string, message: string): void {
         if (value.trim() === "") {
-            throw new DomainError(message);
+            throw new DomainError(DomainErrorCode.DOMAIN_VALIDATION_FAILED, message);
         }
     }
 
     private static assertValidRevokedReason(reason: RefreshTokenRevokedReason): void {
         if (!REVOKED_REASONS.includes(reason)) {
-            throw new DomainError("Invalid refresh token revoked reason");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Invalid refresh token revoked reason",
+            );
         }
     }
 }

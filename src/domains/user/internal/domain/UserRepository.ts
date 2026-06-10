@@ -7,6 +7,8 @@ export type UserRepository = {
 
   findByEmail(email: string): Promise<User | null>;
 
+  findByUsername(username: string): Promise<User | null>
+
   insert(user: User): Promise<void>;
 
   update(user: User): Promise<void>;

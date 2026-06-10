@@ -3,6 +3,7 @@ import { jwtVerify } from "jose";
 import { AppError } from "../errors/AppError.js";
 import { ErrorCode } from "../errors/ErrorCode.js";
 
+import type { AccessTokenPayload } from "./AccessTokenPayload.js";
 import type { JwtVerifier } from "../middleware/AuthMiddleware.js";
 
 export class JoseJwtVerifier implements JwtVerifier {
@@ -16,7 +17,7 @@ export class JoseJwtVerifier implements JwtVerifier {
     this.secret = new TextEncoder().encode(jwtSecret);
   }
 
-  async verifyAccessToken(token: string): Promise<{ userId: string }> {
+  async verifyAccessToken(token: string): Promise<AccessTokenPayload> {
     try {
       const { payload } = await jwtVerify(token, this.secret);
 

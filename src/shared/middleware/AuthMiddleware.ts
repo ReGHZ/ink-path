@@ -1,12 +1,9 @@
 import { AppError } from "../errors/AppError.js";
 import { ErrorCode } from "../errors/ErrorCode.js";
 
+import type { AccessTokenPayload } from "../auth/AccessTokenPayload.js";
 import type { AppEnvironment } from "../http/context.js";
 import type { MiddlewareHandler } from "hono";
-
-export type AccessTokenPayload = {
-  userId: string;
-};
 
 export type JwtVerifier = {
   verifyAccessToken(token: string): Promise<AccessTokenPayload>;

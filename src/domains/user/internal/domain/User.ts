@@ -1,4 +1,5 @@
 import { DomainError } from "../../../../shared/errors/DomainError.js";
+import { DomainErrorCode } from "../../../../shared/errors/DomainErrorCode.js";
 
 export type UserStatus = "active" | "disabled" | "deleted";
 
@@ -99,19 +100,25 @@ export class User {
 
     assertCanLogin(): void {
         if (this.props.status === "disabled") {
-            throw new DomainError("Account disabled");
+            throw new DomainError(DomainErrorCode.USER_DISABLED, "Account disabled");
         }
 
         if (this.props.status === "deleted") {
-            throw new DomainError("Account deleted");
+            throw new DomainError(DomainErrorCode.USER_DELETED, "Account deleted");
         }
 
         if (this.props.emailVerifiedAt === null) {
-            throw new DomainError("Email is not verified");
+            throw new DomainError(
+                DomainErrorCode.EMAIL_NOT_VERIFIED,
+                "Email is not verified",
+            );
         }
 
         if (this.props.passwordHash === null) {
-            throw new DomainError("Password login is not available");
+            throw new DomainError(
+                DomainErrorCode.PASSWORD_LOGIN_UNAVAILABLE,
+                "Password login is not available",
+            );
         }
     }
 
@@ -125,9 +132,7 @@ export class User {
     }
 
     markLoggedIn(now: Date): void {
-        if (!this.canLogin()) {
-            throw new DomainError("User cannot login");
-        }
+        this.assertCanLogin();
 
         this.props.lastLoginAt = now;
         this.props.updatedAt = now;
@@ -135,7 +140,10 @@ export class User {
 
     verifyEmail(now: Date): void {
         if (this.props.status === "deleted") {
-            throw new DomainError("Deleted user cannot verify email");
+            throw new DomainError(
+                DomainErrorCode.USER_DELETED,
+                "Deleted user cannot verify email",
+            );
         }
 
         if (this.props.emailVerifiedAt !== null) {
@@ -152,7 +160,10 @@ export class User {
         now: Date;
     }): void {
         if (this.props.status === "deleted") {
-            throw new DomainError("Deleted user profile cannot be changed");
+            throw new DomainError(
+                DomainErrorCode.USER_DELETED,
+                "Deleted user profile cannot be changed",
+            );
         }
 
         if (input.displayName !== undefined) {
@@ -168,7 +179,10 @@ export class User {
 
     disable(now: Date): void {
         if (this.props.status === "deleted") {
-            throw new DomainError("Deleted user cannot be disabled");
+            throw new DomainError(
+                DomainErrorCode.USER_DELETED,
+                "Deleted user cannot be disabled",
+            );
         }
 
         if (this.props.status === "disabled") {
@@ -181,7 +195,10 @@ export class User {
 
     activate(now: Date): void {
         if (this.props.status === "deleted") {
-            throw new DomainError("Deleted user cannot be activated");
+            throw new DomainError(
+                DomainErrorCode.USER_DELETED,
+                "Deleted user cannot be activated",
+            );
         }
 
         if (this.props.status === "active") {
@@ -211,19 +228,31 @@ export class User {
 
     private static validate(props: UserProperties): void {
         if (props.id.trim() === "") {
-            throw new DomainError("User id is required");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "User id is required",
+            );
         }
 
         if (!User.isValidEmail(props.email)) {
-            throw new DomainError("Invalid user email");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Invalid user email",
+            );
         }
 
         if (!USER_STATUSES.includes(props.status)) {
-            throw new DomainError("Invalid user status");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Invalid user status",
+            );
         }
 
         if (props.passwordHash !== null && props.passwordHash.trim() === "") {
-            throw new DomainError("Password hash cannot be empty");
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Password hash cannot be empty",
+            );
         }
     }
 
