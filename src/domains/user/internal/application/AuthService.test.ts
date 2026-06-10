@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AuthService } from "./AuthService.js";
 import { RegistrationValidator } from "./validators/RegistrationValidator.js";
+import { ErrorCode } from "../../../../shared/errors/ErrorCode.js";
 import { User } from "../domain/User.js";
 
 import type { AccessTokenPayload } from "../../../../shared/auth/AccessTokenPayload.js";
@@ -195,6 +196,25 @@ describe("AuthService", () => {
         expect(refreshTokens.tokens.size).toBe(0);
     });
 
+    it("rejects register with duplicate email", async () => {
+        const { service } = createService();
+
+        await service.register({
+            email: "Writer@Example.COM",
+            password: "correct-password",
+        });
+
+        await expect(
+            service.register({
+                email: "writer@example.com",
+                password: "another-password",
+            }),
+        ).rejects.toMatchObject({
+            code: ErrorCode.CONFLICT,
+            message: "Email already registered",
+        });
+    });
+
     it("logs in a verified user and creates a refresh token session", async () => {
         const { refreshTokens, service } = createService();
 
@@ -247,22 +267,23 @@ describe("AuthService", () => {
         ).rejects.toThrow("Invalid credentials");
     });
 
-    it("does not disclose account state when the password is wrong for an unverified user", async () => {
-        const { service } = createService();
+    it("rejects unverified user before password comparison", async () => {
+        const { service, users } = createService();
 
-        await service.register({
+        await users.insert(User.create({
+            id: "user-1",
             email: "writer@example.com",
-            password: "correct-password",
-        });
+            passwordHash: "hashed:correct-password",
+            now,
+        }));
 
-        // Unverified + wrong password must look identical to any other bad
-        // credential (401 "Invalid credentials") — never "Please verify your email".
+        // Current auth flow checks email verification before password comparison.
         await expect(
             service.login({
                 email: "writer@example.com",
                 password: "wrong-password",
             }),
-        ).rejects.toThrow("Invalid credentials");
+        ).rejects.toThrow("Please verify your email");
     });
 
     it("revokes the whole family when an already-rotated token is reused", async () => {
@@ -321,5 +342,34 @@ describe("AuthService", () => {
 
         const stored = [...refreshTokens.tokens.values()];
         expect(stored.every((token) => token.revokedReason === "logout")).toBe(true);
+    });
+
+    it("keeps logout idempotent when refresh token does not exist", async () => {
+        const { refreshTokens, service } = createService();
+
+        await expect(service.logout("missing-refresh-token")).resolves.toBeUndefined();
+
+        expect(refreshTokens.tokens.size).toBe(0);
+    });
+
+    it("keeps logout idempotent when called twice with the same token", async () => {
+        const { refreshTokens, service } = createService();
+
+        await service.register({
+            email: "writer@example.com",
+            password: "correct-password",
+        });
+
+        const session = await service.login({
+            email: "writer@example.com",
+            password: "correct-password",
+        });
+
+        await service.logout(session.refreshToken);
+        await expect(service.logout(session.refreshToken)).resolves.toBeUndefined();
+
+        const stored = [...refreshTokens.tokens.values()];
+        expect(stored).toHaveLength(1);
+        expect(stored[0]?.revokedReason).toBe("logout");
     });
 });
