@@ -15,10 +15,25 @@ const later = new Date("2026-06-10T01:00:00.000Z");
 
 const prisma = createPrismaClient();
 const repository = new PrismaUserRepository(prisma);
+const userIds = [
+  "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002",
+  "00000000-0000-4000-8000-000000000003",
+  "00000000-0000-4000-8000-000000000004",
+  "00000000-0000-4000-8000-000000000005",
+];
 
 async function cleanDatabase(client: PrismaClient): Promise<void> {
-  await client.refreshToken.deleteMany();
-  await client.user.deleteMany();
+  await client.refreshToken.deleteMany({
+    where: {
+      userId: { in: userIds },
+    },
+  });
+  await client.user.deleteMany({
+    where: {
+      id: { in: userIds },
+    },
+  });
 }
 
 function createUser(id: string, email: string, username?: string | null): User {

@@ -331,7 +331,7 @@ export class AuthService {
 
     await this.unitOfWork.transaction(async (repositories) => {
       const tokens =
-        await repositories.refreshTokens.findActiveByUserId(userId);
+        await repositories.refreshTokens.findActiveByUserId(userId, now);
 
       await Promise.all(
         tokens.map(async (token) => {
@@ -374,7 +374,7 @@ export class AuthService {
     familyId: string,
     now: Date,
   ): Promise<void> {
-    const familyTokens = await refreshTokens.findActiveByFamilyId(familyId);
+    const familyTokens = await refreshTokens.findActiveByFamilyId(familyId, now);
 
     await Promise.all(
       familyTokens.map(async (token) => {

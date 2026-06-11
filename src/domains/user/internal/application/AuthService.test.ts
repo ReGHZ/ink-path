@@ -69,18 +69,18 @@ class FakeRefreshTokenRepository implements RefreshTokenRepository {
     );
   }
 
-  findActiveByFamilyId(familyId: string): Promise<RefreshToken[]> {
+  findActiveByFamilyId(familyId: string, now: Date): Promise<RefreshToken[]> {
     return Promise.resolve(
       [...this.tokens.values()].filter(
-        (token) => token.familyId === familyId && !token.isRevoked(),
+        (token) => token.familyId === familyId && token.canBeUsed(now),
       ),
     );
   }
 
-  findActiveByUserId(userId: string): Promise<RefreshToken[]> {
+  findActiveByUserId(userId: string, now: Date): Promise<RefreshToken[]> {
     return Promise.resolve(
       [...this.tokens.values()].filter(
-        (token) => token.userId === userId && !token.isRevoked(),
+        (token) => token.userId === userId && token.canBeUsed(now),
       ),
     );
   }

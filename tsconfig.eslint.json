@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "tests/**/*.ts",
+    "eslint.config.mjs",
+    "vitest.config.ts",
+    "prisma.config.ts"
+  ]
+}

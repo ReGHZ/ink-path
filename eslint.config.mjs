@@ -1,9 +1,9 @@
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import prettierConfig from "eslint-config-prettier";
-import globals from "globals";
 import importX from "eslint-plugin-import-x";
 import unicorn from "eslint-plugin-unicorn";
+import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
@@ -28,23 +28,14 @@ export default defineConfig(
   ...tseslint.configs.stylisticTypeChecked,
 
   {
-    languageOptions: {
-      parserOptions: {
-        projectService: {
-            allowDefaultProject: [
-              "eslint.config.mjs",
-              "vitest.config.ts",
-              "test/*.ts",
-              "test/integration/*.ts",
-            ],
-        },
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-  },
-
-  {
-    files: ["src/**/*.ts", "test/**/*.ts", "tests/**/*.ts"],
+    files: [
+      "eslint.config.mjs",
+      "src/**/*.ts",
+      "test/**/*.ts",
+      "tests/**/*.ts",
+      "vitest.config.ts",
+      "prisma.config.ts",
+    ],
 
     languageOptions: {
       ecmaVersion: "latest",
@@ -53,14 +44,7 @@ export default defineConfig(
         ...globals.node,
       },
       parserOptions: {
-        projectService: {
-            allowDefaultProject: [
-              "eslint.config.mjs",
-              "vitest.config.ts",
-              "test/*.ts",
-              "test/integration/*.ts",
-            ],
-        },
+        project: "./tsconfig.eslint.json",
         tsconfigRootDir: import.meta.dirname,
       },
     },
