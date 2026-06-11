@@ -2,7 +2,7 @@
   "name": "ink-path",
   "version": "0.0.1",
   "description": "writing tools backend",
-  "packageManager": "pnpm@11.5.2",
+  "packageManager": "pnpm@11.5.3+sha512.7ac1c919341c213a34dc0d02afb7143c5c26ac26ee8c4782deea821b8ac64d2134a081fd8941dae6e29bbb48f58dfc2b7fbceeccc07cb2f09d219d342a4969ed",
   "scripts": {
     "dev": "tsx watch src/api.ts",
     "worker:dev": "tsx watch src/worker.ts",
@@ -38,6 +38,7 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "amqplib": "^2.0.1",
+    "argon2": "^0.44.0",
     "awilix": "^13.0.3",
     "dotenv": "^17.4.2",
     "hono": "^4.12.23",
