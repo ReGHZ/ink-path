@@ -103,9 +103,9 @@ export class PrismaRefreshTokenRepository implements RefreshTokenRepository {
 }
 
 export function createRefreshTokenRepository({
-  client,
+  prisma,
 }: {
-  client: PrismaClient;
+  prisma: PrismaClient;
 }): RefreshTokenRepository {
-  return new PrismaRefreshTokenRepository(client);
+  return new PrismaRefreshTokenRepository(prisma);
 }

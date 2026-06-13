@@ -91,9 +91,9 @@ export class PrismaUserRepository implements UserRepository {
 }
 
 export function createUserRepository({
-  client,
+  prisma,
 }: {
-  client: PrismaClient;
+  prisma: PrismaClient;
 }): UserRepository {
-  return new PrismaUserRepository(client);
+  return new PrismaUserRepository(prisma);
 }

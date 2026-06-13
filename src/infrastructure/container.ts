@@ -19,6 +19,10 @@ import {
   createRabbitMqPublisher,
   type RabbitMqPublisher,
 } from "./queue/publisher.js";
+import {
+  registerUserDomain,
+  type UserDomainCradle,
+} from "../domains/user/register.js";
 import { createJwtVerifier } from "../shared/auth/JoseJwtVerifier.js";
 import {
   createAppAuthMiddleware,
@@ -38,7 +42,7 @@ export type AppCradle = {
   outboxDispatcher: OutboxDispatcher;
   jwtVerifier: JwtVerifier;
   authMiddleware: MiddlewareHandler<AppEnvironment>;
-};
+} & UserDomainCradle;
 
 export function createAppContainer(): AwilixContainer<AppCradle> {
   const container = createContainer<AppCradle>({
@@ -68,6 +72,7 @@ export function createAppContainer(): AwilixContainer<AppCradle> {
     "authMiddleware",
     asFunction(createAppAuthMiddleware).singleton(),
   );
+  registerUserDomain(container);
 
   return container;
 }

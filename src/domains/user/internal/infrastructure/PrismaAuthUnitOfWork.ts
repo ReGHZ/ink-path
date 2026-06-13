@@ -59,9 +59,9 @@ export class PrismaAuthUnitOfWork implements AuthUnitOfWork {
 }
 
 export function createAuthUnitOfWork({
-  client,
+  prisma,
 }: {
-  client: PrismaClient;
+  prisma: PrismaClient;
 }): AuthUnitOfWork {
-  return new PrismaAuthUnitOfWork(client);
+  return new PrismaAuthUnitOfWork(prisma);
 }
