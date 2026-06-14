@@ -190,6 +190,12 @@ describe("UserProject", () => {
       }).toThrow(DomainError);
     });
 
+    it("rejects an active membership without joinedAt", () => {
+      expect(() => {
+        reconstituteMembership({ status: "active", joinedAt: null });
+      }).toThrow(DomainError);
+    });
+
     it("accepts an inactive membership that has removedAt", () => {
       const membership = reconstituteMembership({
         status: "left",

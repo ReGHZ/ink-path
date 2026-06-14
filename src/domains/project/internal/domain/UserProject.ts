@@ -15,7 +15,7 @@ export type UserProjectProperties = {
   canDelete: boolean;
   aiAccess: ProjectAiAccess;
   status: UserProjectStatus;
-  joinedAt: Date;
+  joinedAt: Date | null;
   removedAt: Date | null;
   invitedByUserId: string | null;
   createdAt: Date;
@@ -98,7 +98,7 @@ export class UserProject {
     return this.props.status;
   }
 
-  get joinedAt(): Date {
+  get joinedAt(): Date | null {
     return this.props.joinedAt;
   }
 
@@ -125,6 +125,10 @@ export class UserProject {
     this.props.updatedAt = now;
 
     UserProject.validate(this.props);
+  }
+
+  toSnapshot(): UserProjectProperties {
+    return { ...this.props };
   }
 
   private ensureActive(): void {
@@ -190,6 +194,13 @@ export class UserProject {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         "Inactive membership must have removedAt",
+      );
+    }
+
+    if (props.status === "active" && props.joinedAt === null) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Active membership must have joinedAt",
       );
     }
 

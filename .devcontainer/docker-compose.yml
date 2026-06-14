@@ -75,7 +75,7 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: ink-path-postgres
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:15432:5432"
     environment:
@@ -93,7 +93,7 @@ services:
   redis:
     image: redis:8-alpine
     container_name: ink-path-redis
-    restart: unless-stopped
+    restart: "no"
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:16379:6379"
@@ -108,7 +108,7 @@ services:
   rabbitmq:
     image: rabbitmq:management
     container_name: ink-path-rabbitmq
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:15672:15672"
     volumes:
@@ -122,11 +122,22 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: ink-path-qdrant
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:16333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+
+  adminer:
+    profiles: ["tools"]
+    image: adminer:standalone
+    container_name: ink-path-adminer
+    restart: "no"
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   node_modules:

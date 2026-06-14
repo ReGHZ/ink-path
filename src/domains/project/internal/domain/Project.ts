@@ -213,6 +213,10 @@ export class Project {
     Project.validate(this.props);
   }
 
+  toSnapshot(): ProjectProperties {
+    return { ...this.props };
+  }
+
   private static normalizeOptionalText(value: string | null): string | null {
     if (value === null) {
       return null;
