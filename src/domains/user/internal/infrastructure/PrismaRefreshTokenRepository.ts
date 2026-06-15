@@ -1,4 +1,5 @@
 import { RefreshTokenMapper } from "./RefreshTokenMapper.js";
+import { isNotFoundError, isUniqueViolation } from "../../../../shared/infrastructure/prismaErrors.js";
 import {
   RefreshTokenRepositoryConflictError,
   RefreshTokenRepositoryNotFoundError,
@@ -10,26 +11,8 @@ import type { RefreshTokenRepository } from "../domain/RefreshTokenRepository.js
 
 export type RefreshTokenDatabase = Pick<PrismaClient, "refreshToken">;
 
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "P2002"
-  );
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "P2025"
-  );
-}
-
 export class PrismaRefreshTokenRepository implements RefreshTokenRepository {
-  constructor(private readonly client: RefreshTokenDatabase) {}
+  constructor(private readonly client: RefreshTokenDatabase) { }
 
   async findByTokenHash(tokenHash: string): Promise<RefreshToken | null> {
     const row = await this.client.refreshToken.findUnique({

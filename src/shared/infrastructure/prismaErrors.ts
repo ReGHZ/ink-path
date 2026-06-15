@@ -1,0 +1,17 @@
+export function isUniqueViolation(error: unknown): boolean {
+    return (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "P2002"
+    );
+}
+
+export function isNotFoundError(error: unknown): boolean {
+    return (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "P2025"
+    );
+}

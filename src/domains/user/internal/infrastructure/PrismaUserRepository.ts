@@ -1,4 +1,5 @@
 import { UserMapper } from "./UserMapper.js";
+import { isNotFoundError, isUniqueViolation } from "../../../../shared/infrastructure/prismaErrors.js";
 import {
   UserRepositoryConflictError,
   UserRepositoryNotFoundError,
@@ -10,26 +11,9 @@ import type { UserRepository } from "../domain/UserRepository.js";
 
 export type UserDatabase = Pick<PrismaClient, "user">;
 
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "P2002"
-  );
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "P2025"
-  );
-}
 
 export class PrismaUserRepository implements UserRepository {
-  constructor(private readonly client: UserDatabase) {}
+  constructor(private readonly client: UserDatabase) { }
 
   async findById(id: string): Promise<User | null> {
     const row = await this.client.user.findUnique({
