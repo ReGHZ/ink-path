@@ -6,6 +6,11 @@ export type UserProjectRepository = {
     userId: string,
   ): Promise<UserProject | null>;
 
+  findActiveByProjectIdAndUserIdForUpdate(
+    projectId: string,
+    userId: string,
+  ): Promise<UserProject | null>;
+
   findActiveByProjectId(projectId: string): Promise<UserProject[]>;
 
   insert(userProject: UserProject): Promise<void>;

@@ -9,11 +9,11 @@ import {
   UserRepositoryNotFoundError,
 } from "../domain/UserRepositoryError.js";
 
+import type { Clock } from "../../../../shared/application/ports/Clock.js";
+import type { IdGenerator } from "../../../../shared/application/ports/IdGenerator.js";
 import type { RefreshTokenRepository } from "../domain/RefreshTokenRepository.js";
 import type { UserRepository } from "../domain/UserRepository.js";
 import type { AuthUnitOfWork } from "./ports/AuthUnitOfWork.js";
-import type { Clock } from "./ports/Clock.js";
-import type { IdGenerator } from "./ports/IdGenerator.js";
 import type { PasswordHasher } from "./ports/PasswordHasher.js";
 import type { TokenService } from "./ports/TokenService.js";
 import type { RegistrationValidator } from "./validators/RegistrationValidator.js";
@@ -67,12 +67,12 @@ export type RefreshAuthResult = {
 type RefreshResult =
   | { status: "invalid" }
   | {
-      status: "ok";
-      result: {
-        userId: string;
-        refreshToken: string;
-      };
+    status: "ok";
+    result: {
+      userId: string;
+      refreshToken: string;
     };
+  };
 
 type CreatedSession = {
   user: User;
@@ -140,7 +140,7 @@ export class AuthService {
     private readonly idGenerator: IdGenerator,
     private readonly clock: Clock,
     private readonly unitOfWork: AuthUnitOfWork,
-  ) {}
+  ) { }
 
   async register(input: RegisterInput): Promise<RegisterResult> {
     const now = this.clock.now();

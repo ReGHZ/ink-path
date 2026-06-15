@@ -6,6 +6,8 @@ import { ErrorCode } from "../../../../shared/errors/ErrorCode.js";
 import { User } from "../domain/User.js";
 import { UserRepositoryConflictError } from "../domain/UserRepositoryError.js";
 
+import type { Clock } from "../../../../shared/application/ports/Clock.js";
+import type { IdGenerator } from "../../../../shared/application/ports/IdGenerator.js";
 import type { AccessTokenPayload } from "../../../../shared/auth/AccessTokenPayload.js";
 import type { RefreshToken } from "../domain/RefreshToken.js";
 import type { RefreshTokenRepository } from "../domain/RefreshTokenRepository.js";
@@ -14,8 +16,6 @@ import type {
   AuthRepositories,
   AuthUnitOfWork,
 } from "./ports/AuthUnitOfWork.js";
-import type { Clock } from "./ports/Clock.js";
-import type { IdGenerator } from "./ports/IdGenerator.js";
 import type { PasswordHasher } from "./ports/PasswordHasher.js";
 import type { TokenService } from "./ports/TokenService.js";
 
@@ -38,7 +38,7 @@ class FakeUserRepository implements UserRepository {
   findByUsername(username: string): Promise<User | null> {
     return Promise.resolve(
       [...this.users.values()].find((user) => user.username === username) ??
-        null,
+      null,
     );
   }
 
@@ -100,7 +100,7 @@ class FakeUnitOfWork implements AuthUnitOfWork {
   constructor(
     private readonly users: UserRepository,
     private readonly refreshTokens: RefreshTokenRepository,
-  ) {}
+  ) { }
 
   async transaction<T>(
     work: (repositories: AuthRepositories) => Promise<T>,

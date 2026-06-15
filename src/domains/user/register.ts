@@ -29,12 +29,12 @@ import {
 } from "./internal/interface/UserController.js";
 
 import type { AuthUnitOfWork } from "./internal/application/ports/AuthUnitOfWork.js";
-import type { Clock } from "./internal/application/ports/Clock.js";
-import type { IdGenerator } from "./internal/application/ports/IdGenerator.js";
 import type { PasswordHasher } from "./internal/application/ports/PasswordHasher.js";
 import type { TokenService } from "./internal/application/ports/TokenService.js";
 import type { RefreshTokenRepository } from "./internal/domain/RefreshTokenRepository.js";
 import type { UserRepository } from "./internal/domain/UserRepository.js";
+import type { Clock } from "../../shared/application/ports/Clock.js";
+import type { IdGenerator } from "../../shared/application/ports/IdGenerator.js";
 
 const argon2PasswordHasherConfig = {
   memoryCost: 19_456,

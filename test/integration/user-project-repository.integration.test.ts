@@ -121,6 +121,29 @@ describe("PrismaUserProjectRepository", () => {
     expect(found).toBeNull();
   });
 
+  it("findActiveByProjectIdAndUserIdForUpdate returns same data as regular find", async () => {
+    const membership = createMembership(userProjectIds[0]);
+
+    await repository.insert(membership);
+
+    const found = await repository.findActiveByProjectIdAndUserIdForUpdate(projectId, ownerUserId);
+
+    expect(found?.id).toBe(membership.id);
+    expect(found?.projectId).toBe(projectId);
+    expect(found?.userId).toBe(ownerUserId);
+    expect(found?.role).toBe("writer");
+    expect(found?.canDelete).toBe(true);
+    expect(found?.aiAccess).toBe("full");
+    expect(found?.status).toBe("active");
+    expect(found?.joinedAt).toEqual(now);
+  });
+
+  it("findActiveByProjectIdAndUserIdForUpdate returns null when no active membership", async () => {
+    const found = await repository.findActiveByProjectIdAndUserIdForUpdate(projectId, ownerUserId);
+
+    expect(found).toBeNull();
+  });
+
   it("returns null when membership exists but is not active", async () => {
     const removed = createRemovedMembership(userProjectIds[0], ownerUserId);
 

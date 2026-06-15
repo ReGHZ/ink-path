@@ -4,8 +4,8 @@ import { UserService } from "./UserService.js";
 import { ErrorCode } from "../../../../shared/errors/ErrorCode.js";
 import { User } from "../domain/User.js";
 
+import type { Clock } from "../../../../shared/application/ports/Clock.js";
 import type { UserRepository } from "../domain/UserRepository.js";
-import type { Clock } from "./ports/Clock.js";
 
 const now = new Date("2026-06-10T00:00:00.000Z");
 const later = new Date("2026-06-10T01:00:00.000Z");
@@ -27,7 +27,7 @@ class FakeUserRepository implements UserRepository {
   findByUsername(username: string): Promise<User | null> {
     return Promise.resolve(
       [...this.users.values()].find((user) => user.username === username) ??
-        null,
+      null,
     );
   }
 

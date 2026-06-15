@@ -1,9 +1,9 @@
 import { AppError } from "../../../../shared/errors/AppError.js";
 import { ErrorCode } from "../../../../shared/errors/ErrorCode.js";
 
+import type { Clock } from "../../../../shared/application/ports/Clock.js";
 import type { User } from "../domain/User.js";
 import type { UserRepository } from "../domain/UserRepository.js";
-import type { Clock } from "./ports/Clock.js";
 
 export type UserProfile = {
   id: string;
@@ -22,7 +22,7 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly clock: Clock,
-  ) {}
+  ) { }
 
   async getMyProfile(userId: string): Promise<UserProfile> {
     const user = await this.loadExistingUser(userId);

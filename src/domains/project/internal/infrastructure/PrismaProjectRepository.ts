@@ -1,14 +1,18 @@
 import { ProjectMapper } from "./ProjectMapper.js";
-import { isNotFoundError, isUniqueViolation } from "../../../../shared/infrastructure/prismaErrors.js";
-import { ProjectRepositoryConflictError, ProjectRepositoryNotFoundError } from "../domain/ProjectRepositoryError.js";
+import {
+    isNotFoundError,
+    isUniqueViolation,
+} from "../../../../shared/infrastructure/prismaErrors.js";
+import {
+    ProjectRepositoryConflictError,
+    ProjectRepositoryNotFoundError,
+} from "../domain/ProjectRepositoryError.js";
 
 import type { PrismaClient } from "../../../../generated/prisma/client.js";
 import type { Project } from "../domain/Project.js";
 import type { ProjectRepository } from "../domain/ProjectRepository.js";
 
-export type ProjectDatabase = Pick<PrismaClient, 'project'>
-
-
+export type ProjectDatabase = Pick<PrismaClient, "project">;
 
 export class PrismaProjectRepository implements ProjectRepository {
     constructor(private readonly client: ProjectDatabase) { }
@@ -16,24 +20,24 @@ export class PrismaProjectRepository implements ProjectRepository {
     async findById(id: string): Promise<Project | null> {
         const row = await this.client.project.findUnique({
             where: {
-                id
-            }
-        })
+                id,
+            },
+        });
 
-        return row ? ProjectMapper.toDomain(row) : null
+        return row ? ProjectMapper.toDomain(row) : null;
     }
 
     async findByOwnerUserId(ownerUserId: string): Promise<Project[]> {
         const rows = await this.client.project.findMany({
             where: {
-                ownerUserId
+                ownerUserId,
             },
             orderBy: {
-                updatedAt: 'desc'
-            }
-        })
+                updatedAt: "desc",
+            },
+        });
 
-        return rows.map((row) => ProjectMapper.toDomain(row))
+        return rows.map((row) => ProjectMapper.toDomain(row));
     }
 
     async insert(project: Project): Promise<void> {
@@ -41,15 +45,15 @@ export class PrismaProjectRepository implements ProjectRepository {
             await this.client.project.create({
                 data: {
                     id: project.id,
-                    ...ProjectMapper.toPersistence(project)
-                }
-            })
+                    ...ProjectMapper.toPersistence(project),
+                },
+            });
         } catch (error) {
             if (isUniqueViolation(error)) {
-                throw new ProjectRepositoryConflictError()
+                throw new ProjectRepositoryConflictError();
             }
 
-            throw error
+            throw error;
         }
     }
 
@@ -57,17 +61,16 @@ export class PrismaProjectRepository implements ProjectRepository {
         try {
             await this.client.project.update({
                 where: {
-                    id: project.id
+                    id: project.id,
                 },
-                data: ProjectMapper.toPersistence(project)
-            })
+                data: ProjectMapper.toPersistence(project),
+            });
         } catch (error) {
-
             if (isNotFoundError(error)) {
-                throw new ProjectRepositoryNotFoundError()
+                throw new ProjectRepositoryNotFoundError();
             }
 
-            throw error
+            throw error;
         }
     }
 }
