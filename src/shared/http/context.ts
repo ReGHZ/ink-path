@@ -30,8 +30,29 @@ export function requireUserId(c: Context<AppEnvironment>): string {
 
   return userId;
 }
+export function requireTargetUserId(c: Context<AppEnvironment>): string {
+  const userId = c.req.param("userId");
 
-export function requireProjectMember(c: Context<AppEnvironment>): ProjectMemberInfo {
+  if (!userId) {
+    throw new AppError(ErrorCode.NOT_FOUND, "User not found");
+  }
+
+  return userId;
+}
+
+export function requireProjectId(c: Context<AppEnvironment>): string {
+  const projectId = c.req.param("projectId");
+
+  if (!projectId) {
+    throw new AppError(ErrorCode.NOT_FOUND, "Project not found");
+  }
+
+  return projectId;
+}
+
+export function requireProjectMember(
+  c: Context<AppEnvironment>,
+): ProjectMemberInfo {
   const member = c.get("projectMember");
 
   if (!member) {

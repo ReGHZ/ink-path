@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 
+import { mountProjectModule } from "./domains/project/public/index.js";
 import { mountUserModule } from "./domains/user/public/index.js";
 import { handleError } from "./shared/http/errorHandler.js";
 import { requestLogger } from "./shared/middleware/RequestMiddleware.js";
@@ -35,6 +36,7 @@ export function createApp(container: AwilixContainer<AppCradle>) {
   const apiV1 = new Hono<AppEnvironment>({ strict: true });
 
   mountUserModule(apiV1, container);
+  mountProjectModule(apiV1, container)
   app.route("/api/v1", apiV1);
 
   return app;
