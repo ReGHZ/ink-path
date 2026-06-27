@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ProjectService } from "./ProjectService.js";
 import { ErrorCode } from "../../../../shared/errors/ErrorCode.js";
 import { Project } from "../domain/Project.js";
+import { ProjectRepositoryNotFoundError } from "../domain/ProjectRepositoryError.js";
 
 import type { Clock } from "../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../shared/application/ports/IdGenerator.js";
@@ -285,6 +286,44 @@ describe("ProjectService", () => {
         service.updateProjectDetails("missing", { name: "Name" }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
+
+    it("throws CONFLICT when updating an archived project", async () => {
+      const { projects, service } = createService();
+
+      const project = Project.create({
+        id: "proj-1",
+        ownerUserId: "user-1",
+        createdByUserId: "user-1",
+        name: "My Novel",
+        now,
+      });
+      project.archive(now);
+      await projects.insert(project);
+
+      await expect(
+        service.updateProjectDetails("proj-1", { name: "New Name" }),
+      ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("throws NOT_FOUND when project disappears between load and update", async () => {
+      const { projects, service } = createService();
+
+      const project = Project.create({
+        id: "proj-1",
+        ownerUserId: "user-1",
+        createdByUserId: "user-1",
+        name: "My Novel",
+        now,
+      });
+      await projects.insert(project);
+
+      projects.update = (): Promise<void> =>
+        Promise.reject(new ProjectRepositoryNotFoundError());
+
+      await expect(
+        service.updateProjectDetails("proj-1", { name: "New Name" }),
+      ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
   });
 
   describe("activateProject", () => {
@@ -311,6 +350,24 @@ describe("ProjectService", () => {
 
       await expect(service.activateProject("missing")).rejects.toMatchObject({
         code: ErrorCode.NOT_FOUND,
+      });
+    });
+
+    it("throws CONFLICT when activating an archived project", async () => {
+      const { projects, service } = createService();
+
+      const project = Project.create({
+        id: "proj-1",
+        ownerUserId: "user-1",
+        createdByUserId: "user-1",
+        name: "My Novel",
+        now,
+      });
+      project.archive(now);
+      await projects.insert(project);
+
+      await expect(service.activateProject("proj-1")).rejects.toMatchObject({
+        code: ErrorCode.CONFLICT,
       });
     });
   });
@@ -342,6 +399,24 @@ describe("ProjectService", () => {
         code: ErrorCode.NOT_FOUND,
       });
     });
+
+    it("throws CONFLICT when archiving an already-archived project", async () => {
+      const { projects, service } = createService();
+
+      const project = Project.create({
+        id: "proj-1",
+        ownerUserId: "user-1",
+        createdByUserId: "user-1",
+        name: "My Novel",
+        now,
+      });
+      project.archive(now);
+      await projects.insert(project);
+
+      await expect(service.archiveProject("proj-1")).rejects.toMatchObject({
+        code: ErrorCode.CONFLICT,
+      });
+    });
   });
 
   describe("changeProjectVisibility", () => {
@@ -369,6 +444,24 @@ describe("ProjectService", () => {
       await expect(
         service.changeProjectVisibility("missing", { visibility: "public" }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("throws CONFLICT when changing visibility of an archived project", async () => {
+      const { projects, service } = createService();
+
+      const project = Project.create({
+        id: "proj-1",
+        ownerUserId: "user-1",
+        createdByUserId: "user-1",
+        name: "My Novel",
+        now,
+      });
+      project.archive(now);
+      await projects.insert(project);
+
+      await expect(
+        service.changeProjectVisibility("proj-1", { visibility: "public" }),
+      ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
     });
   });
 });
