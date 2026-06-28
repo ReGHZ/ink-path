@@ -1,9 +1,11 @@
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import type { PrismaClient, Prisma } from "../../generated/prisma/client.js";
 
 export type ClaimedOutboxEvent = {
   id: string;
   routingKey: string;
   payload: unknown;
+  retryCount: number;
+  maxRetries: number;
 };
 
 export class OutboxRepository {
@@ -50,6 +52,8 @@ export class OutboxRepository {
             id: true,
             routingKey: true,
             payload: true,
+            retryCount: true,
+            maxRetries: true,
           },
           orderBy: {
             createdAt: "asc",
@@ -104,6 +108,79 @@ export class OutboxRepository {
       },
     });
     return result.count === 1;
+  }
+
+  async markDeadLettered(parameters: {
+    eventId: string;
+    workerId: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  }): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const outboxEvent = await tx.outboxEvent.findFirst({
+        where: {
+          id: parameters.eventId,
+          status: "processing",
+          lockedBy: parameters.workerId,
+        },
+      });
+
+      if (!outboxEvent) {
+        return false;
+      }
+
+      const updated = await tx.outboxEvent.updateMany({
+        where: {
+          id: parameters.eventId,
+          status: "processing",
+          lockedBy: parameters.workerId,
+        },
+        data: {
+          status: "dead_lettered",
+          lastErrorCode: parameters.errorCode,
+          lastErrorMessage: parameters.errorMessage,
+          lockedAt: null,
+          lockedBy: null,
+          nextRetryAt: null,
+        },
+      });
+
+      if (updated.count !== 1) {
+        return false;
+      }
+
+      await tx.deadLetterEvent.create({
+        data: {
+          outboxEventId: outboxEvent.id,
+          rootOutboxEventId: outboxEvent.id,
+          failureSource: "outbox_publish",
+
+          eventType: outboxEvent.eventType,
+          eventVersion: outboxEvent.eventVersion,
+
+          aggregateType: outboxEvent.aggregateType,
+          aggregateId: outboxEvent.aggregateId,
+
+          projectId: outboxEvent.projectId,
+          triggeredByUserId: outboxEvent.triggeredByUserId,
+
+          exchange: outboxEvent.exchange,
+          routingKey: outboxEvent.routingKey,
+
+          payload: outboxEvent.payload as Prisma.InputJsonValue,
+
+          retryCount: outboxEvent.retryCount,
+          maxRetries: outboxEvent.maxRetries,
+
+          lastErrorCode: parameters.errorCode,
+          lastErrorMessage: parameters.errorMessage,
+
+          failedAt: new Date(),
+        },
+      });
+
+      return true;
+    });
   }
 }
 

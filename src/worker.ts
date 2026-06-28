@@ -3,15 +3,23 @@ import { logger } from "./infrastructure/logger.js";
 
 const container = createAppContainer();
 const rabbitmq = container.resolve("rabbitmq");
+const outboxDispatcher = container.resolve("outboxDispatcher");
 
 await rabbitmq.start();
+await outboxDispatcher.start();
 
 logger.info("Worker process running.");
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
   logger.info(`Received ${signal}. Shutting down worker process.`);
 
-  // TODO: Once workers are wired, stop consumers first, then publisher, then RabbitMQ.
+  try {
+    await outboxDispatcher.stop();
+    logger.info("Outbox dispatcher stopped successfully.");
+  } catch (disconnectError) {
+    logger.error({ err: disconnectError }, "Failed to stop outbox dispatcher.");
+  }
+
   try {
     await rabbitmq.stop();
     logger.info("RabbitMQ manager stopped successfully.");
