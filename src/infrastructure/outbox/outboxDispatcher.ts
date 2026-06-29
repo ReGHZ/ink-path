@@ -12,7 +12,9 @@ type OutboxDispatcherOptions = {
   workerId: string;
   batchSize?: number;
   pollIntervalMs?: number;
-  retryDelayMs?: number;
+
+  retryBaseDelayMs?: number;
+  retryMaxDelayMs?: number;
 };
 
 export class OutboxDispatcher {
@@ -21,8 +23,10 @@ export class OutboxDispatcher {
 
   private readonly batchSize: number;
   private readonly pollIntervalMs: number;
-  private readonly retryDelayMs: number;
   private readonly workerId: string;
+
+  private readonly retryBaseDelayMs: number;
+  private readonly retryMaxDelayMs: number;
 
   constructor(
     private readonly outboxRepository: OutboxRepository,
@@ -32,10 +36,23 @@ export class OutboxDispatcher {
     this.workerId = options.workerId;
     this.batchSize = options.batchSize ?? 10;
     this.pollIntervalMs = options.pollIntervalMs ?? 1000;
-    this.retryDelayMs = options.retryDelayMs ?? 30000;
+
+    this.retryBaseDelayMs = options.retryBaseDelayMs ?? 1_000;
+    this.retryMaxDelayMs = options.retryMaxDelayMs ?? 30_000;
   }
 
   private abortController: AbortController | null = null;
+
+  private calculateNextRetryAt(retryCount: number): Date {
+    const exponent = Math.max(retryCount - 1, 0);
+
+    const delayMs = Math.min(
+      this.retryBaseDelayMs * 2 ** exponent,
+      this.retryMaxDelayMs,
+    );
+
+    return new Date(Date.now() + delayMs);
+  }
 
   async start(): Promise<void> {
     if (this.running) return;
@@ -109,24 +126,62 @@ export class OutboxDispatcher {
         );
       }
     } catch (error) {
-      const markedFailed = await this.outboxRepository.markFailed({
-        eventId: event.id,
-        workerId: this.workerId,
-        errorCode: "OUTBOX_PUBLISH_FAILED",
-        errorMessage: error instanceof Error ? error.message : String(error),
-        nextRetryAt: new Date(Date.now() + this.retryDelayMs),
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      const nextRetryCount = event.retryCount + 1;
+      const exhausted = nextRetryCount >= event.maxRetries;
 
       logger.error(
-        { err: error, outboxEventId: event.id, workerId: this.workerId },
-        "Failed to publish outbox event",
+        {
+          err: error,
+          outboxEventId: event.id,
+          workerId: this.workerId,
+          retryCount: nextRetryCount,
+          maxRetries: event.maxRetries,
+        },
+        exhausted
+          ? "Failed to publish outbox event; moving to dead letter"
+          : "Failed to publish outbox event; scheduling retry",
       );
 
-      if (!markedFailed) {
-        logger.warn(
-          { outboxEventId: event.id, workerId: this.workerId },
-          "Outbox event publish failed but failed status was not updated",
+      if (exhausted) {
+        const markedDeadLettered = await this.outboxRepository.markDeadLettered(
+          {
+            eventId: event.id,
+            workerId: this.workerId,
+            errorCode: "OUTBOX_PUBLISH_FAILED",
+            errorMessage,
+          },
         );
+
+        if (!markedDeadLettered) {
+          logger.warn(
+            {
+              outboxEventId: event.id,
+              workerId: this.workerId,
+            },
+            "Outbox event publish failed but dead-letter status was not updated",
+          );
+        }
+      } else {
+        const markedFailed = await this.outboxRepository.markFailed({
+          eventId: event.id,
+          workerId: this.workerId,
+          errorCode: "OUTBOX_PUBLISH_FAILED",
+          errorMessage,
+          nextRetryAt: this.calculateNextRetryAt(nextRetryCount),
+        });
+
+        if (!markedFailed) {
+          logger.warn(
+            {
+              outboxEventId: event.id,
+              workerId: this.workerId,
+            },
+            "Outbox event publish failed but failed status was not updated",
+          );
+        }
       }
     }
   }
@@ -140,6 +195,7 @@ export function createOutboxDispatcher({
   rabbitMqPublisher: RabbitMqPublisher;
 }): OutboxDispatcher {
   return new OutboxDispatcher(outboxRepository, rabbitMqPublisher, {
-    workerId: process.env.OUTBOX_DISPATCHER_WORKER_ID ?? `worker-${process.pid}`,
+    workerId:
+      process.env.OUTBOX_DISPATCHER_WORKER_ID ?? `worker-${process.pid}`,
   });
 }

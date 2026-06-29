@@ -5,6 +5,7 @@ const runtimeEnvironmentPath = resolve("test/.runtime/test-environment.json");
 
 type RuntimeEnvironment = {
   databaseUrl: string;
+  rabbitMqUrl: string;
 };
 
 export async function writeRuntimeEnvironment(
@@ -22,12 +23,27 @@ export async function readRuntimeEnvironment(): Promise<RuntimeEnvironment> {
   const raw = await readFile(runtimeEnvironmentPath, "utf8");
   const parsed = JSON.parse(raw) as Partial<RuntimeEnvironment>;
 
-  if (!parsed.databaseUrl) {
-    throw new Error("Missing databaseUrl in test runtime environment");
+  const { databaseUrl, rabbitMqUrl } = parsed;
+
+  if (!databaseUrl || !rabbitMqUrl) {
+    const missing: string[] = [];
+
+    if (!databaseUrl) {
+      missing.push("DATABASE_URL");
+    }
+
+    if (!rabbitMqUrl) {
+      missing.push("RABBITMQ_URL");
+    }
+
+    throw new Error(
+      `Missing required environment variable(s): ${missing.join(", ")}`,
+    );
   }
 
   return {
-    databaseUrl: parsed.databaseUrl,
+    databaseUrl,
+    rabbitMqUrl,
   };
 }
 

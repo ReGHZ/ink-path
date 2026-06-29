@@ -137,6 +137,9 @@ export class OutboxRepository {
         },
         data: {
           status: "dead_lettered",
+          retryCount: {
+            increment: 1,
+          },
           lastErrorCode: parameters.errorCode,
           lastErrorMessage: parameters.errorMessage,
           lockedAt: null,
@@ -169,7 +172,7 @@ export class OutboxRepository {
 
           payload: outboxEvent.payload as Prisma.InputJsonValue,
 
-          retryCount: outboxEvent.retryCount,
+          retryCount: outboxEvent.retryCount + 1,
           maxRetries: outboxEvent.maxRetries,
 
           lastErrorCode: parameters.errorCode,

@@ -20,11 +20,21 @@ const POSTGRES_PASSWORD = "postgres";
 const POSTGRES_DB = "ink_path_test";
 const POSTGRES_PORT = 5432;
 
+const RABBITMQ_IMAGE = "rabbitmq:management";
+const RABBITMQ_PORT = 5672;
+
 function buildDatabaseUrl(container: StartedTestContainer): string {
   const host = container.getHost();
   const port = container.getMappedPort(POSTGRES_PORT);
 
   return `postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${host}:${port}/${POSTGRES_DB}`;
+}
+
+function buildRabbitMqUrl(container: StartedTestContainer): string {
+  const host = container.getHost();
+  const port = container.getMappedPort(RABBITMQ_PORT);
+
+  return `amqp://guest:guest@${host}:${port}`;
 }
 
 async function runMigrations(databaseUrl: string): Promise<void> {
@@ -39,7 +49,7 @@ async function runMigrations(databaseUrl: string): Promise<void> {
 export default async function globalSetup(): Promise<() => Promise<void>> {
   await removeRuntimeEnvironment();
 
-  const container = await new GenericContainer(POSTGRES_IMAGE)
+  const postgresContainer = await new GenericContainer(POSTGRES_IMAGE)
     .withEnvironment({
       POSTGRES_DB,
       POSTGRES_PASSWORD,
@@ -51,13 +61,22 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     )
     .start();
 
-  const databaseUrl = buildDatabaseUrl(container);
+  const databaseUrl = buildDatabaseUrl(postgresContainer);
 
-  await writeRuntimeEnvironment({ databaseUrl });
+  const rabbitMqContainer = await new GenericContainer(RABBITMQ_IMAGE)
+    .withExposedPorts(RABBITMQ_PORT)
+    .withWaitStrategy(Wait.forLogMessage("Server startup complete"))
+    .start();
+
+  const rabbitMqUrl = buildRabbitMqUrl(rabbitMqContainer);
+
+  await writeRuntimeEnvironment({ databaseUrl, rabbitMqUrl });
   await runMigrations(databaseUrl);
 
   return async () => {
-    await container.stop();
+    await rabbitMqContainer.stop();
+    await postgresContainer.stop();
+
     await removeRuntimeEnvironment();
   };
 }
