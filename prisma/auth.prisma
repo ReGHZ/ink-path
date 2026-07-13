@@ -49,18 +49,25 @@ model User {
   factions             Faction[]
   plots                Plot[]
   chapters             Chapter[]
+  scenes               Scene[]
   contentRevisions     ContentRevision[]
   contentRelationships ContentRelationship[]
 
+  // narrative transition back-reference (Content mechanism)
+  narrativeTransitionsDeclared NarrativeTransition[] @relation("NarrativeTransitionDeclaredBy")
+
   // ai domain back-references
-  validationRequests ValidationRequest[]
-  chatSessions       ChatSession[]
-  chatMessages       ChatMessage[]
-  aiUsageLogs        AiUsageLog[]
+  chatSessions ChatSession[]
+  chatMessages ChatMessage[]
+  aiUsageLogs  AiUsageLog[]
+
+  // validation domain back-references
+  ruleVersionsChanged     RuleVersion[]     @relation("RuleVersionChangedBy")
+  templatesCreated        RuleTemplate[]    @relation("RuleTemplateCreatedBy")
+  templateVersionsChanged TemplateVersion[] @relation("TemplateVersionChangedBy")
 
   // feedback domain back-references
-  commentsCreated          Comment[]
-  validationResultsCreated ValidationResult[]
+  commentsCreated Comment[]
 
   // infra domain back-references
   triggeredOutboxEvents     OutboxEvent[]

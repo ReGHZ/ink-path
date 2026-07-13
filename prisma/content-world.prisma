@@ -41,7 +41,6 @@ model Layer {
   currentRevision ContentRevision? @relation("LayerCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
   commentTargets          CommentTargetLayer[]
-  validationResultTargets ValidationResultTargetLayer[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -75,7 +74,6 @@ model Map {
   currentRevision ContentRevision? @relation("MapCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
   commentTargets          CommentTargetMap[]
-  validationResultTargets ValidationResultTargetMap[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -104,7 +102,6 @@ model WorldElement {
   currentRevision ContentRevision? @relation("WorldElementCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
   commentTargets          CommentTargetWorldElement[]
-  validationResultTargets ValidationResultTargetWorldElement[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -136,7 +133,6 @@ model Event {
   currentRevision ContentRevision? @relation("EventCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
   commentTargets          CommentTargetEvent[]
-  validationResultTargets ValidationResultTargetEvent[]
 
   @@index([projectId])
   @@index([createdByUserId])

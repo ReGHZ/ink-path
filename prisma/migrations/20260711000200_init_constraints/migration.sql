@@ -1,11 +1,21 @@
--- Baseline custom SQL for migration 3: init_constraints.
--- Copy this file into the migration.sql created after init_schema.
+-- Migration 3/3: Custom SQL hardening — CHECK constraints, partial unique indexes,
+-- partial indexes. Dijalankan setelah init_schema.
 --
--- This file intentionally contains only:
--- - CHECK constraints
--- - partial unique indexes
+-- Sumber (frozen):
+--   - 06-migration-planning/01_migration_plan.md §4
+--   - 04-prisma-design/02_project.md, 03_content-world.md, 05_content-support.md, 06_ai.md, 07_feedback.md, 08_infra.md
+--   - 04-prisma-design/09_validation.md (4 partial index Validation)
+--   - 04-prisma-design/10_narrative_transition.md (2 partial index Narrative Transition)
+--   - 2 partial unique rule_dependency_index (Option B — surrogate id + attributeName nullable)
 --
--- Descending indexes are declared in feedback.prisma with sort: Desc.
+-- Catatan: Prisma tidak track CHECK/partial index → tidak ada drift detection untuk yang di
+-- sini. ALTER TABLE ADD CONSTRAINT tidak support IF NOT EXISTS, tapi Prisma
+-- migration dijalankan sekali per _prisma_migrations entry → bukan risiko operasional normal.
+-- DDL PostgreSQL bersifat transactional: kalau gagal di tengah, seluruh migration rollback.
+
+-- =============================================================================
+-- Kategori A: CHECK constraints
+-- =============================================================================
 
 -- Project domain
 ALTER TABLE project_invitations
@@ -43,18 +53,6 @@ CHECK (
 );
 
 -- AI domain
-ALTER TABLE validation_requests
-ADD CONSTRAINT validation_requests_scope_target_consistency
-CHECK (
-  (scope_type = 'entity' AND target_entity_type IS NOT NULL AND target_entity_id IS NOT NULL)
-  OR
-  (scope_type = 'project' AND target_entity_type IS NULL AND target_entity_id IS NULL)
-);
-
-ALTER TABLE validation_requests
-ADD CONSTRAINT validation_requests_attempt_bounds
-CHECK (attempt_count >= 0 AND max_attempts > 0);
-
 ALTER TABLE ai_usage_logs
 ADD CONSTRAINT ai_usage_logs_tokens_non_negative
 CHECK (
@@ -78,23 +76,6 @@ CHECK (
   AND (output_tokens IS NULL OR output_tokens >= 0)
   AND (total_tokens IS NULL OR total_tokens >= 0)
   AND (latency_ms IS NULL OR latency_ms >= 0)
-);
-
--- Feedback domain
-ALTER TABLE validation_results
-ADD CONSTRAINT validation_results_source_consistency
-CHECK (
-  (
-    source = 'ai'
-    AND validation_request_id IS NOT NULL
-    AND created_by_user_id IS NULL
-  )
-  OR
-  (
-    source = 'manual'
-    AND validation_request_id IS NULL
-    AND created_by_user_id IS NOT NULL
-  )
 );
 
 -- Infra domain
@@ -154,7 +135,11 @@ CHECK (
   (status <> 'replayed' AND replayed_as_outbox_event_id IS NULL)
 );
 
--- Partial unique indexes
+-- =============================================================================
+-- Kategori B: Partial unique indexes
+-- =============================================================================
+
+-- Project domain
 CREATE UNIQUE INDEX user_projects_unique_active_member
 ON user_projects(project_id, user_id)
 WHERE status = 'active';
@@ -171,15 +156,43 @@ CREATE UNIQUE INDEX project_ownership_transfers_unique_pending_project
 ON project_ownership_transfers(project_id)
 WHERE status = 'pending';
 
-CREATE UNIQUE INDEX validation_requests_unique_active_entity
-ON validation_requests(project_id, scope_type, target_entity_type, target_entity_id)
-WHERE status IN ('pending', 'processing', 'result_published');
-
-CREATE UNIQUE INDEX validation_requests_unique_active_project
-ON validation_requests(project_id, scope_type)
-WHERE scope_type = 'project'
-  AND status IN ('pending', 'processing', 'result_published');
-
-CREATE UNIQUE INDEX validation_result_targets_unique_primary
-ON validation_result_targets(validation_result_id)
+-- Validation domain (sumber: 04-prisma-design/09_validation.md)
+CREATE UNIQUE INDEX issue_targets_unique_primary_per_issue
+ON issue_targets(issue_id)
 WHERE role = 'primary';
+
+-- Validation — rule_dependency_index (Option B: attributeName nullable, uniqueness di-enforce
+-- lewat 2 partial unique terpisah untuk kasus entity-level vs attribute-level).
+CREATE UNIQUE INDEX rule_dependency_index_unique_attr
+ON rule_dependency_index(rule_id, entity_type, attribute_name)
+WHERE attribute_name IS NOT NULL;
+
+CREATE UNIQUE INDEX rule_dependency_index_unique_entity
+ON rule_dependency_index(rule_id, entity_type)
+WHERE attribute_name IS NULL;
+
+-- =============================================================================
+-- Kategori C: Partial (non-unique) indexes
+-- =============================================================================
+
+-- Validation domain (sumber: 04-prisma-design/09_validation.md)
+CREATE INDEX validation_requests_processing_lease
+ON validation_requests(project_id, status, lease_expires_at)
+WHERE status = 'processing';
+
+CREATE INDEX findings_conflict_fingerprint
+ON findings(project_id, fingerprint)
+WHERE outcome = 'conflict';
+
+CREATE INDEX rules_project_active
+ON rules(project_id)
+WHERE archived_at IS NULL;
+
+-- Narrative Transition (sumber: 04-prisma-design/10_narrative_transition.md)
+CREATE INDEX transition_effects_by_content_revision
+ON transition_effects(content_revision_id)
+WHERE content_revision_id IS NOT NULL;
+
+CREATE INDEX transition_effects_pending_by_entity
+ON transition_effects(project_id, target_entity_type, target_entity_id)
+WHERE applied_at IS NULL;

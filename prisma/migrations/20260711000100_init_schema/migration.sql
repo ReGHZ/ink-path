@@ -1,11 +1,5 @@
--- CreateEnum
-CREATE TYPE "ValidationScopeType" AS ENUM ('entity', 'project');
-
--- CreateEnum
-CREATE TYPE "ValidationRequestStatus" AS ENUM ('pending', 'processing', 'result_published', 'success', 'failed');
-
--- CreateEnum
-CREATE TYPE "ValidationFailureStage" AS ENUM ('ai_processing', 'publish_result', 'feedback_storage');
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateEnum
 CREATE TYPE "ChatSessionStatus" AS ENUM ('active', 'archived', 'deleted');
@@ -41,7 +35,10 @@ CREATE TYPE "PlotStatus" AS ENUM ('draft', 'active', 'completed');
 CREATE TYPE "ChapterStatus" AS ENUM ('outline', 'draft', 'review', 'published');
 
 -- CreateEnum
-CREATE TYPE "ContentEntityType" AS ENUM ('layer', 'map', 'character', 'faction', 'world_element', 'event', 'plot', 'chapter');
+CREATE TYPE "SceneStatus" AS ENUM ('draft', 'published');
+
+-- CreateEnum
+CREATE TYPE "ContentEntityType" AS ENUM ('layer', 'map', 'character', 'faction', 'world_element', 'event', 'plot', 'chapter', 'scene');
 
 -- CreateEnum
 CREATE TYPE "ContentRevisionChangeType" AS ENUM ('create', 'update', 'delete');
@@ -68,21 +65,6 @@ CREATE TYPE "CommentStatus" AS ENUM ('active', 'resolved', 'archived');
 CREATE TYPE "CommentTargetRole" AS ENUM ('primary');
 
 -- CreateEnum
-CREATE TYPE "ValidationResultValue" AS ENUM ('consistent', 'inconsistent', 'warning');
-
--- CreateEnum
-CREATE TYPE "ValidationSeverity" AS ENUM ('critical', 'warning', 'info');
-
--- CreateEnum
-CREATE TYPE "ValidationResultSource" AS ENUM ('ai', 'manual');
-
--- CreateEnum
-CREATE TYPE "ValidationResultStatus" AS ENUM ('open', 'resolved', 'dismissed');
-
--- CreateEnum
-CREATE TYPE "ValidationResultTargetRole" AS ENUM ('primary', 'related', 'context');
-
--- CreateEnum
 CREATE TYPE "OutboxEventStatus" AS ENUM ('pending', 'processing', 'published', 'failed', 'dead_lettered');
 
 -- CreateEnum
@@ -90,6 +72,12 @@ CREATE TYPE "DeadLetterEventStatus" AS ENUM ('open', 'replayed', 'ignored', 'rep
 
 -- CreateEnum
 CREATE TYPE "DeadLetterFailureSource" AS ENUM ('outbox_publish');
+
+-- CreateEnum
+CREATE TYPE "NarrativeTransitionSourceType" AS ENUM ('scene', 'event', 'chapter');
+
+-- CreateEnum
+CREATE TYPE "TransitionEffectType" AS ENUM ('attribute_change', 'relationship_add', 'relationship_remove');
 
 -- CreateEnum
 CREATE TYPE "ProjectVisibility" AS ENUM ('private', 'shared', 'public');
@@ -112,32 +100,38 @@ CREATE TYPE "ProjectInvitationStatus" AS ENUM ('pending', 'accepted', 'rejected'
 -- CreateEnum
 CREATE TYPE "OwnershipTransferStatus" AS ENUM ('pending', 'accepted', 'rejected', 'cancelled', 'expired');
 
--- CreateTable
-CREATE TABLE "validation_requests" (
-    "id" UUID NOT NULL,
-    "project_id" UUID NOT NULL,
-    "requested_by_user_id" UUID NOT NULL,
-    "scope_type" "ValidationScopeType" NOT NULL,
-    "target_entity_type" "ContentEntityType",
-    "target_entity_id" UUID,
-    "snapshot_payload" JSONB NOT NULL,
-    "snapshot_hash" TEXT NOT NULL,
-    "status" "ValidationRequestStatus" NOT NULL DEFAULT 'pending',
-    "validation_result_id" UUID,
-    "result_published_at" TIMESTAMP(3),
-    "attempt_count" INTEGER NOT NULL DEFAULT 0,
-    "max_attempts" INTEGER NOT NULL DEFAULT 3,
-    "failure_stage" "ValidationFailureStage",
-    "last_error_code" TEXT,
-    "last_error_message" TEXT,
-    "failed_at" TIMESTAMP(3),
-    "started_at" TIMESTAMP(3),
-    "completed_at" TIMESTAMP(3),
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP(3) NOT NULL,
+-- CreateEnum
+CREATE TYPE "RuleCategory" AS ENUM ('structural', 'semantic');
 
-    CONSTRAINT "validation_requests_pkey" PRIMARY KEY ("id")
-);
+-- CreateEnum
+CREATE TYPE "ValidationScope" AS ENUM ('entity', 'project');
+
+-- CreateEnum
+CREATE TYPE "ValidationTriggerSource" AS ENUM ('reactive', 'incremental', 'full_scan', 'manual');
+
+-- CreateEnum
+CREATE TYPE "ValidationRequestStatus" AS ENUM ('pending', 'processing', 'completed', 'failed');
+
+-- CreateEnum
+CREATE TYPE "FindingSource" AS ENUM ('rule_engine', 'ai');
+
+-- CreateEnum
+CREATE TYPE "FindingOutcome" AS ENUM ('conflict', 'valid', 'unsupported');
+
+-- CreateEnum
+CREATE TYPE "IssueSeverity" AS ENUM ('error', 'warning', 'info');
+
+-- CreateEnum
+CREATE TYPE "IssueStatus" AS ENUM ('open', 'resolved', 'dismissed', 'stale');
+
+-- CreateEnum
+CREATE TYPE "IssueStaleReason" AS ENUM ('rule_changed', 'rule_archived');
+
+-- CreateEnum
+CREATE TYPE "IssueTargetRole" AS ENUM ('primary', 'secondary');
+
+-- CreateEnum
+CREATE TYPE "TemplateScope" AS ENUM ('platform', 'user', 'community');
 
 -- CreateTable
 CREATE TABLE "chat_sessions" (
@@ -321,6 +315,24 @@ CREATE TABLE "chapters" (
 );
 
 -- CreateTable
+CREATE TABLE "scenes" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "created_by_user_id" UUID NOT NULL,
+    "chapter_id" UUID NOT NULL,
+    "title" TEXT,
+    "summary" TEXT,
+    "content" TEXT,
+    "order_in_chapter" INTEGER NOT NULL,
+    "status" "SceneStatus" NOT NULL DEFAULT 'draft',
+    "current_revision_id" UUID,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "scenes_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "content_revisions" (
     "id" UUID NOT NULL,
     "project_id" UUID NOT NULL,
@@ -439,7 +451,7 @@ CREATE TABLE "comments" (
     "type" "CommentType" NOT NULL,
     "status" "CommentStatus" NOT NULL DEFAULT 'active',
     "parent_comment_id" UUID,
-    "validation_result_id" UUID,
+    "issue_id" UUID,
     "created_by_user_id" UUID NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
@@ -523,95 +535,11 @@ CREATE TABLE "comment_target_chapters" (
 );
 
 -- CreateTable
-CREATE TABLE "validation_results" (
-    "id" UUID NOT NULL,
-    "project_id" UUID NOT NULL,
-    "result" "ValidationResultValue" NOT NULL,
-    "message" TEXT NOT NULL,
-    "severity" "ValidationSeverity" NOT NULL,
-    "source" "ValidationResultSource" NOT NULL,
-    "status" "ValidationResultStatus" NOT NULL DEFAULT 'open',
-    "validation_request_id" UUID,
-    "created_by_user_id" UUID,
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP(3) NOT NULL,
+CREATE TABLE "comment_target_scenes" (
+    "comment_target_id" UUID NOT NULL,
+    "scene_id" UUID NOT NULL,
 
-    CONSTRAINT "validation_results_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_targets" (
-    "id" UUID NOT NULL,
-    "validation_result_id" UUID NOT NULL,
-    "project_id" UUID NOT NULL,
-    "role" "ValidationResultTargetRole" NOT NULL,
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "validation_result_targets_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_layers" (
-    "validation_result_target_id" UUID NOT NULL,
-    "layer_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_layers_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_maps" (
-    "validation_result_target_id" UUID NOT NULL,
-    "map_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_maps_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_characters" (
-    "validation_result_target_id" UUID NOT NULL,
-    "character_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_characters_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_factions" (
-    "validation_result_target_id" UUID NOT NULL,
-    "faction_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_factions_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_world_elements" (
-    "validation_result_target_id" UUID NOT NULL,
-    "world_element_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_world_elements_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_events" (
-    "validation_result_target_id" UUID NOT NULL,
-    "event_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_events_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_plots" (
-    "validation_result_target_id" UUID NOT NULL,
-    "plot_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_plots_pkey" PRIMARY KEY ("validation_result_target_id")
-);
-
--- CreateTable
-CREATE TABLE "validation_result_target_chapters" (
-    "validation_result_target_id" UUID NOT NULL,
-    "chapter_id" UUID NOT NULL,
-
-    CONSTRAINT "validation_result_target_chapters_pkey" PRIMARY KEY ("validation_result_target_id")
+    CONSTRAINT "comment_target_scenes_pkey" PRIMARY KEY ("comment_target_id")
 );
 
 -- CreateTable
@@ -677,6 +605,42 @@ CREATE TABLE "dead_letter_events" (
 );
 
 -- CreateTable
+CREATE TABLE "narrative_transitions" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "source_entity_type" "NarrativeTransitionSourceType" NOT NULL,
+    "source_entity_id" UUID NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "declared_by_user_id" UUID NOT NULL,
+    "reverses_transition_id" UUID,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "narrative_transitions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "transition_effects" (
+    "id" UUID NOT NULL,
+    "narrative_transition_id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "effect_type" "TransitionEffectType" NOT NULL,
+    "target_entity_type" "ContentEntityType" NOT NULL,
+    "target_entity_id" UUID NOT NULL,
+    "field_path" TEXT,
+    "new_value" TEXT,
+    "relationship_type" TEXT,
+    "related_entity_type" "ContentEntityType",
+    "related_entity_id" UUID,
+    "applied_at" TIMESTAMP(3),
+    "content_revision_id" UUID,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "transition_effects_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "projects" (
     "id" UUID NOT NULL,
     "owner_user_id" UUID NOT NULL,
@@ -692,6 +656,9 @@ CREATE TABLE "projects" (
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
     "archived_at" TIMESTAMP(3),
+    "full_scan_enabled" BOOLEAN NOT NULL DEFAULT false,
+    "full_scan_interval_hours" INTEGER NOT NULL DEFAULT 24,
+    "next_full_scan_at" TIMESTAMP(3),
 
     CONSTRAINT "projects_pkey" PRIMARY KEY ("id")
 );
@@ -752,17 +719,189 @@ CREATE TABLE "project_ownership_transfers" (
     CONSTRAINT "project_ownership_transfers_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE INDEX "validation_requests_project_id_id_idx" ON "validation_requests"("project_id", "id");
+-- CreateTable
+CREATE TABLE "rules" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "category" "RuleCategory" NOT NULL,
+    "ast" JSONB NOT NULL,
+    "dependency_metadata" JSONB NOT NULL,
+    "current_version" INTEGER NOT NULL DEFAULT 1,
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "archived_at" TIMESTAMP(3),
+    "template_id" UUID,
+    "template_version" INTEGER,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
--- CreateIndex
-CREATE INDEX "validation_requests_project_id_requested_by_user_id_created_idx" ON "validation_requests"("project_id", "requested_by_user_id", "created_at");
+    CONSTRAINT "rules_pkey" PRIMARY KEY ("id")
+);
 
--- CreateIndex
-CREATE INDEX "validation_requests_status_created_at_idx" ON "validation_requests"("status", "created_at");
+-- CreateTable
+CREATE TABLE "rule_versions" (
+    "id" UUID NOT NULL,
+    "rule_id" UUID NOT NULL,
+    "version" INTEGER NOT NULL,
+    "ast_snapshot" JSONB NOT NULL,
+    "changed_at" TIMESTAMP(3) NOT NULL,
+    "changed_by" UUID NOT NULL,
 
--- CreateIndex
-CREATE INDEX "validation_requests_validation_result_id_idx" ON "validation_requests"("validation_result_id");
+    CONSTRAINT "rule_versions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "rule_dependency_index" (
+    "id" UUID NOT NULL,
+    "rule_id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "entity_type" "ContentEntityType" NOT NULL,
+    "attribute_name" TEXT,
+
+    CONSTRAINT "rule_dependency_index_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "validation_requests" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "scope" "ValidationScope" NOT NULL,
+    "entity_id" UUID,
+    "entity_type" "ContentEntityType",
+    "snapshot_payload" JSONB NOT NULL,
+    "trigger_source" "ValidationTriggerSource" NOT NULL,
+    "status" "ValidationRequestStatus" NOT NULL DEFAULT 'pending',
+    "failure_reason" TEXT,
+    "lease_expires_at" TIMESTAMP(3),
+    "pending_ai_jobs" INTEGER NOT NULL DEFAULT 0,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "validation_requests_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "findings" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "validation_request_id" UUID NOT NULL,
+    "rule_id" UUID,
+    "issue_id" UUID,
+    "source" "FindingSource" NOT NULL,
+    "outcome" "FindingOutcome" NOT NULL,
+    "severity" "IssueSeverity",
+    "message" TEXT,
+    "fingerprint" TEXT,
+    "rule_version_id" UUID,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "findings_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "issues" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "rule_id" UUID,
+    "fingerprint" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "source" "FindingSource" NOT NULL,
+    "category" "RuleCategory" NOT NULL,
+    "severity" "IssueSeverity" NOT NULL,
+    "status" "IssueStatus" NOT NULL DEFAULT 'open',
+    "stale_reason" "IssueStaleReason",
+    "first_detected_at" TIMESTAMP(3) NOT NULL,
+    "first_detected_rule_version" INTEGER,
+    "last_detected_at" TIMESTAMP(3) NOT NULL,
+    "last_detected_rule_version" INTEGER,
+    "resolved_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "issues_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "issue_targets" (
+    "id" UUID NOT NULL,
+    "issue_id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "entity_type" "ContentEntityType" NOT NULL,
+    "entity_id" UUID NOT NULL,
+    "role" "IssueTargetRole" NOT NULL,
+
+    CONSTRAINT "issue_targets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "evaluation_nodes" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "entity_id" UUID NOT NULL,
+    "entity_type" "ContentEntityType" NOT NULL,
+    "attributes" JSONB NOT NULL DEFAULT '{}',
+    "timeline_position" INTEGER,
+    "last_event_sequence" BIGINT NOT NULL DEFAULT 0,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "evaluation_nodes_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "evaluation_edges" (
+    "id" UUID NOT NULL,
+    "project_id" UUID NOT NULL,
+    "source_node_id" UUID NOT NULL,
+    "target_node_id" UUID NOT NULL,
+    "relationship_type" TEXT NOT NULL,
+    "metadata" JSONB NOT NULL DEFAULT '{}',
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "evaluation_edges_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "rule_templates" (
+    "id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "category" "RuleCategory" NOT NULL,
+    "pattern_name" TEXT NOT NULL,
+    "ast_template" JSONB NOT NULL,
+    "parameter_definitions" JSONB,
+    "scope" "TemplateScope" NOT NULL,
+    "current_version" INTEGER NOT NULL DEFAULT 1,
+    "created_by" UUID,
+    "usage_count" INTEGER NOT NULL DEFAULT 0,
+    "is_verified" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "rule_templates_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "rule_template_tags" (
+    "template_id" UUID NOT NULL,
+    "tag" TEXT NOT NULL,
+
+    CONSTRAINT "rule_template_tags_pkey" PRIMARY KEY ("template_id","tag")
+);
+
+-- CreateTable
+CREATE TABLE "template_versions" (
+    "id" UUID NOT NULL,
+    "template_id" UUID NOT NULL,
+    "version" INTEGER NOT NULL,
+    "ast_template" JSONB NOT NULL,
+    "parameter_definitions" JSONB,
+    "changed_at" TIMESTAMP(3) NOT NULL,
+    "changed_by" UUID,
+
+    CONSTRAINT "template_versions_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateIndex
 CREATE INDEX "chat_sessions_project_id_status_updated_at_idx" ON "chat_sessions"("project_id", "status", "updated_at");
@@ -906,6 +1045,21 @@ CREATE INDEX "chapters_project_id_title_idx" ON "chapters"("project_id", "title"
 CREATE UNIQUE INDEX "chapters_project_id_order_key" ON "chapters"("project_id", "order");
 
 -- CreateIndex
+CREATE INDEX "scenes_project_id_idx" ON "scenes"("project_id");
+
+-- CreateIndex
+CREATE INDEX "scenes_created_by_user_id_idx" ON "scenes"("created_by_user_id");
+
+-- CreateIndex
+CREATE INDEX "scenes_project_id_status_idx" ON "scenes"("project_id", "status");
+
+-- CreateIndex
+CREATE INDEX "scenes_chapter_id_idx" ON "scenes"("chapter_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "scenes_chapter_id_order_in_chapter_key" ON "scenes"("chapter_id", "order_in_chapter");
+
+-- CreateIndex
 CREATE INDEX "content_revisions_project_id_idx" ON "content_revisions"("project_id");
 
 -- CreateIndex
@@ -1011,7 +1165,7 @@ CREATE INDEX "events_project_id_event_type_idx" ON "events"("project_id", "event
 CREATE INDEX "comments_parent_comment_id_idx" ON "comments"("parent_comment_id");
 
 -- CreateIndex
-CREATE INDEX "comments_validation_result_id_idx" ON "comments"("validation_result_id");
+CREATE INDEX "comments_issue_id_idx" ON "comments"("issue_id");
 
 -- CreateIndex
 CREATE INDEX "comments_created_by_user_id_created_at_idx" ON "comments"("created_by_user_id", "created_at");
@@ -1050,46 +1204,7 @@ CREATE INDEX "comment_target_plots_plot_id_idx" ON "comment_target_plots"("plot_
 CREATE INDEX "comment_target_chapters_chapter_id_idx" ON "comment_target_chapters"("chapter_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "validation_results_validation_request_id_key" ON "validation_results"("validation_request_id");
-
--- CreateIndex
-CREATE INDEX "validation_results_project_id_status_idx" ON "validation_results"("project_id", "status");
-
--- CreateIndex
-CREATE INDEX "validation_results_created_by_user_id_created_at_idx" ON "validation_results"("created_by_user_id", "created_at");
-
--- CreateIndex
-CREATE INDEX "validation_results_project_id_created_at_idx" ON "validation_results"("project_id", "created_at" DESC);
-
--- CreateIndex
-CREATE INDEX "validation_result_targets_project_id_idx" ON "validation_result_targets"("project_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_targets_validation_result_id_idx" ON "validation_result_targets"("validation_result_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_layers_layer_id_idx" ON "validation_result_target_layers"("layer_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_maps_map_id_idx" ON "validation_result_target_maps"("map_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_characters_character_id_idx" ON "validation_result_target_characters"("character_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_factions_faction_id_idx" ON "validation_result_target_factions"("faction_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_world_elements_world_element_id_idx" ON "validation_result_target_world_elements"("world_element_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_events_event_id_idx" ON "validation_result_target_events"("event_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_plots_plot_id_idx" ON "validation_result_target_plots"("plot_id");
-
--- CreateIndex
-CREATE INDEX "validation_result_target_chapters_chapter_id_idx" ON "validation_result_target_chapters"("chapter_id");
+CREATE INDEX "comment_target_scenes_scene_id_idx" ON "comment_target_scenes"("scene_id");
 
 -- CreateIndex
 CREATE INDEX "outbox_events_status_created_at_idx" ON "outbox_events"("status", "created_at");
@@ -1129,6 +1244,24 @@ CREATE INDEX "dead_letter_events_project_id_created_at_idx" ON "dead_letter_even
 
 -- CreateIndex
 CREATE INDEX "dead_letter_events_status_root_outbox_event_id_idx" ON "dead_letter_events"("status", "root_outbox_event_id");
+
+-- CreateIndex
+CREATE INDEX "narrative_transitions_project_id_idx" ON "narrative_transitions"("project_id");
+
+-- CreateIndex
+CREATE INDEX "narrative_transitions_project_id_source_entity_type_source__idx" ON "narrative_transitions"("project_id", "source_entity_type", "source_entity_id");
+
+-- CreateIndex
+CREATE INDEX "narrative_transitions_declared_by_user_id_idx" ON "narrative_transitions"("declared_by_user_id");
+
+-- CreateIndex
+CREATE INDEX "transition_effects_narrative_transition_id_idx" ON "transition_effects"("narrative_transition_id");
+
+-- CreateIndex
+CREATE INDEX "transition_effects_project_id_target_entity_type_target_ent_idx" ON "transition_effects"("project_id", "target_entity_type", "target_entity_id");
+
+-- CreateIndex
+CREATE INDEX "transition_effects_narrative_transition_id_applied_at_idx" ON "transition_effects"("narrative_transition_id", "applied_at");
 
 -- CreateIndex
 CREATE INDEX "projects_owner_user_id_idx" ON "projects"("owner_user_id");
@@ -1193,14 +1326,95 @@ CREATE INDEX "project_ownership_transfers_status_idx" ON "project_ownership_tran
 -- CreateIndex
 CREATE INDEX "project_ownership_transfers_expires_at_idx" ON "project_ownership_transfers"("expires_at");
 
--- AddForeignKey
-ALTER TABLE "validation_requests" ADD CONSTRAINT "validation_requests_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- CreateIndex
+CREATE INDEX "rules_project_id_is_active_idx" ON "rules"("project_id", "is_active");
 
--- AddForeignKey
-ALTER TABLE "validation_requests" ADD CONSTRAINT "validation_requests_requested_by_user_id_fkey" FOREIGN KEY ("requested_by_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- CreateIndex
+CREATE INDEX "rules_project_id_category_idx" ON "rules"("project_id", "category");
 
--- AddForeignKey
-ALTER TABLE "validation_requests" ADD CONSTRAINT "validation_requests_validation_result_id_fkey" FOREIGN KEY ("validation_result_id") REFERENCES "validation_results"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- CreateIndex
+CREATE INDEX "rules_template_id_idx" ON "rules"("template_id");
+
+-- CreateIndex
+CREATE INDEX "rule_versions_rule_id_version_idx" ON "rule_versions"("rule_id", "version" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "rule_versions_rule_id_version_key" ON "rule_versions"("rule_id", "version");
+
+-- CreateIndex
+CREATE INDEX "rule_dependency_index_project_id_entity_type_attribute_name_idx" ON "rule_dependency_index"("project_id", "entity_type", "attribute_name");
+
+-- CreateIndex
+CREATE INDEX "rule_dependency_index_rule_id_idx" ON "rule_dependency_index"("rule_id");
+
+-- CreateIndex
+CREATE INDEX "validation_requests_project_id_status_idx" ON "validation_requests"("project_id", "status");
+
+-- CreateIndex
+CREATE INDEX "validation_requests_project_id_scope_entity_id_idx" ON "validation_requests"("project_id", "scope", "entity_id");
+
+-- CreateIndex
+CREATE INDEX "findings_project_id_validation_request_id_idx" ON "findings"("project_id", "validation_request_id");
+
+-- CreateIndex
+CREATE INDEX "findings_project_id_issue_id_idx" ON "findings"("project_id", "issue_id");
+
+-- CreateIndex
+CREATE INDEX "issues_project_id_status_idx" ON "issues"("project_id", "status");
+
+-- CreateIndex
+CREATE INDEX "issues_project_id_rule_id_idx" ON "issues"("project_id", "rule_id");
+
+-- CreateIndex
+CREATE INDEX "issues_project_id_severity_status_idx" ON "issues"("project_id", "severity", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "issues_project_id_fingerprint_key" ON "issues"("project_id", "fingerprint");
+
+-- CreateIndex
+CREATE INDEX "issue_targets_issue_id_idx" ON "issue_targets"("issue_id");
+
+-- CreateIndex
+CREATE INDEX "issue_targets_entity_type_entity_id_idx" ON "issue_targets"("entity_type", "entity_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "issue_targets_issue_id_entity_id_entity_type_key" ON "issue_targets"("issue_id", "entity_id", "entity_type");
+
+-- CreateIndex
+CREATE INDEX "evaluation_nodes_project_id_entity_type_idx" ON "evaluation_nodes"("project_id", "entity_type");
+
+-- CreateIndex
+CREATE INDEX "evaluation_nodes_project_id_entity_type_timeline_position_idx" ON "evaluation_nodes"("project_id", "entity_type", "timeline_position");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "evaluation_nodes_project_id_entity_id_key" ON "evaluation_nodes"("project_id", "entity_id");
+
+-- CreateIndex
+CREATE INDEX "evaluation_edges_project_id_source_node_id_idx" ON "evaluation_edges"("project_id", "source_node_id");
+
+-- CreateIndex
+CREATE INDEX "evaluation_edges_project_id_target_node_id_idx" ON "evaluation_edges"("project_id", "target_node_id");
+
+-- CreateIndex
+CREATE INDEX "evaluation_edges_project_id_relationship_type_idx" ON "evaluation_edges"("project_id", "relationship_type");
+
+-- CreateIndex
+CREATE INDEX "rule_templates_scope_is_verified_idx" ON "rule_templates"("scope", "is_verified");
+
+-- CreateIndex
+CREATE INDEX "rule_templates_scope_usage_count_idx" ON "rule_templates"("scope", "usage_count" DESC);
+
+-- CreateIndex
+CREATE INDEX "rule_templates_created_by_idx" ON "rule_templates"("created_by");
+
+-- CreateIndex
+CREATE INDEX "rule_template_tags_tag_idx" ON "rule_template_tags"("tag");
+
+-- CreateIndex
+CREATE INDEX "template_versions_template_id_version_idx" ON "template_versions"("template_id", "version" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "template_versions_template_id_version_key" ON "template_versions"("template_id", "version");
 
 -- AddForeignKey
 ALTER TABLE "chat_sessions" ADD CONSTRAINT "chat_sessions_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1222,9 +1436,6 @@ ALTER TABLE "ai_usage_logs" ADD CONSTRAINT "ai_usage_logs_project_id_fkey" FOREI
 
 -- AddForeignKey
 ALTER TABLE "ai_usage_logs" ADD CONSTRAINT "ai_usage_logs_triggered_by_user_id_fkey" FOREIGN KEY ("triggered_by_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "ai_usage_logs" ADD CONSTRAINT "ai_usage_logs_validation_request_id_fkey" FOREIGN KEY ("validation_request_id") REFERENCES "validation_requests"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ai_usage_logs" ADD CONSTRAINT "ai_usage_logs_chat_message_id_fkey" FOREIGN KEY ("chat_message_id") REFERENCES "chat_messages"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1276,6 +1487,18 @@ ALTER TABLE "chapters" ADD CONSTRAINT "chapters_created_by_user_id_fkey" FOREIGN
 
 -- AddForeignKey
 ALTER TABLE "chapters" ADD CONSTRAINT "chapters_current_revision_id_fkey" FOREIGN KEY ("current_revision_id") REFERENCES "content_revisions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "scenes" ADD CONSTRAINT "scenes_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "scenes" ADD CONSTRAINT "scenes_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "scenes" ADD CONSTRAINT "scenes_chapter_id_fkey" FOREIGN KEY ("chapter_id") REFERENCES "chapters"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "scenes" ADD CONSTRAINT "scenes_current_revision_id_fkey" FOREIGN KEY ("current_revision_id") REFERENCES "content_revisions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "content_revisions" ADD CONSTRAINT "content_revisions_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1341,9 +1564,6 @@ ALTER TABLE "comments" ADD CONSTRAINT "comments_created_by_user_id_fkey" FOREIGN
 ALTER TABLE "comments" ADD CONSTRAINT "comments_parent_comment_id_fkey" FOREIGN KEY ("parent_comment_id") REFERENCES "comments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "comments" ADD CONSTRAINT "comments_validation_result_id_fkey" FOREIGN KEY ("validation_result_id") REFERENCES "validation_results"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "comment_targets" ADD CONSTRAINT "comment_targets_comment_id_fkey" FOREIGN KEY ("comment_id") REFERENCES "comments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -1398,67 +1618,10 @@ ALTER TABLE "comment_target_chapters" ADD CONSTRAINT "comment_target_chapters_co
 ALTER TABLE "comment_target_chapters" ADD CONSTRAINT "comment_target_chapters_chapter_id_fkey" FOREIGN KEY ("chapter_id") REFERENCES "chapters"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "validation_results" ADD CONSTRAINT "validation_results_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "comment_target_scenes" ADD CONSTRAINT "comment_target_scenes_comment_target_id_fkey" FOREIGN KEY ("comment_target_id") REFERENCES "comment_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "validation_results" ADD CONSTRAINT "validation_results_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_results" ADD CONSTRAINT "validation_results_validation_request_id_fkey" FOREIGN KEY ("validation_request_id") REFERENCES "validation_requests"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_targets" ADD CONSTRAINT "validation_result_targets_validation_result_id_fkey" FOREIGN KEY ("validation_result_id") REFERENCES "validation_results"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_targets" ADD CONSTRAINT "validation_result_targets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_layers" ADD CONSTRAINT "validation_result_target_layers_validation_result_target_i_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_layers" ADD CONSTRAINT "validation_result_target_layers_layer_id_fkey" FOREIGN KEY ("layer_id") REFERENCES "layers"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_maps" ADD CONSTRAINT "validation_result_target_maps_validation_result_target_id_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_maps" ADD CONSTRAINT "validation_result_target_maps_map_id_fkey" FOREIGN KEY ("map_id") REFERENCES "maps"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_characters" ADD CONSTRAINT "validation_result_target_characters_validation_result_targ_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_characters" ADD CONSTRAINT "validation_result_target_characters_character_id_fkey" FOREIGN KEY ("character_id") REFERENCES "characters"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_factions" ADD CONSTRAINT "validation_result_target_factions_validation_result_target_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_factions" ADD CONSTRAINT "validation_result_target_factions_faction_id_fkey" FOREIGN KEY ("faction_id") REFERENCES "factions"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_world_elements" ADD CONSTRAINT "validation_result_target_world_elements_validation_result__fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_world_elements" ADD CONSTRAINT "validation_result_target_world_elements_world_element_id_fkey" FOREIGN KEY ("world_element_id") REFERENCES "world_elements"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_events" ADD CONSTRAINT "validation_result_target_events_validation_result_target_i_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_events" ADD CONSTRAINT "validation_result_target_events_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "events"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_plots" ADD CONSTRAINT "validation_result_target_plots_validation_result_target_id_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_plots" ADD CONSTRAINT "validation_result_target_plots_plot_id_fkey" FOREIGN KEY ("plot_id") REFERENCES "plots"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_chapters" ADD CONSTRAINT "validation_result_target_chapters_validation_result_target_fkey" FOREIGN KEY ("validation_result_target_id") REFERENCES "validation_result_targets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "validation_result_target_chapters" ADD CONSTRAINT "validation_result_target_chapters_chapter_id_fkey" FOREIGN KEY ("chapter_id") REFERENCES "chapters"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "comment_target_scenes" ADD CONSTRAINT "comment_target_scenes_scene_id_fkey" FOREIGN KEY ("scene_id") REFERENCES "scenes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1483,6 +1646,18 @@ ALTER TABLE "dead_letter_events" ADD CONSTRAINT "dead_letter_events_project_id_f
 
 -- AddForeignKey
 ALTER TABLE "dead_letter_events" ADD CONSTRAINT "dead_letter_events_triggered_by_user_id_fkey" FOREIGN KEY ("triggered_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "narrative_transitions" ADD CONSTRAINT "narrative_transitions_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "narrative_transitions" ADD CONSTRAINT "narrative_transitions_declared_by_user_id_fkey" FOREIGN KEY ("declared_by_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "narrative_transitions" ADD CONSTRAINT "narrative_transitions_reverses_transition_id_fkey" FOREIGN KEY ("reverses_transition_id") REFERENCES "narrative_transitions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "transition_effects" ADD CONSTRAINT "transition_effects_narrative_transition_id_fkey" FOREIGN KEY ("narrative_transition_id") REFERENCES "narrative_transitions"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "projects" ADD CONSTRAINT "projects_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1522,3 +1697,64 @@ ALTER TABLE "project_ownership_transfers" ADD CONSTRAINT "project_ownership_tran
 
 -- AddForeignKey
 ALTER TABLE "project_ownership_transfers" ADD CONSTRAINT "project_ownership_transfers_requested_by_user_id_fkey" FOREIGN KEY ("requested_by_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rules" ADD CONSTRAINT "rules_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rules" ADD CONSTRAINT "rules_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "rule_templates"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rule_versions" ADD CONSTRAINT "rule_versions_rule_id_fkey" FOREIGN KEY ("rule_id") REFERENCES "rules"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rule_versions" ADD CONSTRAINT "rule_versions_changed_by_fkey" FOREIGN KEY ("changed_by") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rule_dependency_index" ADD CONSTRAINT "rule_dependency_index_rule_id_fkey" FOREIGN KEY ("rule_id") REFERENCES "rules"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "validation_requests" ADD CONSTRAINT "validation_requests_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "findings" ADD CONSTRAINT "findings_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "findings" ADD CONSTRAINT "findings_validation_request_id_fkey" FOREIGN KEY ("validation_request_id") REFERENCES "validation_requests"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "findings" ADD CONSTRAINT "findings_rule_id_fkey" FOREIGN KEY ("rule_id") REFERENCES "rules"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "findings" ADD CONSTRAINT "findings_issue_id_fkey" FOREIGN KEY ("issue_id") REFERENCES "issues"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "findings" ADD CONSTRAINT "findings_rule_version_id_fkey" FOREIGN KEY ("rule_version_id") REFERENCES "rule_versions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "issues" ADD CONSTRAINT "issues_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "issues" ADD CONSTRAINT "issues_rule_id_fkey" FOREIGN KEY ("rule_id") REFERENCES "rules"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "issue_targets" ADD CONSTRAINT "issue_targets_issue_id_fkey" FOREIGN KEY ("issue_id") REFERENCES "issues"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "evaluation_edges" ADD CONSTRAINT "evaluation_edges_source_node_id_fkey" FOREIGN KEY ("source_node_id") REFERENCES "evaluation_nodes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "evaluation_edges" ADD CONSTRAINT "evaluation_edges_target_node_id_fkey" FOREIGN KEY ("target_node_id") REFERENCES "evaluation_nodes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rule_templates" ADD CONSTRAINT "rule_templates_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "rule_template_tags" ADD CONSTRAINT "rule_template_tags_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "rule_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "template_versions" ADD CONSTRAINT "template_versions_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "rule_templates"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "template_versions" ADD CONSTRAINT "template_versions_changed_by_fkey" FOREIGN KEY ("changed_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+

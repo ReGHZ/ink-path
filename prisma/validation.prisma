@@ -1,0 +1,321 @@
+enum RuleCategory {
+  structural
+  semantic
+}
+
+enum ValidationScope {
+  entity
+  project
+}
+
+enum ValidationTriggerSource {
+  reactive
+  incremental
+  full_scan
+  manual
+}
+
+enum ValidationRequestStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum FindingSource {
+  rule_engine
+  ai
+}
+
+enum FindingOutcome {
+  conflict
+  valid
+  unsupported
+}
+
+enum IssueSeverity {
+  error
+  warning
+  info
+}
+
+enum IssueStatus {
+  open
+  resolved
+  dismissed
+  stale
+}
+
+enum IssueStaleReason {
+  rule_changed
+  rule_archived
+}
+
+enum IssueTargetRole {
+  primary
+  secondary
+}
+
+enum TemplateScope {
+  platform
+  user
+  community
+}
+
+model Rule {
+  id                 String       @id @default(uuid()) @db.Uuid
+  projectId          String       @map("project_id") @db.Uuid
+  name               String
+  description        String?
+  category           RuleCategory
+  ast                Json
+  dependencyMetadata Json         @map("dependency_metadata")
+  currentVersion     Int          @default(1) @map("current_version")
+  isActive           Boolean      @default(true) @map("is_active")
+  archivedAt         DateTime?    @map("archived_at")
+  templateId         String?      @map("template_id") @db.Uuid
+  templateVersion    Int?         @map("template_version")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  template RuleTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  versions        RuleVersion[]
+  dependencyIndex RuleDependencyIndex[]
+  findings        Finding[]
+  issues          Issue[]
+
+  @@index([projectId, isActive])
+  @@index([projectId, category])
+  @@index([templateId])
+  @@map("rules")
+}
+
+model RuleVersion {
+  id           String   @id @default(uuid()) @db.Uuid
+  ruleId       String   @map("rule_id") @db.Uuid
+  version      Int
+  astSnapshot  Json     @map("ast_snapshot")
+  changedAt    DateTime @map("changed_at")
+  changedById  String   @map("changed_by") @db.Uuid
+
+  rule      Rule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  changedBy User @relation("RuleVersionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  findings Finding[]
+
+  @@unique([ruleId, version])
+  @@index([ruleId, version(sort: Desc)])
+  @@map("rule_versions")
+}
+
+model RuleDependencyIndex {
+  id            String            @id @default(uuid()) @db.Uuid
+  ruleId        String            @map("rule_id") @db.Uuid
+  projectId     String            @map("project_id") @db.Uuid
+  entityType    ContentEntityType @map("entity_type")
+  // null = entity-level (berlaku ke seluruh entity), non-null = attribute-level (field path).
+  // Uniqueness di-enforce via 2 partial unique index di init_constraints (bukan @@id/@@unique),
+  // karena attributeName nullable tidak bisa jadi PK, dan partial unique gak bisa di-Prisma-native.
+  //   - rule_dependency_index_unique_attr   (rule_id, entity_type, attribute_name) WHERE attribute_name IS NOT NULL
+  //   - rule_dependency_index_unique_entity (rule_id, entity_type)                WHERE attribute_name IS NULL
+  attributeName String?           @map("attribute_name")
+
+  rule Rule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, entityType, attributeName])
+  @@index([ruleId])
+  @@map("rule_dependency_index")
+}
+
+model ValidationRequest {
+  id              String                  @id @default(uuid()) @db.Uuid
+  projectId       String                  @map("project_id") @db.Uuid
+  scope           ValidationScope
+  entityId        String?                 @map("entity_id") @db.Uuid
+  entityType      ContentEntityType?      @map("entity_type")
+  snapshotPayload Json                    @map("snapshot_payload")
+  triggerSource   ValidationTriggerSource @map("trigger_source")
+  status          ValidationRequestStatus @default(pending)
+  failureReason   String?                 @map("failure_reason")
+  leaseExpiresAt  DateTime?               @map("lease_expires_at")
+  pendingAiJobs   Int                     @default(0) @map("pending_ai_jobs")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  findings Finding[]
+
+  @@index([projectId, status])
+  @@index([projectId, scope, entityId])
+  @@map("validation_requests")
+}
+
+model Finding {
+  id                  String         @id @default(uuid()) @db.Uuid
+  projectId           String         @map("project_id") @db.Uuid
+  validationRequestId String         @map("validation_request_id") @db.Uuid
+  ruleId              String?        @map("rule_id") @db.Uuid
+  issueId             String?        @map("issue_id") @db.Uuid
+  source              FindingSource
+  outcome             FindingOutcome
+  severity            IssueSeverity?
+  message             String?
+  fingerprint         String?
+  ruleVersionId       String?        @map("rule_version_id") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at")
+
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  validationRequest ValidationRequest @relation(fields: [validationRequestId], references: [id], onDelete: Restrict)
+  rule              Rule?             @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  issue             Issue?            @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  ruleVersion       RuleVersion?      @relation(fields: [ruleVersionId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, validationRequestId])
+  @@index([projectId, issueId])
+  @@map("findings")
+}
+
+model Issue {
+  id                       String            @id @default(uuid()) @db.Uuid
+  projectId                String            @map("project_id") @db.Uuid
+  ruleId                   String?           @map("rule_id") @db.Uuid
+  fingerprint              String
+  title                    String
+  description              String?
+  source                   FindingSource
+  category                 RuleCategory
+  severity                 IssueSeverity
+  status                   IssueStatus       @default(open)
+  staleReason              IssueStaleReason? @map("stale_reason")
+  firstDetectedAt          DateTime          @map("first_detected_at")
+  firstDetectedRuleVersion Int?              @map("first_detected_rule_version")
+  lastDetectedAt           DateTime          @map("last_detected_at")
+  lastDetectedRuleVersion  Int?              @map("last_detected_rule_version")
+  resolvedAt               DateTime?         @map("resolved_at")
+  createdAt                DateTime          @default(now()) @map("created_at")
+  updatedAt                DateTime          @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  rule    Rule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  targets  IssueTarget[]
+  findings Finding[]
+
+  @@unique([projectId, fingerprint])
+  @@index([projectId, status])
+  @@index([projectId, ruleId])
+  @@index([projectId, severity, status])
+  @@map("issues")
+}
+
+model IssueTarget {
+  id         String            @id @default(uuid()) @db.Uuid
+  issueId    String            @map("issue_id") @db.Uuid
+  projectId  String            @map("project_id") @db.Uuid
+  entityType ContentEntityType @map("entity_type")
+  entityId   String            @map("entity_id") @db.Uuid
+  role       IssueTargetRole
+
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId, entityId, entityType])
+  @@index([issueId])
+  @@index([entityType, entityId])
+  @@map("issue_targets")
+}
+
+model EvaluationNode {
+  id                String            @id @default(uuid()) @db.Uuid
+  projectId         String            @map("project_id") @db.Uuid
+  entityId          String            @map("entity_id") @db.Uuid
+  entityType        ContentEntityType @map("entity_type")
+  attributes        Json              @default("{}")
+  timelinePosition  Int?              @map("timeline_position")
+  lastEventSequence BigInt            @default(0) @map("last_event_sequence")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  sourceEdges EvaluationEdge[] @relation("EvaluationEdgeSource")
+  targetEdges EvaluationEdge[] @relation("EvaluationEdgeTarget")
+
+  @@unique([projectId, entityId])
+  @@index([projectId, entityType])
+  @@index([projectId, entityType, timelinePosition])
+  @@map("evaluation_nodes")
+}
+
+model EvaluationEdge {
+  id               String   @id @default(uuid()) @db.Uuid
+  projectId        String   @map("project_id") @db.Uuid
+  sourceNodeId     String   @map("source_node_id") @db.Uuid
+  targetNodeId     String   @map("target_node_id") @db.Uuid
+  relationshipType String   @map("relationship_type")
+  metadata         Json     @default("{}")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  sourceNode EvaluationNode @relation("EvaluationEdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode EvaluationNode @relation("EvaluationEdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sourceNodeId])
+  @@index([projectId, targetNodeId])
+  @@index([projectId, relationshipType])
+  @@map("evaluation_edges")
+}
+
+model RuleTemplate {
+  id                   String        @id @default(uuid()) @db.Uuid
+  name                 String
+  description          String?
+  category             RuleCategory
+  patternName          String        @map("pattern_name")
+  astTemplate          Json          @map("ast_template")
+  parameterDefinitions Json?         @map("parameter_definitions")
+  scope                TemplateScope
+  currentVersion       Int           @default(1) @map("current_version")
+  createdById          String?       @map("created_by") @db.Uuid
+  usageCount           Int           @default(0) @map("usage_count")
+  isVerified           Boolean       @default(false) @map("is_verified")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  createdBy User? @relation("RuleTemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  tags     RuleTemplateTag[]
+  versions TemplateVersion[]
+  rules    Rule[]
+
+  @@index([scope, isVerified])
+  @@index([scope, usageCount(sort: Desc)])
+  @@index([createdById])
+  @@map("rule_templates")
+}
+
+model RuleTemplateTag {
+  templateId String @map("template_id") @db.Uuid
+  tag        String
+
+  template RuleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@id([templateId, tag])
+  @@index([tag])
+  @@map("rule_template_tags")
+}
+
+model TemplateVersion {
+  id                   String   @id @default(uuid()) @db.Uuid
+  templateId           String   @map("template_id") @db.Uuid
+  version              Int
+  astTemplate          Json     @map("ast_template")
+  parameterDefinitions Json?    @map("parameter_definitions")
+  changedAt            DateTime @map("changed_at")
+  changedById          String?  @map("changed_by") @db.Uuid
+
+  template  RuleTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  changedBy User?        @relation("TemplateVersionChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, version])
+  @@index([templateId, version(sort: Desc)])
+  @@map("template_versions")
+}

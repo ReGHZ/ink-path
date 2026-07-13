@@ -23,6 +23,11 @@ enum ChapterStatus {
   published
 }
 
+enum SceneStatus {
+  draft
+  published
+}
+
 model Character {
   id                String          @id @default(uuid()) @db.Uuid
   projectId         String          @map("project_id") @db.Uuid
@@ -43,8 +48,7 @@ model Character {
   createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   currentRevision ContentRevision? @relation("CharacterCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetCharacter[]
-  validationResultTargets ValidationResultTargetCharacter[]
+  commentTargets CommentTargetCharacter[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -73,8 +77,7 @@ model Faction {
   createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   currentRevision ContentRevision? @relation("FactionCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetFaction[]
-  validationResultTargets ValidationResultTargetFaction[]
+  commentTargets CommentTargetFaction[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -103,8 +106,7 @@ model Plot {
   createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   currentRevision ContentRevision? @relation("PlotCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetPlot[]
-  validationResultTargets ValidationResultTargetPlot[]
+  commentTargets CommentTargetPlot[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -132,8 +134,8 @@ model Chapter {
   createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   currentRevision ContentRevision? @relation("ChapterCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetChapter[]
-  validationResultTargets ValidationResultTargetChapter[]
+  commentTargets CommentTargetChapter[]
+  scenes         Scene[]
 
   @@unique([projectId, order])
   @@index([projectId])
@@ -142,4 +144,33 @@ model Chapter {
   @@index([projectId, createdAt])
   @@index([projectId, title])
   @@map("chapters")
+}
+
+model Scene {
+  id                String      @id @default(uuid()) @db.Uuid
+  projectId         String      @map("project_id") @db.Uuid
+  createdByUserId   String      @map("created_by_user_id") @db.Uuid
+  chapterId         String      @map("chapter_id") @db.Uuid
+  title             String?
+  summary           String?     @db.Text
+  content           String?     @db.Text
+  orderInChapter    Int         @map("order_in_chapter")
+  status            SceneStatus @default(draft)
+  currentRevisionId String?     @map("current_revision_id") @db.Uuid
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  chapter         Chapter          @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  currentRevision ContentRevision? @relation("SceneCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+
+  commentTargets CommentTargetScene[]
+
+  @@unique([chapterId, orderInChapter])
+  @@index([projectId])
+  @@index([createdByUserId])
+  @@index([projectId, status])
+  @@index([chapterId])
+  @@map("scenes")
 }

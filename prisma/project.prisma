@@ -61,6 +61,11 @@ model Project {
   updatedAt       DateTime          @updatedAt @map("updated_at")
   archivedAt      DateTime?         @map("archived_at")
 
+  // Full Scan scheduling (Validation domain)
+  fullScanEnabled       Boolean   @default(false) @map("full_scan_enabled")
+  fullScanIntervalHours Int       @default(24)    @map("full_scan_interval_hours")
+  nextFullScanAt        DateTime? @map("next_full_scan_at")
+
   owner     User @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
   createdBy User @relation("ProjectCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
@@ -69,28 +74,37 @@ model Project {
   ownershipTransfers ProjectOwnershipTransfer[]
 
   // content domain back-references
-  layers               Layer[]
-  maps                 Map[]
-  worldElements        WorldElement[]
-  events               Event[]
-  characters           Character[]
-  factions             Faction[]
-  plots                Plot[]
-  chapters             Chapter[]
-  contentRevisions     ContentRevision[]
-  contentRelationships ContentRelationship[]
+  layers                Layer[]
+  maps                  Map[]
+  worldElements         WorldElement[]
+  events                Event[]
+  characters            Character[]
+  factions              Faction[]
+  plots                 Plot[]
+  chapters              Chapter[]
+  scenes                Scene[]
+  contentRevisions      ContentRevision[]
+  contentRelationships  ContentRelationship[]
+
+  // narrative transition back-reference (Content mechanism)
+  narrativeTransitions NarrativeTransition[]
 
   // ai domain back-references
-  validationRequests  ValidationRequest[]
-  chatSessions        ChatSession[]
-  chatMessages        ChatMessage[]
-  aiUsageLogs         AiUsageLog[]
+  chatSessions ChatSession[]
+  chatMessages ChatMessage[]
+  aiUsageLogs  AiUsageLog[]
+
+  // validation domain back-references
+  rules              Rule[]
+  validationRequests ValidationRequest[]
+  findings           Finding[]
+  issues             Issue[]
+  // evaluation_nodes/evaluation_edges = read model denormalized (projectId tanpa FK, pola IssueTarget)
+  // → tidak ada back-ref evaluationNodes/evaluationEdges di Project (konsisten DB design 15).
 
   // feedback domain back-references
-  comments                Comment[]
-  commentTargets          CommentTarget[]
-  validationResults       ValidationResult[]
-  validationResultTargets ValidationResultTarget[]
+  comments       Comment[]
+  commentTargets CommentTarget[]
 
   // infra domain back-references
   outboxEvents     OutboxEvent[]
