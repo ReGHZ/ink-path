@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { WorldElement } from "./WorldElement.js";
+import { WorldElement, type WorldElementStatus } from "./WorldElement.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 
@@ -101,10 +101,10 @@ describe("WorldElement", () => {
   });
 
   describe("updateDetails", () => {
-    it("trims name and category, and normalizes optional text fields", () => {
+    it("trims name and category, normalizes optional text fields, and returns true", () => {
       const element = createElement();
 
-      element.updateDetails({
+      const changed = element.updateDetails({
         name: "  Dragon Range  ",
         description: "  Updated  ",
         category: "  landmark  ",
@@ -112,6 +112,7 @@ describe("WorldElement", () => {
         now: later,
       });
 
+      expect(changed).toBe(true);
       expect(element.name).toBe("Dragon Range");
       expect(element.description).toBe("Updated");
       expect(element.category).toBe("landmark");
@@ -161,18 +162,53 @@ describe("WorldElement", () => {
       expect(element.content).toBeNull();
     });
 
-    it("bumps updatedAt even when no concrete field changes", () => {
-      const element = createElement({ name: "Dragon Range" });
+    it("returns false and does NOT bump updatedAt when no concrete field changes", () => {
+      const element = createElement({ name: "Dragon Range", category: "geography" });
 
-      element.updateDetails({ name: "Dragon Range", now: later });
+      const changed = element.updateDetails({
+        name: "  Dragon Range  ",
+        category: "geography",
+        now: later,
+      });
 
-      expect(element.updatedAt).toEqual(later);
+      expect(changed).toBe(false);
+      expect(element.updatedAt).toEqual(now);
+    });
+
+    it("returns false and does NOT bump updatedAt when the new description is whitespace-equivalent", () => {
+      const element = createElement({ description: "A mountain range" });
+
+      const changed = element.updateDetails({ description: "  A mountain range  ", now: later });
+
+      expect(changed).toBe(false);
+      expect(element.description).toBe("A mountain range");
+      expect(element.updatedAt).toEqual(now);
+    });
+
+    it("returns false and does NOT bump updatedAt when the new content is whitespace-equivalent", () => {
+      const element = createElement({ content: "Spans the eastern continent." });
+
+      const changed = element.updateDetails({ content: "  Spans the eastern continent.  ", now: later });
+
+      expect(changed).toBe(false);
+      expect(element.content).toBe("Spans the eastern continent.");
+      expect(element.updatedAt).toEqual(now);
+    });
+
+    it("returns false and does NOT bump updatedAt when the new category is whitespace-equivalent", () => {
+      const element = createElement({ category: "geography" });
+
+      const changed = element.updateDetails({ category: "  geography  ", now: later });
+
+      expect(changed).toBe(false);
+      expect(element.category).toBe("geography");
+      expect(element.updatedAt).toEqual(now);
     });
 
     it("is atomic: a whitespace-only name rolls back name and updatedAt", () => {
       const element = createElement({ name: "Dragon Range" });
 
-      expect(() => { element.updateDetails({ name: "   ", now: later }); }).toThrow(DomainError);
+      expect(() => element.updateDetails({ name: "   ", now: later })).toThrow(DomainError);
 
       expect(element.name).toBe("Dragon Range");
       expect(element.updatedAt).toEqual(now);
@@ -182,7 +218,7 @@ describe("WorldElement", () => {
       const element = reconstituteElement({ status: "published", content: "Body" });
 
       expect(() =>
-        { element.updateDetails({ name: "Dragon Range", content: null, now: later }); },
+        element.updateDetails({ name: "Dragon Range", content: null, now: later }),
       ).toThrow(DomainError);
 
       expect(element.content).toBe("Body");
@@ -194,7 +230,7 @@ describe("WorldElement", () => {
       const element = reconstituteElement({ status: "published", content: "Body" });
 
       expect(() =>
-        { element.updateDetails({ name: "Dragon Range", content: "   ", now: later }); },
+        element.updateDetails({ name: "Dragon Range", content: "   ", now: later }),
       ).toThrow(DomainError);
 
       expect(element.content).toBe("Body");
@@ -212,11 +248,12 @@ describe("WorldElement", () => {
   });
 
   describe("changeStatus", () => {
-    it("transitions draft to published when content is present", () => {
+    it("transitions draft to published and returns true when content is present", () => {
       const element = createElement({ content: "Body" });
 
-      element.changeStatus("published", later);
+      const changed = element.changeStatus("published", later);
 
+      expect(changed).toBe(true);
       expect(element.status).toBe("published");
       expect(element.updatedAt).toEqual(later);
     });
@@ -224,36 +261,39 @@ describe("WorldElement", () => {
     it("rejects draft to published when content is null", () => {
       const element = createElement({ content: null });
 
-      expect(() => { element.changeStatus("published", later); }).toThrow(DomainError);
+      expect(() => element.changeStatus("published", later)).toThrow(DomainError);
       expect(element.status).toBe("draft");
       expect(element.updatedAt).toEqual(now);
     });
 
-    it("rejects draft to published when content is whitespace-only", () => {
+    it("rejects draft to published when content is whitespace-only (normalized to null)", () => {
       const element = createElement({ content: "   " });
 
       expect(element.content).toBeNull();
-      expect(() => { element.changeStatus("published", later); }).toThrow(DomainError);
+      expect(() => element.changeStatus("published", later)).toThrow(DomainError);
       expect(element.status).toBe("draft");
     });
 
     it("transitions published back to draft (publish is a marker, not a one-way workflow)", () => {
       const element = reconstituteElement({ status: "published", content: "Body" });
 
-      element.changeStatus("draft", later);
+      const changed = element.changeStatus("draft", later);
 
+      expect(changed).toBe(true);
       expect(element.status).toBe("draft");
       expect(element.updatedAt).toEqual(later);
     });
 
-    it("leaves state and updatedAt untouched when transitioning to the same status", () => {
+    it("returns false and leaves state untouched when transitioning to the same status", () => {
       const draft = createElement({ content: "Body" });
-      draft.changeStatus("draft", later);
+
+      expect(draft.changeStatus("draft", later)).toBe(false);
       expect(draft.status).toBe("draft");
       expect(draft.updatedAt).toEqual(now);
 
       const published = reconstituteElement({ status: "published", content: "Body" });
-      published.changeStatus("published", later);
+
+      expect(published.changeStatus("published", later)).toBe(false);
       expect(published.status).toBe("published");
       expect(published.updatedAt).toEqual(now);
     });
@@ -272,6 +312,12 @@ describe("WorldElement", () => {
       expect(element.category).toBe("  raw category  ");
       expect(element.description).toBe("  raw desc  ");
       expect(element.content).toBe("  raw content  ");
+    });
+
+    it("rejects an invalid status", () => {
+      expect(() =>
+        reconstituteElement({ status: "archived" as WorldElementStatus }),
+      ).toThrow(DomainError);
     });
 
     it("rejects a published snapshot with null content", () => {

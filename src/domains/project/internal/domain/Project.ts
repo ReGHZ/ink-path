@@ -1,3 +1,4 @@
+import { normalizeOptionalText } from "../../../../shared/domain/normalizeOptionalText.js";
 import { DomainError } from "../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../shared/errors/DomainErrorCode.js";
 
@@ -68,11 +69,11 @@ export class Project {
       ownerUserId: props.ownerUserId,
       createdByUserId: props.createdByUserId,
       name: props.name.trim(),
-      description: Project.normalizeOptionalText(props.description ?? null),
-      genre: Project.normalizeOptionalText(props.genre ?? null),
-      tone: Project.normalizeOptionalText(props.tone ?? null),
-      style: Project.normalizeOptionalText(props.style ?? null),
-      language: Project.normalizeOptionalText(props.language ?? null),
+      description: normalizeOptionalText(props.description ?? null),
+      genre: normalizeOptionalText(props.genre ?? null),
+      tone: normalizeOptionalText(props.tone ?? null),
+      style: normalizeOptionalText(props.style ?? null),
+      language: normalizeOptionalText(props.language ?? null),
       visibility: "private",
       status: "draft",
       createdAt: props.now,
@@ -156,23 +157,23 @@ export class Project {
     this.props.name = name;
 
     if (input.description !== undefined) {
-      this.props.description = Project.normalizeOptionalText(input.description);
+      this.props.description = normalizeOptionalText(input.description);
     }
 
     if (input.genre !== undefined) {
-      this.props.genre = Project.normalizeOptionalText(input.genre);
+      this.props.genre = normalizeOptionalText(input.genre);
     }
 
     if (input.tone !== undefined) {
-      this.props.tone = Project.normalizeOptionalText(input.tone);
+      this.props.tone = normalizeOptionalText(input.tone);
     }
 
     if (input.style !== undefined) {
-      this.props.style = Project.normalizeOptionalText(input.style);
+      this.props.style = normalizeOptionalText(input.style);
     }
 
     if (input.language !== undefined) {
-      this.props.language = Project.normalizeOptionalText(input.language);
+      this.props.language = normalizeOptionalText(input.language);
     }
 
     this.props.updatedAt = input.now;
@@ -215,16 +216,6 @@ export class Project {
 
   toSnapshot(): ProjectProperties {
     return { ...this.props };
-  }
-
-  private static normalizeOptionalText(value: string | null): string | null {
-    if (value === null) {
-      return null;
-    }
-
-    const trimmed = value.trim();
-
-    return trimmed === "" ? null : trimmed;
   }
 
   private ensureNotArchived(): void {

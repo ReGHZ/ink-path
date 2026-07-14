@@ -1,3 +1,4 @@
+import { normalizeOptionalText } from "../../../../../shared/domain/normalizeOptionalText.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 
@@ -48,9 +49,9 @@ export class WorldElement {
             projectId: props.projectId,
             createdByUserId: props.createdByUserId,
             name: props.name.trim(),
-            description: WorldElement.normalizeOptionalText(props.description ?? null),
+            description: normalizeOptionalText(props.description ?? null),
             category: props.category.trim(),
-            content: WorldElement.normalizeOptionalText(props.content ?? null),
+            content: normalizeOptionalText(props.content ?? null),
             status: 'draft',
             currentRevisionId: props.currentRevisionId,
             createdAt: props.now,
@@ -106,9 +107,9 @@ export class WorldElement {
         return this.props.updatedAt;
     }
 
-    changeStatus(status: WorldElementStatus, now: Date): void {
+    changeStatus(status: WorldElementStatus, now: Date): boolean {
         if (this.props.status === status) {
-            return;
+            return false;
         }
 
         const nextProperties: WorldElementProperties = {
@@ -120,47 +121,68 @@ export class WorldElement {
         WorldElement.validate(nextProperties);
 
         Object.assign(this.props, nextProperties);
+
+        return true;
     }
 
-    updateDetails(input: UpdateWorldElementDetailsProperties): void {
+    updateDetails(input: UpdateWorldElementDetailsProperties): boolean {
         const nextProperties: WorldElementProperties = {
             ...this.props,
-            updatedAt: input.now
         }
 
+        let changed = false
+
         if (input.name !== undefined) {
-            nextProperties.name = input.name.trim();
+            const name = input.name.trim();
+
+            if (name !== this.props.name) {
+                nextProperties.name = name
+                changed = true
+            }
         }
 
         if (input.description !== undefined) {
-            nextProperties.description = WorldElement.normalizeOptionalText(input.description);
+            const description = normalizeOptionalText(input.description);
+
+            if (description !== this.props.description) {
+                nextProperties.description = description
+                changed = true
+            }
         }
 
         if (input.category !== undefined) {
-            nextProperties.category = input.category.trim();
+            const category = input.category.trim();
+
+            if (category !== this.props.category) {
+                nextProperties.category = category
+                changed = true
+            }
         }
 
         if (input.content !== undefined) {
-            nextProperties.content = WorldElement.normalizeOptionalText(input.content);
+            const content = normalizeOptionalText(input.content);
+
+            if (content !== this.props.content) {
+                nextProperties.content = content
+                changed = true
+            }
         }
+
+        if (!changed) {
+            return false
+        }
+
+        nextProperties.updatedAt = input.now
 
         WorldElement.validate(nextProperties);
 
         Object.assign(this.props, nextProperties);
+
+        return true
     }
 
     toSnapshot(): WorldElementProperties {
         return { ...this.props };
-    }
-
-    private static normalizeOptionalText(value: string | null): string | null {
-        if (value === null) {
-            return null;
-        }
-
-        const trimmed = value.trim();
-
-        return trimmed === "" ? null : trimmed;
     }
 
     private static validate(props: WorldElementProperties): void {
@@ -207,13 +229,25 @@ export class WorldElement {
 
         }
 
+        const validStatuses: readonly WorldElementStatus[] = [
+            "draft",
+            "published",
+        ];
+
+        if (!validStatuses.includes(props.status)) {
+            throw new DomainError(
+                DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+                "Invalid world element status",
+            );
+        }
+
         if (
             props.status === "published" &&
-            WorldElement.normalizeOptionalText(props.content) === null
+            normalizeOptionalText(props.content) === null
         ) {
             throw new DomainError(
                 DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-                "Published World element must have content",
+                "Published world element must have content",
             );
         }
     }
