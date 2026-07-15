@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import prettierConfig from "eslint-config-prettier";
 import importX from "eslint-plugin-import-x";
+import regexpPlugin from "eslint-plugin-regexp";
 import unicorn from "eslint-plugin-unicorn";
 import globals from "globals";
 import tseslint from "typescript-eslint";
@@ -26,6 +27,8 @@ export default defineConfig(
 
   ...tseslint.configs.strictTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
+
+  regexpPlugin.configs["flat/recommended"],
 
   {
     files: [
@@ -129,7 +132,6 @@ export default defineConfig(
       ],
 
       // General quality
-      "unicorn/better-regex": "error",
       "unicorn/catch-error-name": "error",
       "unicorn/consistent-function-scoping": "error",
       "unicorn/error-message": "error",
@@ -141,7 +143,7 @@ export default defineConfig(
       "unicorn/prefer-module": "error",
       "unicorn/prefer-node-protocol": "error",
       "unicorn/prefer-string-replace-all": "error",
-      "unicorn/prevent-abbreviations": [
+      "unicorn/name-replacements": [
         "error",
         {
           allowList: {
@@ -152,6 +154,10 @@ export default defineConfig(
             repo: true,
             repos: true,
             props: true,
+            repository: true,
+            repositories: true,
+            Repository: true,
+            Repositories: true,
           },
         },
       ],

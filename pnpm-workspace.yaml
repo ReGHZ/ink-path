@@ -7,3 +7,6 @@ allowBuilds:
   protobufjs: false
   ssh2: false
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@hono/node-server@2.0.9'
+  - eslint-plugin-unicorn@72.0.0
