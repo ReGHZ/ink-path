@@ -93,12 +93,12 @@ model Rule {
 }
 
 model RuleVersion {
-  id           String   @id @default(uuid()) @db.Uuid
-  ruleId       String   @map("rule_id") @db.Uuid
-  version      Int
-  astSnapshot  Json     @map("ast_snapshot")
-  changedAt    DateTime @map("changed_at")
-  changedById  String   @map("changed_by") @db.Uuid
+  id          String   @id @default(uuid()) @db.Uuid
+  ruleId      String   @map("rule_id") @db.Uuid
+  version     Int
+  astSnapshot Json     @map("ast_snapshot")
+  changedAt   DateTime @map("changed_at")
+  changedById String   @map("changed_by") @db.Uuid
 
   rule      Rule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
   changedBy User @relation("RuleVersionChangedBy", fields: [changedById], references: [id], onDelete: Restrict)

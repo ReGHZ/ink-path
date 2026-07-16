@@ -29,7 +29,10 @@ enum SceneStatus {
 }
 
 model Character {
-  id                String          @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String          @map("project_id") @db.Uuid
   createdByUserId   String          @map("created_by_user_id") @db.Uuid
   name              String
@@ -59,7 +62,10 @@ model Character {
 }
 
 model Faction {
-  id                String        @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String        @map("project_id") @db.Uuid
   createdByUserId   String        @map("created_by_user_id") @db.Uuid
   name              String
@@ -88,7 +94,10 @@ model Faction {
 }
 
 model Plot {
-  id                String     @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String     @map("project_id") @db.Uuid
   createdByUserId   String     @map("created_by_user_id") @db.Uuid
   name              String
@@ -117,7 +126,10 @@ model Plot {
 }
 
 model Chapter {
-  id                String        @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String        @map("project_id") @db.Uuid
   createdByUserId   String        @map("created_by_user_id") @db.Uuid
   title             String
@@ -147,7 +159,10 @@ model Chapter {
 }
 
 model Scene {
-  id                String      @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String      @map("project_id") @db.Uuid
   createdByUserId   String      @map("created_by_user_id") @db.Uuid
   chapterId         String      @map("chapter_id") @db.Uuid

@@ -1,5 +1,9 @@
 import { AppError } from "../../../../shared/errors/AppError.js";
 import { ErrorCode } from "../../../../shared/errors/ErrorCode.js";
+import {
+    UserProjectRepositoryConflictError,
+    UserProjectRepositoryNotFoundError,
+} from "../domain/UserProjectRepositoryError.js";
 
 import type { Clock } from "../../../../shared/application/ports/Clock.js";
 import type {
@@ -10,6 +14,7 @@ import type {
 import type { UserProjectRepository } from "../domain/UserProjectRepository.js";
 import type { ProjectUnitOfWork } from "./ports/ProjectUnitOfWork.js";
 
+
 export type MemberDetail = {
     id: string;
     userId: string;
@@ -19,6 +24,21 @@ export type MemberDetail = {
     joinedAt: Date | null;
     invitedByUserId: string | null;
 };
+
+function mapUserProjectError(error: unknown): never {
+    if (error instanceof UserProjectRepositoryConflictError) {
+        throw new AppError(
+            ErrorCode.CONFLICT,
+            "Membership was modified by another writer; reload and retry.",
+        );
+    }
+
+    if (error instanceof UserProjectRepositoryNotFoundError) {
+        throw new AppError(ErrorCode.NOT_FOUND, "Project membership not found");
+    }
+
+    throw error;
+}
 
 export class UserProjectService {
     constructor(
@@ -67,9 +87,17 @@ export class UserProjectService {
                 }
             }
 
-            member.changeRole(newRole, now);
+            const changed = member.changeRole(newRole, now);
 
-            await repositories.userProjects.update(member);
+            if (!changed) {
+                return;
+            }
+
+            try {
+                await repositories.userProjects.update(member);
+            } catch (error) {
+                mapUserProjectError(error);
+            }
         });
     }
 

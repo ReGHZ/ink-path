@@ -82,7 +82,7 @@ model RefreshToken {
   tokenHash         String                     @unique @map("token_hash")
   familyId          String                     @map("family_id") @db.Uuid
   parentTokenId     String?                    @unique @map("parent_token_id") @db.Uuid
-  replacedByTokenId String? @unique @map("replaced_by_token_id") @db.Uuid
+  replacedByTokenId String?                    @unique @map("replaced_by_token_id") @db.Uuid
   expiresAt         DateTime                   @map("expires_at")
   revokedAt         DateTime?                  @map("revoked_at")
   revokedReason     RefreshTokenRevokedReason? @map("revoked_reason")

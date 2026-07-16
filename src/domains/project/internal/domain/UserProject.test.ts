@@ -17,6 +17,7 @@ const baseSnapshot: UserProjectSnapshot = {
   canDelete: true,
   aiAccess: "full",
   status: "active",
+  version: 0,
   joinedAt: now,
   removedAt: null,
   invitedByUserId: null,
@@ -90,10 +91,21 @@ describe("UserProject", () => {
     it("changes the role and bumps updatedAt", () => {
       const membership = createMembership();
 
-      membership.changeRole("editor", later);
+      const changed = membership.changeRole("editor", later);
 
+      expect(changed).toBe(true);
       expect(membership.role).toBe("editor");
       expect(membership.updatedAt).toEqual(later);
+    });
+
+    it("is a no-op when the role is unchanged: does not bump updatedAt", () => {
+      const membership = createMembership();
+
+      const changed = membership.changeRole("writer", later);
+
+      expect(changed).toBe(false);
+      expect(membership.role).toBe("writer");
+      expect(membership.updatedAt).toEqual(now);
     });
 
     it("does not touch the other two permission axes", () => {
@@ -160,6 +172,16 @@ describe("UserProject", () => {
   });
 
   describe("validate (via reconstitute)", () => {
+    it("rejects a negative or non-integer version", () => {
+      expect(() => {
+        reconstituteMembership({ version: -1 });
+      }).toThrow(DomainError);
+
+      expect(() => {
+        reconstituteMembership({ version: 1.5 });
+      }).toThrow(DomainError);
+    });
+
     it("rejects an unknown role", () => {
       expect(() => {
         reconstituteMembership({ role: "owner" as never });

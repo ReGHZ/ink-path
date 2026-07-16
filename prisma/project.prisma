@@ -63,7 +63,7 @@ model Project {
 
   // Full Scan scheduling (Validation domain)
   fullScanEnabled       Boolean   @default(false) @map("full_scan_enabled")
-  fullScanIntervalHours Int       @default(24)    @map("full_scan_interval_hours")
+  fullScanIntervalHours Int       @default(24) @map("full_scan_interval_hours")
   nextFullScanAt        DateTime? @map("next_full_scan_at")
 
   owner     User @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
@@ -74,17 +74,17 @@ model Project {
   ownershipTransfers ProjectOwnershipTransfer[]
 
   // content domain back-references
-  layers                Layer[]
-  maps                  Map[]
-  worldElements         WorldElement[]
-  events                Event[]
-  characters            Character[]
-  factions              Faction[]
-  plots                 Plot[]
-  chapters              Chapter[]
-  scenes                Scene[]
-  contentRevisions      ContentRevision[]
-  contentRelationships  ContentRelationship[]
+  layers               Layer[]
+  maps                 Map[]
+  worldElements        WorldElement[]
+  events               Event[]
+  characters           Character[]
+  factions             Faction[]
+  plots                Plot[]
+  chapters             Chapter[]
+  scenes               Scene[]
+  contentRevisions     ContentRevision[]
+  contentRelationships ContentRelationship[]
 
   // narrative transition back-reference (Content mechanism)
   narrativeTransitions NarrativeTransition[]
@@ -117,7 +117,10 @@ model Project {
 }
 
 model UserProject {
-  id              String            @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId       String            @map("project_id") @db.Uuid
   userId          String            @map("user_id") @db.Uuid
   role            ProjectRole

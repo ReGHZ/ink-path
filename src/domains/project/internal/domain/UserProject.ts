@@ -15,6 +15,7 @@ export type UserProjectProperties = {
   canDelete: boolean;
   aiAccess: ProjectAiAccess;
   status: UserProjectStatus;
+  version: number;
   joinedAt: Date | null;
   removedAt: Date | null;
   invitedByUserId: string | null;
@@ -58,6 +59,7 @@ export class UserProject {
       canDelete: true,
       aiAccess: "full",
       status: "active",
+      version: 0,
       joinedAt: props.now,
       removedAt: null,
       invitedByUserId: null,
@@ -118,13 +120,25 @@ export class UserProject {
     return this.props.updatedAt;
   }
 
-  changeRole(newRole: ProjectRole, now: Date): void {
+  get version(): number {
+    return this.props.version;
+  }
+
+  // Returns false on no-op (role unchanged) — policy 06 §3: no-op must not
+  // bump version, mirroring the changeStatus/updateDetails pattern elsewhere.
+  changeRole(newRole: ProjectRole, now: Date): boolean {
     this.ensureActive();
+
+    if (this.props.role === newRole) {
+      return false;
+    }
 
     this.props.role = newRole;
     this.props.updatedAt = now;
 
     UserProject.validate(this.props);
+
+    return true;
   }
 
   toSnapshot(): UserProjectProperties {
@@ -159,6 +173,13 @@ export class UserProject {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         "User id is required",
+      );
+    }
+
+    if (!Number.isInteger(props.version) || props.version < 0) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "User project version must be a non-negative integer",
       );
     }
 

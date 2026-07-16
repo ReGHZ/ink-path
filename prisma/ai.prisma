@@ -110,10 +110,10 @@ model AiUsageLog {
   completedAt           DateTime?          @map("completed_at")
   createdAt             DateTime           @default(now()) @map("created_at")
 
-  project           Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  triggeredByUser   User               @relation(fields: [triggeredByUserId], references: [id], onDelete: Restrict)
-  chatMessage       ChatMessage?       @relation(fields: [chatMessageId], references: [id], onDelete: SetNull)
-  contentRevision   ContentRevision?   @relation(fields: [contentRevisionId], references: [id], onDelete: SetNull)
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  triggeredByUser User             @relation(fields: [triggeredByUserId], references: [id], onDelete: Restrict)
+  chatMessage     ChatMessage?     @relation(fields: [chatMessageId], references: [id], onDelete: SetNull)
+  contentRevision ContentRevision? @relation(fields: [contentRevisionId], references: [id], onDelete: SetNull)
 
   @@index([projectId, createdAt])
   @@index([triggeredByUserId, createdAt])

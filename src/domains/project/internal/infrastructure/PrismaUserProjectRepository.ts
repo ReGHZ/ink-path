@@ -1,6 +1,5 @@
 import { UserProjectMapper } from "./UserProjectMapper.js";
 import {
-    isNotFoundError,
     isUniqueViolation,
 } from "../../../../shared/infrastructure/prismaErrors.js";
 import {
@@ -27,6 +26,7 @@ type RawUserProjectRow = {
     can_delete: boolean;
     ai_access: ProjectAiAccess;
     status: UserProjectStatus;
+    version: number;
     invited_by_user_id: string | null;
     joined_at: Date | null;
     removed_at: Date | null;
@@ -58,7 +58,7 @@ export class PrismaUserProjectRepository implements UserProjectRepository {
     ): Promise<UserProject | null> {
         const rows = await this.client.$queryRaw<RawUserProjectRow[]>`
             SELECT id, project_id, user_id, role, can_delete, ai_access, status,
-                   invited_by_user_id, joined_at, removed_at, created_at, updated_at
+                   version, invited_by_user_id, joined_at, removed_at, created_at, updated_at
             FROM user_projects
             WHERE project_id = ${projectId}::uuid
               AND user_id = ${userId}::uuid
@@ -81,6 +81,7 @@ export class PrismaUserProjectRepository implements UserProjectRepository {
             canDelete: row.can_delete,
             aiAccess: row.ai_access,
             status: row.status,
+            version: row.version,
             invitedByUserId: row.invited_by_user_id,
             joinedAt: row.joined_at,
             removedAt: row.removed_at,
@@ -120,19 +121,28 @@ export class PrismaUserProjectRepository implements UserProjectRepository {
     }
 
     async update(userProject: UserProject): Promise<void> {
-        try {
-            await this.client.userProject.update({
-                where: {
-                    id: userProject.id,
-                },
-                data: UserProjectMapper.toPersistence(userProject),
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                throw new UserProjectRepositoryNotFoundError();
-            }
-            throw error;
+        const result = await this.client.userProject.updateMany({
+            where: {
+                id: userProject.id,
+                version: userProject.version,
+            },
+            data: UserProjectMapper.toUpdatePersistence(userProject),
+        });
+
+        if (result.count === 1) {
+            return;
         }
+
+        const existing = await this.client.userProject.findUnique({
+            where: { id: userProject.id },
+            select: { id: true },
+        });
+
+        if (!existing) {
+            throw new UserProjectRepositoryNotFoundError();
+        }
+
+        throw new UserProjectRepositoryConflictError();
     }
 }
 

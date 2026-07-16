@@ -20,7 +20,10 @@ enum EventStatus {
 }
 
 model Layer {
-  id                String      @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String      @map("project_id") @db.Uuid
   createdByUserId   String      @map("created_by_user_id") @db.Uuid
   parentId          String?     @map("parent_id") @db.Uuid
@@ -40,7 +43,7 @@ model Layer {
   children        Layer[]          @relation("LayerHierarchy")
   currentRevision ContentRevision? @relation("LayerCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetLayer[]
+  commentTargets CommentTargetLayer[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -52,7 +55,10 @@ model Layer {
 }
 
 model Map {
-  id                String    @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String    @map("project_id") @db.Uuid
   createdByUserId   String    @map("created_by_user_id") @db.Uuid
   parentId          String?   @map("parent_id") @db.Uuid
@@ -73,7 +79,7 @@ model Map {
   children        Map[]            @relation("MapHierarchy")
   currentRevision ContentRevision? @relation("MapCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetMap[]
+  commentTargets CommentTargetMap[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -85,7 +91,10 @@ model Map {
 }
 
 model WorldElement {
-  id                String             @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String             @map("project_id") @db.Uuid
   createdByUserId   String             @map("created_by_user_id") @db.Uuid
   name              String
@@ -101,7 +110,7 @@ model WorldElement {
   createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   currentRevision ContentRevision? @relation("WorldElementCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetWorldElement[]
+  commentTargets CommentTargetWorldElement[]
 
   @@index([projectId])
   @@index([createdByUserId])
@@ -113,7 +122,10 @@ model WorldElement {
 }
 
 model Event {
-  id                String      @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  version Int @default(0)
+
   projectId         String      @map("project_id") @db.Uuid
   createdByUserId   String      @map("created_by_user_id") @db.Uuid
   title             String
@@ -132,7 +144,7 @@ model Event {
   createdByUser   User             @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   currentRevision ContentRevision? @relation("EventCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
 
-  commentTargets          CommentTargetEvent[]
+  commentTargets CommentTargetEvent[]
 
   @@index([projectId])
   @@index([createdByUserId])

@@ -80,12 +80,26 @@ function createRemovedMembership(id: string, userId: string): UserProject {
     canDelete: false,
     aiAccess: "none",
     status: "removed",
+    version: 0,
     joinedAt: now,
     removedAt: later,
     invitedByUserId: null,
     createdAt: now,
     updatedAt: later,
   });
+}
+
+async function loadMembershipOrFail(
+  userId = ownerUserId,
+): Promise<UserProject> {
+  const membership = await repository.findActiveByProjectIdAndUserId(
+    projectId,
+    userId,
+  );
+  if (!membership) {
+    throw new Error("test fixture: membership missing");
+  }
+  return membership;
 }
 
 describe("PrismaUserProjectRepository", () => {
@@ -199,13 +213,66 @@ describe("PrismaUserProjectRepository", () => {
 
     await repository.insert(membership);
 
-    membership.changeRole("editor", later);
-    await repository.update(membership);
+    const loaded = await loadMembershipOrFail();
+    loaded.changeRole("editor", later);
+    await repository.update(loaded);
 
     const persisted = await repository.findActiveByProjectIdAndUserId(projectId, ownerUserId);
 
     expect(persisted?.role).toBe("editor");
+    expect(persisted?.version).toBe(1);
     expect(persisted?.updatedAt).toEqual(expect.any(Date));
+  });
+
+  it("starts a fresh membership at version 0", async () => {
+    const membership = createMembership(userProjectIds[0]);
+
+    await repository.insert(membership);
+
+    const persisted = await repository.findActiveByProjectIdAndUserId(projectId, ownerUserId);
+
+    expect(persisted?.version).toBe(0);
+  });
+
+  it("increments version on each persisted update", async () => {
+    const membership = createMembership(userProjectIds[0]);
+    await repository.insert(membership);
+
+    const first = await loadMembershipOrFail();
+    first.changeRole("editor", later);
+    await repository.update(first);
+
+    const second = await loadMembershipOrFail();
+    second.changeRole("reviewer", later);
+    await repository.update(second);
+
+    const persisted = await repository.findActiveByProjectIdAndUserId(projectId, ownerUserId);
+
+    expect(persisted?.version).toBe(2);
+  });
+
+  it("rejects update with a stale version as a conflict", async () => {
+    const membership = createMembership(userProjectIds[0]);
+    await repository.insert(membership);
+
+    const loaded = await loadMembershipOrFail();
+    expect(loaded.version).toBe(0);
+
+    // A second writer commits first: bump version underneath the stale snapshot.
+    loaded.changeRole("editor", later);
+    await repository.update(loaded);
+
+    // Re-read at the bumped version, then forge a stale snapshot back at v0.
+    const current = await loadMembershipOrFail();
+    const staleAtOldVersion = UserProject.reconstitute({
+      ...current.toSnapshot(),
+      version: 0,
+    });
+    staleAtOldVersion.changeRole("reviewer", later);
+
+    await expect(repository.update(staleAtOldVersion)).rejects.toBeInstanceOf(
+      UserProjectRepositoryConflictError,
+    );
   });
 
   it("maps duplicate id insert to a neutral persistence error", async () => {

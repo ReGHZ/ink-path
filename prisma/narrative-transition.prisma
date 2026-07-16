@@ -11,19 +11,19 @@ enum TransitionEffectType {
 }
 
 model NarrativeTransition {
-  id                 String                        @id @default(uuid()) @db.Uuid
-  projectId          String                        @map("project_id") @db.Uuid
-  sourceEntityType   NarrativeTransitionSourceType @map("source_entity_type")
-  sourceEntityId     String                        @map("source_entity_id") @db.Uuid
-  title              String
-  description        String?
-  declaredByUserId   String                        @map("declared_by_user_id") @db.Uuid
-  reversesTransitionId String?                     @map("reverses_transition_id") @db.Uuid
-  createdAt          DateTime                      @default(now()) @map("created_at")
-  updatedAt          DateTime                      @updatedAt @map("updated_at")
+  id                   String                        @id @default(uuid()) @db.Uuid
+  projectId            String                        @map("project_id") @db.Uuid
+  sourceEntityType     NarrativeTransitionSourceType @map("source_entity_type")
+  sourceEntityId       String                        @map("source_entity_id") @db.Uuid
+  title                String
+  description          String?
+  declaredByUserId     String                        @map("declared_by_user_id") @db.Uuid
+  reversesTransitionId String?                       @map("reverses_transition_id") @db.Uuid
+  createdAt            DateTime                      @default(now()) @map("created_at")
+  updatedAt            DateTime                      @updatedAt @map("updated_at")
 
-  project            Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  declaredBy         User               @relation("NarrativeTransitionDeclaredBy", fields: [declaredByUserId], references: [id], onDelete: Restrict)
+  project            Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  declaredBy         User                 @relation("NarrativeTransitionDeclaredBy", fields: [declaredByUserId], references: [id], onDelete: Restrict)
   reversesTransition NarrativeTransition? @relation("NarrativeTransitionReversal", fields: [reversesTransitionId], references: [id], onDelete: SetNull)
 
   effects    TransitionEffect[]
@@ -36,20 +36,20 @@ model NarrativeTransition {
 }
 
 model TransitionEffect {
-  id                    String                @id @default(uuid()) @db.Uuid
-  narrativeTransitionId String                @map("narrative_transition_id") @db.Uuid
-  projectId             String                @map("project_id") @db.Uuid
-  effectType            TransitionEffectType  @map("effect_type")
-  targetEntityType      ContentEntityType     @map("target_entity_type")
-  targetEntityId        String                @map("target_entity_id") @db.Uuid
-  fieldPath             String?               @map("field_path")
-  newValue              String?               @map("new_value")
-  relationshipType      String?               @map("relationship_type")
-  relatedEntityType     ContentEntityType?    @map("related_entity_type")
-  relatedEntityId       String?               @map("related_entity_id") @db.Uuid
-  appliedAt             DateTime?             @map("applied_at")
-  contentRevisionId     String?               @map("content_revision_id") @db.Uuid
-  createdAt             DateTime              @default(now()) @map("created_at")
+  id                    String               @id @default(uuid()) @db.Uuid
+  narrativeTransitionId String               @map("narrative_transition_id") @db.Uuid
+  projectId             String               @map("project_id") @db.Uuid
+  effectType            TransitionEffectType @map("effect_type")
+  targetEntityType      ContentEntityType    @map("target_entity_type")
+  targetEntityId        String               @map("target_entity_id") @db.Uuid
+  fieldPath             String?              @map("field_path")
+  newValue              String?              @map("new_value")
+  relationshipType      String?              @map("relationship_type")
+  relatedEntityType     ContentEntityType?   @map("related_entity_type")
+  relatedEntityId       String?              @map("related_entity_id") @db.Uuid
+  appliedAt             DateTime?            @map("applied_at")
+  contentRevisionId     String?              @map("content_revision_id") @db.Uuid
+  createdAt             DateTime             @default(now()) @map("created_at")
 
   narrativeTransition NarrativeTransition @relation(fields: [narrativeTransitionId], references: [id], onDelete: Restrict)
 

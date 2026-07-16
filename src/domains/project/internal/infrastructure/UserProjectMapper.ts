@@ -18,6 +18,7 @@ export const UserProjectMapper = {
       canDelete: row.canDelete,
       aiAccess: row.aiAccess,
       status: row.status,
+      version: row.version,
       joinedAt: row.joinedAt,
       removedAt: row.removedAt,
       invitedByUserId: row.invitedByUserId,
@@ -43,6 +44,24 @@ export const UserProjectMapper = {
       joinedAt: snapshot.joinedAt,
       removedAt: snapshot.removedAt,
       invitedByUserId: snapshot.invitedByUserId,
+    };
+  },
+
+  toUpdatePersistence(
+    userProject: UserProject,
+  ): Prisma.UserProjectUncheckedUpdateManyInput {
+    const snapshot = userProject.toSnapshot();
+
+    return {
+      role: snapshot.role,
+      canDelete: snapshot.canDelete,
+      aiAccess: snapshot.aiAccess,
+      status: snapshot.status,
+      joinedAt: snapshot.joinedAt,
+      removedAt: snapshot.removedAt,
+      invitedByUserId: snapshot.invitedByUserId,
+      updatedAt: snapshot.updatedAt,
+      version: { increment: 1 },
     };
   },
 };
