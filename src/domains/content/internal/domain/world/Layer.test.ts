@@ -13,6 +13,7 @@ type LayerSnapshot = Parameters<typeof Layer.reconstitute>[0];
 
 const baseSnapshot: LayerSnapshot = {
   id: "layer-1",
+  version: 0,
   projectId: "project-1",
   createdByUserId: "user-1",
   parentId: null,
@@ -396,6 +397,11 @@ describe("Layer", () => {
       expect(layer.description).toBe("  raw desc  ");
       expect(layer.content).toBe("  raw content  ");
       expect(layer.parentId).toBe("  raw-parent  ");
+    });
+
+    it("rejects a negative or non-integer version", () => {
+      expect(() => reconstituteLayer({ version: -1 })).toThrow(DomainError);
+      expect(() => reconstituteLayer({ version: 1.5 })).toThrow(DomainError);
     });
 
     it("rejects an invalid status", () => {

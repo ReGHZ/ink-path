@@ -13,6 +13,7 @@ type WorldElementSnapshot = Parameters<typeof WorldElement.reconstitute>[0];
 
 const baseSnapshot: WorldElementSnapshot = {
   id: "world-1",
+  version: 0,
   projectId: "project-1",
   createdByUserId: "user-1",
   name: "Dragon Range",
@@ -312,6 +313,11 @@ describe("WorldElement", () => {
       expect(element.category).toBe("  raw category  ");
       expect(element.description).toBe("  raw desc  ");
       expect(element.content).toBe("  raw content  ");
+    });
+
+    it("rejects a negative or non-integer version", () => {
+      expect(() => reconstituteElement({ version: -1 })).toThrow(DomainError);
+      expect(() => reconstituteElement({ version: 1.5 })).toThrow(DomainError);
     });
 
     it("rejects an invalid status", () => {

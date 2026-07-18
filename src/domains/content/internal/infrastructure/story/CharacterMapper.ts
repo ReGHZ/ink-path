@@ -1,25 +1,25 @@
 import {
-  WorldMap,
-  type WorldMapProperties,
-} from "../../domain/world/WorldMap.js";
+  Character,
+  type CharacterProperties,
+} from "../../domain/story/Character.js";
 
 import type {
-  Map as PrismaWorldMap,
+  Character as PrismaCharacter,
   Prisma,
 } from "../../../../../generated/prisma/client.js";
 
-export const WorldMapMapper = {
-  toDomain(row: PrismaWorldMap): WorldMap {
-    const props: WorldMapProperties = {
+export const CharacterMapper = {
+  toDomain(row: PrismaCharacter): Character {
+    const props: CharacterProperties = {
       id: row.id,
       version: row.version,
       projectId: row.projectId,
       createdByUserId: row.createdByUserId,
-      parentId: row.parentId,
       name: row.name,
-      scale: row.scale,
-      terrain: row.terrain,
-      environment: row.environment,
+      archetype: row.archetype,
+      background: row.background,
+      personality: row.personality,
+      goal: row.goal,
       description: row.description,
       content: row.content,
       status: row.status,
@@ -28,20 +28,20 @@ export const WorldMapMapper = {
       updatedAt: row.updatedAt,
     };
 
-    return WorldMap.reconstitute(props);
+    return Character.reconstitute(props);
   },
 
-  toPersistence(worldMap: WorldMap): Prisma.MapUncheckedCreateInput {
-    const snapshot = worldMap.toSnapshot();
+  toPersistence(character: Character): Prisma.CharacterUncheckedCreateInput {
+    const snapshot = character.toSnapshot();
 
     return {
       projectId: snapshot.projectId,
       createdByUserId: snapshot.createdByUserId,
-      parentId: snapshot.parentId,
       name: snapshot.name,
-      scale: snapshot.scale,
-      terrain: snapshot.terrain,
-      environment: snapshot.environment,
+      archetype: snapshot.archetype,
+      personality: snapshot.personality,
+      background: snapshot.background,
+      goal: snapshot.goal,
       description: snapshot.description,
       content: snapshot.content,
       status: snapshot.status,
@@ -49,15 +49,17 @@ export const WorldMapMapper = {
     };
   },
 
-  toUpdatePersistence(worldMap: WorldMap): Prisma.MapUncheckedUpdateManyInput {
-    const snapshot = worldMap.toSnapshot();
+  toUpdatePersistence(
+    character: Character,
+  ): Prisma.CharacterUncheckedUpdateManyInput {
+    const snapshot = character.toSnapshot();
 
     return {
-      parentId: snapshot.parentId,
       name: snapshot.name,
-      scale: snapshot.scale,
-      terrain: snapshot.terrain,
-      environment: snapshot.environment,
+      archetype: snapshot.archetype,
+      personality: snapshot.personality,
+      background: snapshot.background,
+      goal: snapshot.goal,
       description: snapshot.description,
       content: snapshot.content,
       status: snapshot.status,

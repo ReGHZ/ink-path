@@ -17,6 +17,7 @@ type CharacterSnapshot = Parameters<typeof Character.reconstitute>[0];
 
 const baseSnapshot: CharacterSnapshot = {
   id: "character-1",
+  version: 0,
   projectId: "project-1",
   createdByUserId: "user-1",
   name: "Kael of Vael",
@@ -564,6 +565,11 @@ describe("Character", () => {
       expect(character.goal).toBe("  raw goal  ");
       expect(character.description).toBe("  raw description  ");
       expect(character.content).toBe("  raw content  ");
+    });
+
+    it("rejects a negative or non-integer version", () => {
+      expect(() => reconstituteCharacter({ version: -1 })).toThrow(DomainError);
+      expect(() => reconstituteCharacter({ version: 1.5 })).toThrow(DomainError);
     });
 
     it("rejects an invalid status", () => {

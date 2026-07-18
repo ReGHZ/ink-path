@@ -9,6 +9,7 @@ export const LayerMapper = {
     toDomain(row: PrismaLayer): Layer {
         const props: LayerProperties = {
             id: row.id,
+            version: row.version,
             projectId: row.projectId,
             createdByUserId: row.createdByUserId,
             parentId: row.parentId,
@@ -40,6 +41,23 @@ export const LayerMapper = {
             content: snapshot.content,
             status: snapshot.status,
             currentRevisionId: snapshot.currentRevisionId,
+        };
+    },
+
+    toUpdatePersistence(layer: Layer): Prisma.LayerUncheckedUpdateManyInput {
+        const snapshot = layer.toSnapshot();
+
+        return {
+            parentId: snapshot.parentId,
+            name: snapshot.name,
+            level: snapshot.level,
+            exposure: snapshot.exposure,
+            description: snapshot.description,
+            content: snapshot.content,
+            status: snapshot.status,
+            currentRevisionId: snapshot.currentRevisionId,
+            updatedAt: snapshot.updatedAt,
+            version: { increment: 1 },
         };
     },
 };

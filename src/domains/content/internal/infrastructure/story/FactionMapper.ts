@@ -1,26 +1,22 @@
-import {
-  WorldMap,
-  type WorldMapProperties,
-} from "../../domain/world/WorldMap.js";
+import { Faction, type FactionProperties } from "../../domain/story/Faction.js";
 
 import type {
-  Map as PrismaWorldMap,
+  Faction as PrismaFaction,
   Prisma,
 } from "../../../../../generated/prisma/client.js";
 
-export const WorldMapMapper = {
-  toDomain(row: PrismaWorldMap): WorldMap {
-    const props: WorldMapProperties = {
+export const FactionMapper = {
+  toDomain(row: PrismaFaction): Faction {
+    const props: FactionProperties = {
       id: row.id,
       version: row.version,
       projectId: row.projectId,
       createdByUserId: row.createdByUserId,
-      parentId: row.parentId,
       name: row.name,
-      scale: row.scale,
-      terrain: row.terrain,
-      environment: row.environment,
       description: row.description,
+      background: row.background,
+      ideology: row.ideology,
+      size: row.size,
       content: row.content,
       status: row.status,
       currentRevisionId: row.currentRevisionId ?? "", // Force Entity validation if a required DB value is unexpectedly null.
@@ -28,37 +24,37 @@ export const WorldMapMapper = {
       updatedAt: row.updatedAt,
     };
 
-    return WorldMap.reconstitute(props);
+    return Faction.reconstitute(props);
   },
 
-  toPersistence(worldMap: WorldMap): Prisma.MapUncheckedCreateInput {
-    const snapshot = worldMap.toSnapshot();
+  toPersistence(faction: Faction): Prisma.FactionUncheckedCreateInput {
+    const snapshot = faction.toSnapshot();
 
     return {
       projectId: snapshot.projectId,
       createdByUserId: snapshot.createdByUserId,
-      parentId: snapshot.parentId,
       name: snapshot.name,
-      scale: snapshot.scale,
-      terrain: snapshot.terrain,
-      environment: snapshot.environment,
       description: snapshot.description,
+      background: snapshot.background,
+      ideology: snapshot.ideology,
+      size: snapshot.size,
       content: snapshot.content,
       status: snapshot.status,
       currentRevisionId: snapshot.currentRevisionId,
     };
   },
 
-  toUpdatePersistence(worldMap: WorldMap): Prisma.MapUncheckedUpdateManyInput {
-    const snapshot = worldMap.toSnapshot();
+  toUpdatePersistence(
+    faction: Faction,
+  ): Prisma.FactionUncheckedUpdateManyInput {
+    const snapshot = faction.toSnapshot();
 
     return {
-      parentId: snapshot.parentId,
       name: snapshot.name,
-      scale: snapshot.scale,
-      terrain: snapshot.terrain,
-      environment: snapshot.environment,
       description: snapshot.description,
+      background: snapshot.background,
+      ideology: snapshot.ideology,
+      size: snapshot.size,
       content: snapshot.content,
       status: snapshot.status,
       currentRevisionId: snapshot.currentRevisionId,

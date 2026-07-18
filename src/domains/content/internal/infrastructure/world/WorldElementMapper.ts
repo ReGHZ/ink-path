@@ -1,25 +1,22 @@
 import {
-  WorldMap,
-  type WorldMapProperties,
-} from "../../domain/world/WorldMap.js";
+  WorldElement,
+  type WorldElementProperties,
+} from "../../domain/world/WorldElement.js";
 
 import type {
-  Map as PrismaWorldMap,
+  WorldElement as PrismaWorldElement,
   Prisma,
 } from "../../../../../generated/prisma/client.js";
 
-export const WorldMapMapper = {
-  toDomain(row: PrismaWorldMap): WorldMap {
-    const props: WorldMapProperties = {
+export const WorldElementMapper = {
+  toDomain(row: PrismaWorldElement): WorldElement {
+    const props: WorldElementProperties = {
       id: row.id,
       version: row.version,
       projectId: row.projectId,
       createdByUserId: row.createdByUserId,
-      parentId: row.parentId,
       name: row.name,
-      scale: row.scale,
-      terrain: row.terrain,
-      environment: row.environment,
+      category: row.category,
       description: row.description,
       content: row.content,
       status: row.status,
@@ -28,20 +25,19 @@ export const WorldMapMapper = {
       updatedAt: row.updatedAt,
     };
 
-    return WorldMap.reconstitute(props);
+    return WorldElement.reconstitute(props);
   },
 
-  toPersistence(worldMap: WorldMap): Prisma.MapUncheckedCreateInput {
-    const snapshot = worldMap.toSnapshot();
+  toPersistence(
+    worldElement: WorldElement,
+  ): Prisma.WorldElementUncheckedCreateInput {
+    const snapshot = worldElement.toSnapshot();
 
     return {
       projectId: snapshot.projectId,
       createdByUserId: snapshot.createdByUserId,
-      parentId: snapshot.parentId,
       name: snapshot.name,
-      scale: snapshot.scale,
-      terrain: snapshot.terrain,
-      environment: snapshot.environment,
+      category: snapshot.category,
       description: snapshot.description,
       content: snapshot.content,
       status: snapshot.status,
@@ -49,15 +45,14 @@ export const WorldMapMapper = {
     };
   },
 
-  toUpdatePersistence(worldMap: WorldMap): Prisma.MapUncheckedUpdateManyInput {
-    const snapshot = worldMap.toSnapshot();
+  toUpdatePersistence(
+    worldElement: WorldElement,
+  ): Prisma.WorldElementUncheckedUpdateManyInput {
+    const snapshot = worldElement.toSnapshot();
 
     return {
-      parentId: snapshot.parentId,
       name: snapshot.name,
-      scale: snapshot.scale,
-      terrain: snapshot.terrain,
-      environment: snapshot.environment,
+      category: snapshot.category,
       description: snapshot.description,
       content: snapshot.content,
       status: snapshot.status,

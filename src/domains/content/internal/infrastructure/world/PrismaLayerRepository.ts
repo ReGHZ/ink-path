@@ -1,15 +1,14 @@
 import { LayerMapper } from "./LayerMapper.js";
 import {
-    isUniqueViolation,
-    isNotFoundError,
-    isForeignKeyViolation,
-    extractForeignKeyConstraint,
+  isUniqueViolation,
+  isForeignKeyViolation,
+  extractForeignKeyConstraint,
 } from "../../../../../shared/infrastructure/prismaErrors.js";
 import {
-    LayerRepositoryConflictError,
-    LayerRepositoryNotFoundError,
-    LayerRepositoryReferencedError,
-    LayerRepositoryParentNotFoundError,
+  LayerRepositoryConflictError,
+  LayerRepositoryNotFoundError,
+  LayerRepositoryReferencedError,
+  LayerRepositoryParentNotFoundError,
 } from "../../domain/world/LayerRepositoryError.js";
 
 import type { PrismaClient } from "../../../../../generated/prisma/client.js";
@@ -36,111 +35,139 @@ export type LayerDatabase = Pick<PrismaClient, "layer">;
 const LAYER_PARENT_FK = "layers_parent_id_fkey";
 
 export class PrismaLayerRepository implements LayerRepository {
-    constructor(private readonly client: LayerDatabase) { }
+  constructor(private readonly client: LayerDatabase) {}
 
-    async findById(id: string): Promise<Layer | null> {
-        const row = await this.client.layer.findUnique({
-            where: { id }
-        })
+  async findById(id: string): Promise<Layer | null> {
+    const row = await this.client.layer.findUnique({
+      where: { id },
+    });
 
-        return row ? LayerMapper.toDomain(row) : null
+    return row ? LayerMapper.toDomain(row) : null;
+  }
+
+  async findByProjectId(projectId: string): Promise<Layer[]> {
+    const rows = await this.client.layer.findMany({
+      where: {
+        projectId,
+      },
+      orderBy: {
+        updatedAt: "desc",
+      },
+    });
+
+    return rows.map((row) => LayerMapper.toDomain(row));
+  }
+
+  async insert(layer: Layer): Promise<void> {
+    try {
+      await this.client.layer.create({
+        data: {
+          id: layer.id,
+          ...LayerMapper.toPersistence(layer),
+        },
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new LayerRepositoryConflictError();
+      }
+      if (
+        isForeignKeyViolation(error) &&
+        extractForeignKeyConstraint(error) === LAYER_PARENT_FK
+      ) {
+        throw new LayerRepositoryParentNotFoundError();
+      }
+      throw error;
+    }
+  }
+
+  async update(layer: Layer): Promise<void> {
+    let result;
+    try {
+      result = await this.client.layer.updateMany({
+        where: {
+          id: layer.id,
+          version: layer.version,
+        },
+        data: LayerMapper.toUpdatePersistence(layer),
+      });
+    } catch (error) {
+      if (
+        isForeignKeyViolation(error) &&
+        extractForeignKeyConstraint(error) === LAYER_PARENT_FK
+      ) {
+        throw new LayerRepositoryParentNotFoundError();
+      }
+
+      throw error;
     }
 
-    async findByProjectId(projectId: string): Promise<Layer[]> {
-        const rows = await this.client.layer.findMany({
-            where: {
-                projectId,
-            },
-            orderBy: {
-                updatedAt: 'desc'
-            }
-        })
-
-        return rows.map((row) => LayerMapper.toDomain(row))
+    if (result.count === 1) {
+      return;
     }
 
-    async insert(layer: Layer): Promise<void> {
-        try {
-            await this.client.layer.create({
-                data: {
-                    id: layer.id,
-                    ...LayerMapper.toPersistence(layer),
-                },
-            });
-        } catch (error) {
-            if (isUniqueViolation(error)) {
-                throw new LayerRepositoryConflictError();
-            }
-            if (
-                isForeignKeyViolation(error) &&
-                extractForeignKeyConstraint(error) === LAYER_PARENT_FK
-            ) {
-                throw new LayerRepositoryParentNotFoundError();
-            }
-            throw error;
-        }
+    const existing = await this.client.layer.findUnique({
+      where: { id: layer.id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new LayerRepositoryNotFoundError();
     }
 
-    async update(layer: Layer): Promise<void> {
-        try {
-            await this.client.layer.update({
-                where: {
-                    id: layer.id,
-                },
-                data: LayerMapper.toPersistence(layer),
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                throw new LayerRepositoryNotFoundError();
-            }
+    throw new LayerRepositoryConflictError();
+  }
 
-            if (
-                isForeignKeyViolation(error) &&
-                extractForeignKeyConstraint(error) === LAYER_PARENT_FK
-            ) {
-                throw new LayerRepositoryParentNotFoundError();
-            }
+  async delete(id: string, expectedVersion: number): Promise<void> {
+    let result;
+    try {
+      result = await this.client.layer.deleteMany({
+        where: {
+          id,
+          version: expectedVersion,
+        },
+      });
+    } catch (error) {
+      // On delete, every P2003 means the same thing: an inbound
+      // `onDelete: Restrict` FK is blocking removal because a third row
+      // still points at this layer (child via `layers_parent_id_fkey`
+      // today; `comment_target_layers_layer_id_fkey` once the Feedback
+      // domain exists; any future Restrict FK likewise). Unlike
+      // insert/update, P2003 here is not overloaded — there is no
+      // "referent missing" reading on delete and no bug-signal FK — so we
+      // translate any FK violation to ReferencedError without matching
+      // the constraint name. `extractForeignKeyConstraint` is only
+      // needed on insert/update, where P2003 is ambiguous and only the
+      // parent FK is a legitimate user-facing failure.
+      if (isForeignKeyViolation(error)) {
+        throw new LayerRepositoryReferencedError();
+      }
 
-            throw error;
-        }
+      throw error;
     }
 
-    async delete(id: string): Promise<void> {
-        try {
-            await this.client.layer.delete({
-                where: {
-                    id,
-                },
-            });
-        } catch (error) {
-            if (isNotFoundError(error)) {
-                throw new LayerRepositoryNotFoundError();
-            }
-
-            // On delete, every P2003 means the same thing: an inbound
-            // `onDelete: Restrict` FK is blocking removal because a third row
-            // still points at this layer (child via `layers_parent_id_fkey`
-            // today; `comment_target_layers_layer_id_fkey` once the Feedback
-            // domain exists; any future Restrict FK likewise). Unlike
-            // insert/update, P2003 here is not overloaded — there is no
-            // "referent missing" reading on delete and no bug-signal FK — so we
-            // translate any FK violation to ReferencedError without matching
-            // the constraint name. `extractForeignKeyConstraint` is only
-            // needed on insert/update, where P2003 is ambiguous and only the
-            // parent FK is a legitimate user-facing failure.
-            if (isForeignKeyViolation(error)) {
-                throw new LayerRepositoryReferencedError();
-            }
-
-            throw error;
-        }
+    if (result.count === 1) {
+      return;
     }
+
+    // count === 0 is ambiguous the same way it is in update(): either the
+    // row is already gone, or it still exists at a different version.
+    const existing = await this.client.layer.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new LayerRepositoryNotFoundError();
+    }
+
+    throw new LayerRepositoryConflictError();
+  }
 }
 
 export function createLayerRepository({
-    prisma,
+  prisma,
 }: {
-    prisma: PrismaClient;
+  prisma: PrismaClient;
 }): LayerRepository {
-    return new PrismaLayerRepository(prisma);
+  return new PrismaLayerRepository(prisma);
 }

@@ -13,6 +13,7 @@ type WorldMapSnapshot = Parameters<typeof WorldMap.reconstitute>[0];
 
 const baseSnapshot: WorldMapSnapshot = {
   id: "map-1",
+  version: 0,
   projectId: "project-1",
   createdByUserId: "user-1",
   parentId: null,
@@ -409,6 +410,11 @@ describe("WorldMap", () => {
       expect(map.description).toBe("  raw desc  ");
       expect(map.content).toBe("  raw content  ");
       expect(map.parentId).toBe("  raw-parent  ");
+    });
+
+    it("rejects a negative or non-integer version", () => {
+      expect(() => reconstituteMap({ version: -1 })).toThrow(DomainError);
+      expect(() => reconstituteMap({ version: 1.5 })).toThrow(DomainError);
     });
 
     it("rejects an invalid status", () => {

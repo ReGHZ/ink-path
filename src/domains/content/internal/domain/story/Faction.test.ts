@@ -17,6 +17,7 @@ type FactionSnapshot = Parameters<typeof Faction.reconstitute>[0];
 
 const baseSnapshot: FactionSnapshot = {
   id: "faction-1",
+  version: 0,
   projectId: "project-1",
   createdByUserId: "user-1",
   name: "The Cartographers' Guild",
@@ -541,6 +542,11 @@ describe("Faction", () => {
       expect(faction.ideology).toBe("  raw ideology  ");
       expect(faction.size).toBe("  raw size  ");
       expect(faction.content).toBe("  raw content  ");
+    });
+
+    it("rejects a negative or non-integer version", () => {
+      expect(() => reconstituteFaction({ version: -1 })).toThrow(DomainError);
+      expect(() => reconstituteFaction({ version: 1.5 })).toThrow(DomainError);
     });
 
     it("rejects an invalid status", () => {
