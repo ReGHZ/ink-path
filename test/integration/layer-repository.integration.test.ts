@@ -105,6 +105,21 @@ function createLayer(
   });
 }
 
+// insert() always persists a null currentRevisionId regardless of what the
+// entity carries — the FK to content_revisions is not DEFERRABLE, so the
+// physical row cannot point at a revision yet (see LayerRepository.
+// linkRevision doc comment). These tests aren't exercising the create-flow
+// itself; they need a fully "created" row (revision already linked) as their
+// starting fixture, same shape the old insert() produced, so patch it
+// directly here via raw Prisma instead of the version-guarded update().
+async function insertLayer(layer: Layer): Promise<void> {
+  await repository.insert(layer);
+  await prisma.layer.update({
+    where: { id: layer.id },
+    data: { currentRevisionId: revisionId },
+  });
+}
+
 describe("PrismaLayerRepository", () => {
   beforeEach(async () => {
     await cleanDatabase(prisma);
@@ -118,7 +133,7 @@ describe("PrismaLayerRepository", () => {
   it("inserts and finds a layer by id", async () => {
     const layer = createLayer(layerIds[0], "Chapter 1 Setting");
 
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     const found = await repository.findById(layer.id);
 
@@ -142,8 +157,8 @@ describe("PrismaLayerRepository", () => {
 
     // Insert sequentially: second is inserted after first, so DB
     // @updatedAt(second) > @updatedAt(first).
-    await repository.insert(first);
-    await repository.insert(second);
+    await insertLayer(first);
+    await insertLayer(second);
 
     const found = await repository.findByProjectId(projectId);
 
@@ -160,12 +175,12 @@ describe("PrismaLayerRepository", () => {
 
   it("inserts a layer with a valid parent id", async () => {
     const parent = createLayer(layerIds[0], "Parent Layer");
-    await repository.insert(parent);
+    await insertLayer(parent);
 
     const child = createLayer(layerIds[1], "Child Layer", {
       parentId: parent.id,
     });
-    await repository.insert(child);
+    await insertLayer(child);
 
     const found = await repository.findById(child.id);
 
@@ -174,7 +189,7 @@ describe("PrismaLayerRepository", () => {
 
   it("persists detail updates through the mapper", async () => {
     const layer = createLayer(layerIds[0], "Draft Setting");
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     layer.updateDetails({
       name: "Revised Setting",
@@ -199,7 +214,7 @@ describe("PrismaLayerRepository", () => {
   it("persists a status transition through the mapper", async () => {
     const layer = createLayer(layerIds[0], "Draft Setting");
     layer.updateDetails({ content: "Body text", now });
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     layer.changeStatus("published", later);
     await repository.update(layer);
@@ -212,16 +227,73 @@ describe("PrismaLayerRepository", () => {
   it("starts a fresh layer at version 0", async () => {
     const layer = createLayer(layerIds[0], "Fresh Layer");
 
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     const persisted = await repository.findById(layer.id);
 
     expect(persisted?.version).toBe(0);
   });
 
+  it("insert() alone persists a null current_revision_id, pending linkRevision", async () => {
+    const layer = createLayer(layerIds[0], "Pending Layer");
+
+    await repository.insert(layer);
+
+    const row = await prisma.layer.findUniqueOrThrow({
+      where: { id: layer.id },
+      select: { currentRevisionId: true, version: true },
+    });
+
+    expect(row.currentRevisionId).toBeNull();
+    expect(row.version).toBe(0);
+  });
+
+  it("linkRevision sets currentRevisionId without bumping version", async () => {
+    const layer = createLayer(layerIds[0], "Newborn Layer");
+    await repository.insert(layer);
+
+    await repository.linkRevision(layer.id, revisionId, 0);
+
+    const persisted = await repository.findById(layer.id);
+
+    expect(persisted?.currentRevisionId).toBe(revisionId);
+    expect(persisted?.version).toBe(0);
+  });
+
+  it("rejects linkRevision with a stale expectedVersion as a conflict", async () => {
+    const layer = createLayer(layerIds[0], "Contested Layer");
+    await repository.insert(layer);
+
+    await expect(
+      repository.linkRevision(layer.id, revisionId, 1),
+    ).rejects.toBeInstanceOf(LayerRepositoryConflictError);
+
+    const row = await prisma.layer.findUniqueOrThrow({
+      where: { id: layer.id },
+      select: { currentRevisionId: true },
+    });
+    expect(row.currentRevisionId).toBeNull();
+  });
+
+  it("maps linkRevision on a missing target to a neutral not-found error", async () => {
+    await expect(
+      repository.linkRevision(layerIds[0], revisionId, 0),
+    ).rejects.toBeInstanceOf(LayerRepositoryNotFoundError);
+  });
+
+  it("rejects linkRevision called again on an already-linked entity", async () => {
+    const layer = createLayer(layerIds[0], "Already Linked");
+    await repository.insert(layer);
+    await repository.linkRevision(layer.id, revisionId, 0);
+
+    await expect(
+      repository.linkRevision(layer.id, revisionId, 0),
+    ).rejects.toBeInstanceOf(LayerRepositoryConflictError);
+  });
+
   it("increments version on each persisted update", async () => {
     const layer = createLayer(layerIds[0], "Draft Setting");
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     const first = await repository.findById(layer.id);
     if (!first) throw new Error("test fixture: layer missing");
@@ -240,7 +312,7 @@ describe("PrismaLayerRepository", () => {
 
   it("rejects update with a stale version as a conflict", async () => {
     const layer = createLayer(layerIds[0], "Draft Setting");
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     const loaded = await repository.findById(layer.id);
     if (!loaded) throw new Error("test fixture: layer missing");
@@ -266,7 +338,7 @@ describe("PrismaLayerRepository", () => {
 
   it("deletes a layer", async () => {
     const layer = createLayer(layerIds[0], "Disposable Layer");
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     await repository.delete(layer.id, layer.version);
 
@@ -277,7 +349,7 @@ describe("PrismaLayerRepository", () => {
 
   it("rejects delete with a stale version as a conflict", async () => {
     const layer = createLayer(layerIds[0], "Draft Setting");
-    await repository.insert(layer);
+    await insertLayer(layer);
 
     const loaded = await repository.findById(layer.id);
     if (!loaded) throw new Error("test fixture: layer missing");
@@ -301,9 +373,9 @@ describe("PrismaLayerRepository", () => {
     const layer = createLayer(layerIds[0], "My Layer");
     const duplicate = createLayer(layerIds[0], "Duplicate Layer");
 
-    await repository.insert(layer);
+    await insertLayer(layer);
 
-    await expect(repository.insert(duplicate)).rejects.toBeInstanceOf(
+    await expect(insertLayer(duplicate)).rejects.toBeInstanceOf(
       LayerRepositoryConflictError,
     );
   });
@@ -313,7 +385,7 @@ describe("PrismaLayerRepository", () => {
       parentId: bogusParentId,
     });
 
-    await expect(repository.insert(layer)).rejects.toBeInstanceOf(
+    await expect(insertLayer(layer)).rejects.toBeInstanceOf(
       LayerRepositoryParentNotFoundError,
     );
   });
@@ -334,12 +406,12 @@ describe("PrismaLayerRepository", () => {
 
   it("maps deleting a layer that still has children to ReferencedError", async () => {
     const parent = createLayer(layerIds[0], "Parent Layer");
-    await repository.insert(parent);
+    await insertLayer(parent);
 
     const child = createLayer(layerIds[1], "Child Layer", {
       parentId: parent.id,
     });
-    await repository.insert(child);
+    await insertLayer(child);
 
     await expect(repository.delete(parent.id, parent.version)).rejects.toBeInstanceOf(
       LayerRepositoryReferencedError,

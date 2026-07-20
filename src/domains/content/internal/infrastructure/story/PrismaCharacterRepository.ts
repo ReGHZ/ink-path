@@ -46,7 +46,7 @@ export class PrismaCharacterRepository implements CharacterRepository {
       await this.client.character.create({
         data: {
           id: character.id,
-          ...CharacterMapper.toPersistence(character),
+          ...CharacterMapper.toCreatePersistence(character),
         },
       });
     } catch (error) {
@@ -119,6 +119,38 @@ export class PrismaCharacterRepository implements CharacterRepository {
 
       throw error;
     }
+
+    if (result.count === 1) {
+      return;
+    }
+
+    const existing = await this.client.character.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new CharacterRepositoryNotFoundError();
+    }
+
+    throw new CharacterRepositoryConflictError();
+  }
+
+  async linkRevision(
+    id: string,
+    revisionId: string,
+    expectedVersion: number,
+  ): Promise<void> {
+    const result = await this.client.character.updateMany({
+      where: {
+        id,
+        version: expectedVersion,
+        currentRevisionId: null,
+      },
+      data: {
+        currentRevisionId: revisionId,
+      },
+    });
 
     if (result.count === 1) {
       return;

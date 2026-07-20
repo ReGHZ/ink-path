@@ -25,4 +25,10 @@ export type WorldMapRepository = {
   // near-zero cost (no application service calls delete() yet, so there is no
   // caller migration cost). Revisit only if Layer's decision is revisited.
   delete(id: string, expectedVersion: number): Promise<void>;
+
+  // same as world element and layer only for create flow
+  linkRevision(id: string,
+    revisionId: string,
+    expectedVersion: number
+  ): Promise<void>
 };

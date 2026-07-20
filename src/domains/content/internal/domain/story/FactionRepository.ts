@@ -29,4 +29,27 @@ export type FactionRepository = {
   // migration. Conclusion matches Layer/WorldMap/WorldElement/Character, but
   // for Faction's own reasons.
   delete(id: string, expectedVersion: number): Promise<void>;
+
+  // Create-flow only (policy 06 §4 Content, currentRevisionId circular
+  // dependency): sets `currentRevisionId` after the content_revisions row
+  // has been inserted in the same transaction. insert() always writes a
+  // null currentRevisionId regardless of what the passed-in entity carries,
+  // because the FK to content_revisions is not DEFERRABLE (checked
+  // per-statement, not at commit) and the revision row does not exist yet
+  // at insert time. Guarded by expectedVersion for integrity (same ambiguous
+  // count===0 resolution as update()), but unlike update() it does NOT
+  // increment version — completing the create-flow's link is not a discrete
+  // edit (policy 06 §3 no-op rule), so a freshly created, never-edited
+  // entity must still read version === 0 after this call.
+  //
+  // Takes raw primitives instead of the domain entity — nothing at the type
+  // level restricts this to the create-flow, so the Prisma implementation
+  // additionally requires currentRevisionId to be null in its WHERE clause,
+  // making misuse against an already-linked row mechanically fail as a
+  // Conflict rather than silently overwrite.
+  linkRevision(
+    id: string,
+    revisionId: string,
+    expectedVersion: number,
+  ): Promise<void>;
 };

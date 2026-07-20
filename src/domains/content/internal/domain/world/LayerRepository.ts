@@ -28,4 +28,11 @@ export type LayerRepository = {
   // application service exists yet that calls `delete()`, so there is no
   // caller migration cost to changing the signature now.
   delete(id: string, expectedVersion: number): Promise<void>;
+
+  // same as world element only for create flow
+  linkRevision(
+    id: string,
+    revisionId: string,
+    expectedVersion: number
+  ): Promise<void>
 };

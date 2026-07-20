@@ -49,6 +49,13 @@ export const WorldMapMapper = {
     };
   },
 
+  toCreatePersistence(worldMap: WorldMap): Prisma.MapUncheckedCreateInput {
+    return {
+      ...this.toPersistence(worldMap),
+      currentRevisionId: null
+    }
+  },
+
   toUpdatePersistence(worldMap: WorldMap): Prisma.MapUncheckedUpdateManyInput {
     const snapshot = worldMap.toSnapshot();
 

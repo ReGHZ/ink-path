@@ -21,7 +21,7 @@ export type WorldMapDatabase = Pick<PrismaClient, "map">;
 const MAP_PARENT_FK = "maps_parent_id_fkey";
 
 export class PrismaWorldMapRepository implements WorldMapRepository {
-  constructor(private readonly client: WorldMapDatabase) {}
+  constructor(private readonly client: WorldMapDatabase) { }
 
   async findById(id: string): Promise<WorldMap | null> {
     const row = await this.client.map.findUnique({
@@ -49,7 +49,7 @@ export class PrismaWorldMapRepository implements WorldMapRepository {
       await this.client.map.create({
         data: {
           id: worldMap.id,
-          ...WorldMapMapper.toPersistence(worldMap),
+          ...WorldMapMapper.toCreatePersistence(worldMap),
         },
       });
     } catch (error) {
@@ -137,6 +137,43 @@ export class PrismaWorldMapRepository implements WorldMapRepository {
     }
 
     throw new WorldMapRepositoryConflictError();
+  }
+
+  // Create-flow only (policy 06 §4, currentRevisionId circular dependency):
+  // sets currentRevisionId after content_revisions has been inserted in the
+  // same transaction. WHERE requires currentRevisionId: null so this is
+  // mechanically impossible to call outside the create-flow — any row that
+  // already has one falls into the ambiguous count===0 path as a Conflict.
+  // No version bump: completing create is not a discrete edit (policy 06 §3
+  // no-op rule), so a freshly created, never-edited row must still read
+  // version === 0 after this call.
+  async linkRevision(id: string, revisionId: string, expectedVersion: number): Promise<void> {
+    const result = await this.client.map.updateMany({
+      where: {
+        id,
+        version: expectedVersion,
+        currentRevisionId: null
+      },
+      data: {
+        currentRevisionId: revisionId
+      }
+    })
+
+    if (result.count === 1) {
+      return
+    }
+
+    const existing = await this.client.map.findUnique({
+      where: { id },
+      select: { id: true }
+    })
+
+    if (!existing) {
+      throw new WorldMapRepositoryNotFoundError()
+    }
+
+    throw new WorldMapRepositoryConflictError()
+
   }
 }
 

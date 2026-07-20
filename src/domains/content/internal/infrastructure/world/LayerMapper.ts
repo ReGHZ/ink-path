@@ -44,6 +44,15 @@ export const LayerMapper = {
         };
     },
 
+    toCreatePersistence(
+        layer: Layer
+    ): Prisma.LayerUncheckedCreateInput {
+        return {
+            ...this.toPersistence(layer),
+            currentRevisionId: null
+        }
+    },
+
     toUpdatePersistence(layer: Layer): Prisma.LayerUncheckedUpdateManyInput {
         const snapshot = layer.toSnapshot();
 

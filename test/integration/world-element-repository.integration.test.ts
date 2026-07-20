@@ -97,6 +97,21 @@ function createWorldElement(id: string, name: string): WorldElement {
   });
 }
 
+// insert() always persists a null currentRevisionId regardless of what the
+// entity carries — the FK to content_revisions is not DEFERRABLE, so the
+// physical row cannot point at a revision yet (see WorldElementRepository.
+// linkRevision doc comment). These tests aren't exercising the create-flow
+// itself; they need a fully "created" row (revision already linked) as their
+// starting fixture, same shape the old insert() produced, so patch it
+// directly here via raw Prisma instead of the version-guarded update().
+async function insertWorldElement(element: WorldElement): Promise<void> {
+  await repository.insert(element);
+  await prisma.worldElement.update({
+    where: { id: element.id },
+    data: { currentRevisionId: revisionId },
+  });
+}
+
 describe("PrismaWorldElementRepository", () => {
   beforeEach(async () => {
     await cleanDatabase(prisma);
@@ -110,7 +125,7 @@ describe("PrismaWorldElementRepository", () => {
   it("inserts and finds a world element by id", async () => {
     const element = createWorldElement(worldElementIds[0], "Dragon Range");
 
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     const found = await repository.findById(element.id);
 
@@ -134,8 +149,8 @@ describe("PrismaWorldElementRepository", () => {
 
     // Insert sequentially: second is inserted after first, so DB
     // @updatedAt(second) > @updatedAt(first).
-    await repository.insert(first);
-    await repository.insert(second);
+    await insertWorldElement(first);
+    await insertWorldElement(second);
 
     const found = await repository.findByProjectId(projectId);
 
@@ -152,7 +167,7 @@ describe("PrismaWorldElementRepository", () => {
 
   it("persists detail updates through the mapper", async () => {
     const element = createWorldElement(worldElementIds[0], "Draft Setting");
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     element.updateDetails({
       name: "Revised Setting",
@@ -175,7 +190,7 @@ describe("PrismaWorldElementRepository", () => {
   it("persists a status transition through the mapper", async () => {
     const element = createWorldElement(worldElementIds[0], "Draft Setting");
     element.updateDetails({ content: "Body text", now });
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     element.changeStatus("published", later);
     await repository.update(element);
@@ -188,16 +203,73 @@ describe("PrismaWorldElementRepository", () => {
   it("starts a fresh world element at version 0", async () => {
     const element = createWorldElement(worldElementIds[0], "Fresh Element");
 
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     const persisted = await repository.findById(element.id);
 
     expect(persisted?.version).toBe(0);
   });
 
+  it("insert() alone persists a null current_revision_id, pending linkRevision", async () => {
+    const element = createWorldElement(worldElementIds[0], "Pending Element");
+
+    await repository.insert(element);
+
+    const row = await prisma.worldElement.findUniqueOrThrow({
+      where: { id: element.id },
+      select: { currentRevisionId: true, version: true },
+    });
+
+    expect(row.currentRevisionId).toBeNull();
+    expect(row.version).toBe(0);
+  });
+
+  it("linkRevision sets currentRevisionId without bumping version", async () => {
+    const element = createWorldElement(worldElementIds[0], "Newborn Element");
+    await repository.insert(element);
+
+    await repository.linkRevision(element.id, revisionId, 0);
+
+    const persisted = await repository.findById(element.id);
+
+    expect(persisted?.currentRevisionId).toBe(revisionId);
+    expect(persisted?.version).toBe(0);
+  });
+
+  it("rejects linkRevision with a stale expectedVersion as a conflict", async () => {
+    const element = createWorldElement(worldElementIds[0], "Contested Element");
+    await repository.insert(element);
+
+    await expect(
+      repository.linkRevision(element.id, revisionId, 1),
+    ).rejects.toBeInstanceOf(WorldElementRepositoryConflictError);
+
+    const row = await prisma.worldElement.findUniqueOrThrow({
+      where: { id: element.id },
+      select: { currentRevisionId: true },
+    });
+    expect(row.currentRevisionId).toBeNull();
+  });
+
+  it("maps linkRevision on a missing target to a neutral not-found error", async () => {
+    await expect(
+      repository.linkRevision(worldElementIds[0], revisionId, 0),
+    ).rejects.toBeInstanceOf(WorldElementRepositoryNotFoundError);
+  });
+
+  it("rejects linkRevision called again on an already-linked entity", async () => {
+    const element = createWorldElement(worldElementIds[0], "Already Linked");
+    await repository.insert(element);
+    await repository.linkRevision(element.id, revisionId, 0);
+
+    await expect(
+      repository.linkRevision(element.id, revisionId, 0),
+    ).rejects.toBeInstanceOf(WorldElementRepositoryConflictError);
+  });
+
   it("increments version on each persisted update", async () => {
     const element = createWorldElement(worldElementIds[0], "Draft Setting");
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     const first = await repository.findById(element.id);
     if (!first) throw new Error("test fixture: world element missing");
@@ -216,7 +288,7 @@ describe("PrismaWorldElementRepository", () => {
 
   it("rejects update with a stale version as a conflict", async () => {
     const element = createWorldElement(worldElementIds[0], "Draft Setting");
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     const loaded = await repository.findById(element.id);
     if (!loaded) throw new Error("test fixture: world element missing");
@@ -242,7 +314,7 @@ describe("PrismaWorldElementRepository", () => {
 
   it("deletes a world element", async () => {
     const element = createWorldElement(worldElementIds[0], "Disposable Element");
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     await repository.delete(element.id, element.version);
 
@@ -253,7 +325,7 @@ describe("PrismaWorldElementRepository", () => {
 
   it("rejects delete with a stale version as a conflict", async () => {
     const element = createWorldElement(worldElementIds[0], "Draft Setting");
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     const loaded = await repository.findById(element.id);
     if (!loaded) throw new Error("test fixture: world element missing");
@@ -277,9 +349,9 @@ describe("PrismaWorldElementRepository", () => {
     const element = createWorldElement(worldElementIds[0], "My Element");
     const duplicate = createWorldElement(worldElementIds[0], "Duplicate Element");
 
-    await repository.insert(element);
+    await insertWorldElement(element);
 
-    await expect(repository.insert(duplicate)).rejects.toBeInstanceOf(
+    await expect(insertWorldElement(duplicate)).rejects.toBeInstanceOf(
       WorldElementRepositoryConflictError,
     );
   });
@@ -309,7 +381,7 @@ describe("PrismaWorldElementRepository", () => {
   // this file.
   it("maps deleting a world element still targeted by a comment to ReferencedError", async () => {
     const element = createWorldElement(worldElementIds[0], "Commented Element");
-    await repository.insert(element);
+    await insertWorldElement(element);
 
     await prisma.comment.create({
       data: {

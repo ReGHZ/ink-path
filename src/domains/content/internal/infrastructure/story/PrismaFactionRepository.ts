@@ -44,7 +44,7 @@ export class PrismaFactionRepository implements FactionRepository {
       await this.client.faction.create({
         data: {
           id: faction.id,
-          ...FactionMapper.toPersistence(faction),
+          ...FactionMapper.toCreatePersistence(faction),
         },
       });
     } catch (error) {
@@ -117,6 +117,38 @@ export class PrismaFactionRepository implements FactionRepository {
 
       throw error;
     }
+
+    if (result.count === 1) {
+      return;
+    }
+
+    const existing = await this.client.faction.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new FactionRepositoryNotFoundError();
+    }
+
+    throw new FactionRepositoryConflictError();
+  }
+
+  async linkRevision(
+    id: string,
+    revisionId: string,
+    expectedVersion: number,
+  ): Promise<void> {
+    const result = await this.client.faction.updateMany({
+      where: {
+        id,
+        version: expectedVersion,
+        currentRevisionId: null,
+      },
+      data: {
+        currentRevisionId: revisionId,
+      },
+    });
 
     if (result.count === 1) {
       return;

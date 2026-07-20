@@ -96,6 +96,21 @@ function createCharacter(id: string, name: string): Character {
   });
 }
 
+// insert() always persists a null currentRevisionId regardless of what the
+// entity carries — the FK to content_revisions is not DEFERRABLE, so the
+// physical row cannot point at a revision yet (see CharacterRepository.
+// linkRevision doc comment). These tests aren't exercising the create-flow
+// itself; they need a fully "created" row (revision already linked) as their
+// starting fixture, same shape the old insert() produced, so patch it
+// directly here via raw Prisma instead of the version-guarded update().
+async function insertCharacter(character: Character): Promise<void> {
+  await repository.insert(character);
+  await prisma.character.update({
+    where: { id: character.id },
+    data: { currentRevisionId: revisionId },
+  });
+}
+
 describe("PrismaCharacterRepository", () => {
   beforeEach(async () => {
     await cleanDatabase(prisma);
@@ -109,7 +124,7 @@ describe("PrismaCharacterRepository", () => {
   it("inserts and finds a character by id", async () => {
     const character = createCharacter(characterIds[0], "Kael of Vael");
 
-    await repository.insert(character);
+    await insertCharacter(character);
 
     const found = await repository.findById(character.id);
 
@@ -132,8 +147,8 @@ describe("PrismaCharacterRepository", () => {
 
     // Insert sequentially: second is inserted after first, so DB
     // @updatedAt(second) > @updatedAt(first).
-    await repository.insert(first);
-    await repository.insert(second);
+    await insertCharacter(first);
+    await insertCharacter(second);
 
     const found = await repository.findByProjectId(projectId);
 
@@ -150,7 +165,7 @@ describe("PrismaCharacterRepository", () => {
 
   it("persists detail updates through the mapper", async () => {
     const character = createCharacter(characterIds[0], "Draft Character");
-    await repository.insert(character);
+    await insertCharacter(character);
 
     character.updateDetails({
       name: "Revised Character",
@@ -185,7 +200,7 @@ describe("PrismaCharacterRepository", () => {
       description: "D",
       now,
     });
-    await repository.insert(character);
+    await insertCharacter(character);
 
     character.changeStatus("active", later);
     await repository.update(character);
@@ -198,16 +213,73 @@ describe("PrismaCharacterRepository", () => {
   it("starts a fresh character at version 0", async () => {
     const character = createCharacter(characterIds[0], "Fresh Character");
 
-    await repository.insert(character);
+    await insertCharacter(character);
 
     const persisted = await repository.findById(character.id);
 
     expect(persisted?.version).toBe(0);
   });
 
+  it("insert() alone persists a null current_revision_id, pending linkRevision", async () => {
+    const character = createCharacter(characterIds[0], "Pending Character");
+
+    await repository.insert(character);
+
+    const row = await prisma.character.findUniqueOrThrow({
+      where: { id: character.id },
+      select: { currentRevisionId: true, version: true },
+    });
+
+    expect(row.currentRevisionId).toBeNull();
+    expect(row.version).toBe(0);
+  });
+
+  it("linkRevision sets currentRevisionId without bumping version", async () => {
+    const character = createCharacter(characterIds[0], "Newborn Character");
+    await repository.insert(character);
+
+    await repository.linkRevision(character.id, revisionId, 0);
+
+    const persisted = await repository.findById(character.id);
+
+    expect(persisted?.currentRevisionId).toBe(revisionId);
+    expect(persisted?.version).toBe(0);
+  });
+
+  it("rejects linkRevision with a stale expectedVersion as a conflict", async () => {
+    const character = createCharacter(characterIds[0], "Contested Character");
+    await repository.insert(character);
+
+    await expect(
+      repository.linkRevision(character.id, revisionId, 1),
+    ).rejects.toBeInstanceOf(CharacterRepositoryConflictError);
+
+    const row = await prisma.character.findUniqueOrThrow({
+      where: { id: character.id },
+      select: { currentRevisionId: true },
+    });
+    expect(row.currentRevisionId).toBeNull();
+  });
+
+  it("maps linkRevision on a missing target to a neutral not-found error", async () => {
+    await expect(
+      repository.linkRevision(characterIds[0], revisionId, 0),
+    ).rejects.toBeInstanceOf(CharacterRepositoryNotFoundError);
+  });
+
+  it("rejects linkRevision called again on an already-linked entity", async () => {
+    const character = createCharacter(characterIds[0], "Already Linked");
+    await repository.insert(character);
+    await repository.linkRevision(character.id, revisionId, 0);
+
+    await expect(
+      repository.linkRevision(character.id, revisionId, 0),
+    ).rejects.toBeInstanceOf(CharacterRepositoryConflictError);
+  });
+
   it("increments version on each persisted update", async () => {
     const character = createCharacter(characterIds[0], "Draft Character");
-    await repository.insert(character);
+    await insertCharacter(character);
 
     const first = await repository.findById(character.id);
     if (!first) throw new Error("test fixture: character missing");
@@ -226,7 +298,7 @@ describe("PrismaCharacterRepository", () => {
 
   it("rejects update with a stale version as a conflict", async () => {
     const character = createCharacter(characterIds[0], "Draft Character");
-    await repository.insert(character);
+    await insertCharacter(character);
 
     const loaded = await repository.findById(character.id);
     if (!loaded) throw new Error("test fixture: character missing");
@@ -252,7 +324,7 @@ describe("PrismaCharacterRepository", () => {
 
   it("deletes a character", async () => {
     const character = createCharacter(characterIds[0], "Disposable Character");
-    await repository.insert(character);
+    await insertCharacter(character);
 
     await repository.delete(character.id, character.version);
 
@@ -263,7 +335,7 @@ describe("PrismaCharacterRepository", () => {
 
   it("rejects delete with a stale version as a conflict", async () => {
     const character = createCharacter(characterIds[0], "Draft Character");
-    await repository.insert(character);
+    await insertCharacter(character);
 
     const loaded = await repository.findById(character.id);
     if (!loaded) throw new Error("test fixture: character missing");
@@ -287,9 +359,9 @@ describe("PrismaCharacterRepository", () => {
     const character = createCharacter(characterIds[0], "My Character");
     const duplicate = createCharacter(characterIds[0], "Duplicate Character");
 
-    await repository.insert(character);
+    await insertCharacter(character);
 
-    await expect(repository.insert(duplicate)).rejects.toBeInstanceOf(
+    await expect(insertCharacter(duplicate)).rejects.toBeInstanceOf(
       CharacterRepositoryConflictError,
     );
   });
@@ -318,7 +390,7 @@ describe("PrismaCharacterRepository", () => {
   // Prisma, the same way `contentRevision` is seeded elsewhere in this file.
   it("maps deleting a character still targeted by a comment to ReferencedError", async () => {
     const character = createCharacter(characterIds[0], "Commented Character");
-    await repository.insert(character);
+    await insertCharacter(character);
 
     await prisma.comment.create({
       data: {

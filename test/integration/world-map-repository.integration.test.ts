@@ -103,6 +103,21 @@ function createWorldMap(
   });
 }
 
+// insert() always persists a null currentRevisionId regardless of what the
+// entity carries — the FK to content_revisions is not DEFERRABLE, so the
+// physical row cannot point at a revision yet (see WorldMapRepository.
+// linkRevision doc comment). These tests aren't exercising the create-flow
+// itself; they need a fully "created" row (revision already linked) as their
+// starting fixture, same shape the old insert() produced, so patch it
+// directly here via raw Prisma instead of the version-guarded update().
+async function insertWorldMap(map: WorldMap): Promise<void> {
+  await repository.insert(map);
+  await prisma.map.update({
+    where: { id: map.id },
+    data: { currentRevisionId: revisionId },
+  });
+}
+
 describe("PrismaWorldMapRepository", () => {
   beforeEach(async () => {
     await cleanDatabase(prisma);
@@ -116,7 +131,7 @@ describe("PrismaWorldMapRepository", () => {
   it("inserts and finds a map by id", async () => {
     const map = createWorldMap(mapIds[0], "Continent of Vael");
 
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     const found = await repository.findById(map.id);
 
@@ -140,8 +155,8 @@ describe("PrismaWorldMapRepository", () => {
 
     // Insert sequentially: second is inserted after first, so DB
     // @updatedAt(second) > @updatedAt(first).
-    await repository.insert(first);
-    await repository.insert(second);
+    await insertWorldMap(first);
+    await insertWorldMap(second);
 
     const found = await repository.findByProjectId(projectId);
 
@@ -158,12 +173,12 @@ describe("PrismaWorldMapRepository", () => {
 
   it("inserts a map with a valid parent id", async () => {
     const parent = createWorldMap(mapIds[0], "Parent Map");
-    await repository.insert(parent);
+    await insertWorldMap(parent);
 
     const child = createWorldMap(mapIds[1], "Child Map", {
       parentId: parent.id,
     });
-    await repository.insert(child);
+    await insertWorldMap(child);
 
     const found = await repository.findById(child.id);
 
@@ -172,7 +187,7 @@ describe("PrismaWorldMapRepository", () => {
 
   it("persists detail updates through the mapper", async () => {
     const map = createWorldMap(mapIds[0], "Draft Map");
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     map.updateDetails({
       name: "Revised Map",
@@ -199,7 +214,7 @@ describe("PrismaWorldMapRepository", () => {
   it("persists a status transition through the mapper", async () => {
     const map = createWorldMap(mapIds[0], "Draft Map");
     map.updateDetails({ content: "Body text", now });
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     map.changeStatus("published", later);
     await repository.update(map);
@@ -212,16 +227,73 @@ describe("PrismaWorldMapRepository", () => {
   it("starts a fresh map at version 0", async () => {
     const map = createWorldMap(mapIds[0], "Fresh Map");
 
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     const persisted = await repository.findById(map.id);
 
     expect(persisted?.version).toBe(0);
   });
 
+  it("insert() alone persists a null current_revision_id, pending linkRevision", async () => {
+    const map = createWorldMap(mapIds[0], "Pending Map");
+
+    await repository.insert(map);
+
+    const row = await prisma.map.findUniqueOrThrow({
+      where: { id: map.id },
+      select: { currentRevisionId: true, version: true },
+    });
+
+    expect(row.currentRevisionId).toBeNull();
+    expect(row.version).toBe(0);
+  });
+
+  it("linkRevision sets currentRevisionId without bumping version", async () => {
+    const map = createWorldMap(mapIds[0], "Newborn Map");
+    await repository.insert(map);
+
+    await repository.linkRevision(map.id, revisionId, 0);
+
+    const persisted = await repository.findById(map.id);
+
+    expect(persisted?.currentRevisionId).toBe(revisionId);
+    expect(persisted?.version).toBe(0);
+  });
+
+  it("rejects linkRevision with a stale expectedVersion as a conflict", async () => {
+    const map = createWorldMap(mapIds[0], "Contested Map");
+    await repository.insert(map);
+
+    await expect(
+      repository.linkRevision(map.id, revisionId, 1),
+    ).rejects.toBeInstanceOf(WorldMapRepositoryConflictError);
+
+    const row = await prisma.map.findUniqueOrThrow({
+      where: { id: map.id },
+      select: { currentRevisionId: true },
+    });
+    expect(row.currentRevisionId).toBeNull();
+  });
+
+  it("maps linkRevision on a missing target to a neutral not-found error", async () => {
+    await expect(
+      repository.linkRevision(mapIds[0], revisionId, 0),
+    ).rejects.toBeInstanceOf(WorldMapRepositoryNotFoundError);
+  });
+
+  it("rejects linkRevision called again on an already-linked entity", async () => {
+    const map = createWorldMap(mapIds[0], "Already Linked");
+    await repository.insert(map);
+    await repository.linkRevision(map.id, revisionId, 0);
+
+    await expect(
+      repository.linkRevision(map.id, revisionId, 0),
+    ).rejects.toBeInstanceOf(WorldMapRepositoryConflictError);
+  });
+
   it("increments version on each persisted update", async () => {
     const map = createWorldMap(mapIds[0], "Draft Map");
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     const first = await repository.findById(map.id);
     if (!first) throw new Error("test fixture: map missing");
@@ -240,7 +312,7 @@ describe("PrismaWorldMapRepository", () => {
 
   it("rejects update with a stale version as a conflict", async () => {
     const map = createWorldMap(mapIds[0], "Draft Map");
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     const loaded = await repository.findById(map.id);
     if (!loaded) throw new Error("test fixture: map missing");
@@ -266,7 +338,7 @@ describe("PrismaWorldMapRepository", () => {
 
   it("deletes a map", async () => {
     const map = createWorldMap(mapIds[0], "Disposable Map");
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     await repository.delete(map.id, map.version);
 
@@ -277,7 +349,7 @@ describe("PrismaWorldMapRepository", () => {
 
   it("rejects delete with a stale version as a conflict", async () => {
     const map = createWorldMap(mapIds[0], "Draft Map");
-    await repository.insert(map);
+    await insertWorldMap(map);
 
     const loaded = await repository.findById(map.id);
     if (!loaded) throw new Error("test fixture: map missing");
@@ -301,9 +373,9 @@ describe("PrismaWorldMapRepository", () => {
     const map = createWorldMap(mapIds[0], "My Map");
     const duplicate = createWorldMap(mapIds[0], "Duplicate Map");
 
-    await repository.insert(map);
+    await insertWorldMap(map);
 
-    await expect(repository.insert(duplicate)).rejects.toBeInstanceOf(
+    await expect(insertWorldMap(duplicate)).rejects.toBeInstanceOf(
       WorldMapRepositoryConflictError,
     );
   });
@@ -313,7 +385,7 @@ describe("PrismaWorldMapRepository", () => {
       parentId: bogusParentId,
     });
 
-    await expect(repository.insert(map)).rejects.toBeInstanceOf(
+    await expect(insertWorldMap(map)).rejects.toBeInstanceOf(
       WorldMapRepositoryParentNotFoundError,
     );
   });
@@ -334,12 +406,12 @@ describe("PrismaWorldMapRepository", () => {
 
   it("maps deleting a map that still has children to ReferencedError", async () => {
     const parent = createWorldMap(mapIds[0], "Parent Map");
-    await repository.insert(parent);
+    await insertWorldMap(parent);
 
     const child = createWorldMap(mapIds[1], "Child Map", {
       parentId: parent.id,
     });
-    await repository.insert(child);
+    await insertWorldMap(child);
 
     await expect(repository.delete(parent.id, parent.version)).rejects.toBeInstanceOf(
       WorldMapRepositoryReferencedError,

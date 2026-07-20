@@ -96,6 +96,21 @@ function createFaction(id: string, name: string): Faction {
   });
 }
 
+// insert() always persists a null currentRevisionId regardless of what the
+// entity carries — the FK to content_revisions is not DEFERRABLE, so the
+// physical row cannot point at a revision yet (see FactionRepository.
+// linkRevision doc comment). These tests aren't exercising the create-flow
+// itself; they need a fully "created" row (revision already linked) as their
+// starting fixture, same shape the old insert() produced, so patch it
+// directly here via raw Prisma instead of the version-guarded update().
+async function insertFaction(faction: Faction): Promise<void> {
+  await repository.insert(faction);
+  await prisma.faction.update({
+    where: { id: faction.id },
+    data: { currentRevisionId: revisionId },
+  });
+}
+
 describe("PrismaFactionRepository", () => {
   beforeEach(async () => {
     await cleanDatabase(prisma);
@@ -109,7 +124,7 @@ describe("PrismaFactionRepository", () => {
   it("inserts and finds a faction by id", async () => {
     const faction = createFaction(factionIds[0], "The Cartographers' Guild");
 
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     const found = await repository.findById(faction.id);
 
@@ -132,8 +147,8 @@ describe("PrismaFactionRepository", () => {
 
     // Insert sequentially: second is inserted after first, so DB
     // @updatedAt(second) > @updatedAt(first).
-    await repository.insert(first);
-    await repository.insert(second);
+    await insertFaction(first);
+    await insertFaction(second);
 
     const found = await repository.findByProjectId(projectId);
 
@@ -150,7 +165,7 @@ describe("PrismaFactionRepository", () => {
 
   it("persists detail updates through the mapper", async () => {
     const faction = createFaction(factionIds[0], "Draft Faction");
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     faction.updateDetails({
       name: "Revised Faction",
@@ -181,7 +196,7 @@ describe("PrismaFactionRepository", () => {
       background: "B",
       now,
     });
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     faction.changeStatus("active", later);
     await repository.update(faction);
@@ -194,16 +209,73 @@ describe("PrismaFactionRepository", () => {
   it("starts a fresh faction at version 0", async () => {
     const faction = createFaction(factionIds[0], "Fresh Faction");
 
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     const persisted = await repository.findById(faction.id);
 
     expect(persisted?.version).toBe(0);
   });
 
+  it("insert() alone persists a null current_revision_id, pending linkRevision", async () => {
+    const faction = createFaction(factionIds[0], "Pending Faction");
+
+    await repository.insert(faction);
+
+    const row = await prisma.faction.findUniqueOrThrow({
+      where: { id: faction.id },
+      select: { currentRevisionId: true, version: true },
+    });
+
+    expect(row.currentRevisionId).toBeNull();
+    expect(row.version).toBe(0);
+  });
+
+  it("linkRevision sets currentRevisionId without bumping version", async () => {
+    const faction = createFaction(factionIds[0], "Newborn Faction");
+    await repository.insert(faction);
+
+    await repository.linkRevision(faction.id, revisionId, 0);
+
+    const persisted = await repository.findById(faction.id);
+
+    expect(persisted?.currentRevisionId).toBe(revisionId);
+    expect(persisted?.version).toBe(0);
+  });
+
+  it("rejects linkRevision with a stale expectedVersion as a conflict", async () => {
+    const faction = createFaction(factionIds[0], "Contested Faction");
+    await repository.insert(faction);
+
+    await expect(
+      repository.linkRevision(faction.id, revisionId, 1),
+    ).rejects.toBeInstanceOf(FactionRepositoryConflictError);
+
+    const row = await prisma.faction.findUniqueOrThrow({
+      where: { id: faction.id },
+      select: { currentRevisionId: true },
+    });
+    expect(row.currentRevisionId).toBeNull();
+  });
+
+  it("maps linkRevision on a missing target to a neutral not-found error", async () => {
+    await expect(
+      repository.linkRevision(factionIds[0], revisionId, 0),
+    ).rejects.toBeInstanceOf(FactionRepositoryNotFoundError);
+  });
+
+  it("rejects linkRevision called again on an already-linked entity", async () => {
+    const faction = createFaction(factionIds[0], "Already Linked");
+    await repository.insert(faction);
+    await repository.linkRevision(faction.id, revisionId, 0);
+
+    await expect(
+      repository.linkRevision(faction.id, revisionId, 0),
+    ).rejects.toBeInstanceOf(FactionRepositoryConflictError);
+  });
+
   it("increments version on each persisted update", async () => {
     const faction = createFaction(factionIds[0], "Draft Faction");
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     const first = await repository.findById(faction.id);
     if (!first) throw new Error("test fixture: faction missing");
@@ -222,7 +294,7 @@ describe("PrismaFactionRepository", () => {
 
   it("rejects update with a stale version as a conflict", async () => {
     const faction = createFaction(factionIds[0], "Draft Faction");
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     const loaded = await repository.findById(faction.id);
     if (!loaded) throw new Error("test fixture: faction missing");
@@ -248,7 +320,7 @@ describe("PrismaFactionRepository", () => {
 
   it("deletes a faction", async () => {
     const faction = createFaction(factionIds[0], "Disposable Faction");
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     await repository.delete(faction.id, faction.version);
 
@@ -259,7 +331,7 @@ describe("PrismaFactionRepository", () => {
 
   it("rejects delete with a stale version as a conflict", async () => {
     const faction = createFaction(factionIds[0], "Draft Faction");
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     const loaded = await repository.findById(faction.id);
     if (!loaded) throw new Error("test fixture: faction missing");
@@ -283,9 +355,9 @@ describe("PrismaFactionRepository", () => {
     const faction = createFaction(factionIds[0], "My Faction");
     const duplicate = createFaction(factionIds[0], "Duplicate Faction");
 
-    await repository.insert(faction);
+    await insertFaction(faction);
 
-    await expect(repository.insert(duplicate)).rejects.toBeInstanceOf(
+    await expect(insertFaction(duplicate)).rejects.toBeInstanceOf(
       FactionRepositoryConflictError,
     );
   });
@@ -314,7 +386,7 @@ describe("PrismaFactionRepository", () => {
   // Prisma, the same way `contentRevision` is seeded elsewhere in this file.
   it("maps deleting a faction still targeted by a comment to ReferencedError", async () => {
     const faction = createFaction(factionIds[0], "Commented Faction");
-    await repository.insert(faction);
+    await insertFaction(faction);
 
     await prisma.comment.create({
       data: {

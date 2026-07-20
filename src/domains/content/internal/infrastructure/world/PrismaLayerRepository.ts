@@ -35,7 +35,7 @@ export type LayerDatabase = Pick<PrismaClient, "layer">;
 const LAYER_PARENT_FK = "layers_parent_id_fkey";
 
 export class PrismaLayerRepository implements LayerRepository {
-  constructor(private readonly client: LayerDatabase) {}
+  constructor(private readonly client: LayerDatabase) { }
 
   async findById(id: string): Promise<Layer | null> {
     const row = await this.client.layer.findUnique({
@@ -63,7 +63,7 @@ export class PrismaLayerRepository implements LayerRepository {
       await this.client.layer.create({
         data: {
           id: layer.id,
-          ...LayerMapper.toPersistence(layer),
+          ...LayerMapper.toCreatePersistence(layer),
         },
       });
     } catch (error) {
@@ -161,6 +161,42 @@ export class PrismaLayerRepository implements LayerRepository {
     }
 
     throw new LayerRepositoryConflictError();
+  }
+
+  // Create-flow only (policy 06 §4, currentRevisionId circular dependency):
+  // sets currentRevisionId after content_revisions has been inserted in the
+  // same transaction. WHERE requires currentRevisionId: null so this is
+  // mechanically impossible to call outside the create-flow — any row that
+  // already has one falls into the ambiguous count===0 path as a Conflict.
+  // No version bump: completing create is not a discrete edit (policy 06 §3
+  // no-op rule), so a freshly created, never-edited row must still read
+  // version === 0 after this call.
+  async linkRevision(id: string, revisionId: string, expectedVersion: number): Promise<void> {
+    const result = await this.client.layer.updateMany({
+      where: {
+        id,
+        version: expectedVersion,
+        currentRevisionId: null
+      },
+      data: {
+        currentRevisionId: revisionId
+      }
+    })
+
+    if (result.count === 1) {
+      return
+    }
+
+    const existing = await this.client.layer.findUnique({
+      where: { id },
+      select: { id: true }
+    })
+
+    if (!existing) {
+      throw new LayerRepositoryNotFoundError()
+    }
+
+    throw new LayerRepositoryConflictError()
   }
 }
 

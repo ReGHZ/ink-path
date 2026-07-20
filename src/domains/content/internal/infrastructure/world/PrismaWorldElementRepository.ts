@@ -44,7 +44,7 @@ export class PrismaWorldElementRepository implements WorldElementRepository {
       await this.client.worldElement.create({
         data: {
           id: worldElement.id,
-          ...WorldElementMapper.toPersistence(worldElement),
+          ...WorldElementMapper.toCreatePersistence(worldElement),
         },
       });
     } catch (error) {
@@ -122,6 +122,58 @@ export class PrismaWorldElementRepository implements WorldElementRepository {
       return;
     }
 
+    const existing = await this.client.worldElement.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new WorldElementRepositoryNotFoundError();
+    }
+
+    throw new WorldElementRepositoryConflictError();
+  }
+
+  async linkRevision(
+    id: string,
+    revisionId: string,
+    expectedVersion: number,
+  ): Promise<void> {
+    const result = await this.client.worldElement.updateMany({
+      where: {
+        id,
+        version: expectedVersion,
+        // Only ever true for a row insert() just wrote — this is the
+        // mechanical guard against calling linkRevision() outside the
+        // create-flow (no type-level restriction stops that; see
+        // WorldElementRepository doc comment). If currentRevisionId is
+        // already set, this WHERE simply fails to match, and the row falls
+        // into the ambiguous count===0 path below as a Conflict.
+        currentRevisionId: null,
+      },
+      // No `version: { increment: 1 }` here, unlike update() — completing
+      // the create-flow's revision link is not a discrete edit (policy 06
+      // §3: "no-op tidak menaikkan version", and this is the create
+      // operation finishing, not a new change). A world element that has
+      // never been touched after creation must still read `version === 0`,
+      // and content_revisions.revisionNumber for the create revision is
+      // captured as `version` at construction time (0) — bumping here would
+      // desync the two and leave a gap the first real edit's revisionNumber
+      // would never fill.
+      data: {
+        currentRevisionId: revisionId,
+      },
+    });
+
+    if (result.count === 1) {
+      return;
+    }
+
+    // count === 0 is ambiguous: either the row is already gone, or it still
+    // exists at a different version — same follow-up as update(). In
+    // practice this should never fire (nothing else can see this row before
+    // this transaction commits), but the check stays as a defensive
+    // integrity assertion, not real concurrency control.
     const existing = await this.client.worldElement.findUnique({
       where: { id },
       select: { id: true },
