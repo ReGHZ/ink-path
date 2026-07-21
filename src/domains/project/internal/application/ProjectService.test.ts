@@ -287,6 +287,26 @@ describe("ProjectService", () => {
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
 
+    it("maps the domain invariant violation to VALIDATION_ERROR when the new name is blank", async () => {
+      const { projects, service } = createService();
+
+      const project = Project.create({
+        id: "proj-1",
+        ownerUserId: "user-1",
+        createdByUserId: "user-1",
+        name: "My Novel",
+        now,
+      });
+      await projects.insert(project);
+
+      await expect(
+        service.updateProjectDetails("proj-1", { name: "   " }),
+      ).rejects.toMatchObject({
+        code: ErrorCode.VALIDATION_ERROR,
+        message: "Project name cannot be empty",
+      });
+    });
+
     it("throws CONFLICT when updating an archived project", async () => {
       const { projects, service } = createService();
 

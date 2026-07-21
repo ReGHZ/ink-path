@@ -1,3 +1,4 @@
+import type { OutboxEventRepository } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 
 export type ContentRepositories<TEntityRepo> = {
@@ -7,6 +8,9 @@ export type ContentRepositories<TEntityRepo> = {
 
 export type ContentUnitOfWork<TEntityRepo> = {
     transaction<T>(
-        work: (repositories: ContentRepositories<TEntityRepo>) => Promise<T>,
+        work: (
+            repositories: ContentRepositories<TEntityRepo>,
+            outboxEvents: OutboxEventRepository
+        ) => Promise<T>,
     ): Promise<T>;
 };

@@ -50,7 +50,7 @@ export class FactionService {
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
     private readonly factionUnitOfWork: ContentUnitOfWork<FactionRepository>,
-  ) {}
+  ) { }
 
   async createFaction(input: CreateFactionInput): Promise<CreateFactionResult> {
     const now = this.clock.now();

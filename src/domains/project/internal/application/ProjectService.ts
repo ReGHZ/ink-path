@@ -74,6 +74,16 @@ function mapProjectError(error: unknown): never {
     throw new AppError(ErrorCode.NOT_FOUND, "Project not found");
   }
 
+  // Generic catch, after the specific PROJECT_ALREADY_ARCHIVED branch above —
+  // any other DomainError from Project.validate()/updateDetails() is a Flow
+  // "400 Domain validation error" by definition, regardless of which
+  // invariant it names. Without this, errorHandler.ts only special-cases
+  // AppError, so a DomainError falls through to a raw 500 — indistinguishable
+  // from a real bug to the caller (e.g. submitting an empty project name).
+  if (error instanceof DomainError) {
+    throw new AppError(ErrorCode.VALIDATION_ERROR, error.message);
+  }
+
   throw error;
 }
 

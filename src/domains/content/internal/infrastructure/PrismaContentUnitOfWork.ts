@@ -1,6 +1,8 @@
 import { PrismaContentRevisionRepository } from "./support/PrismaContentRevisionRepository.js";
 import { Prisma, type PrismaClient } from "../../../../generated/prisma/client.js";
+import { PrismaOutboxEventRepository } from "../../../../shared/infrastructure/PrismaOutboxEventRepository.js";
 
+import type { OutboxEventRepository } from "../../../../shared/application/ports/OutboxEventRepository.js";
 import type {
     ContentRepositories,
     ContentUnitOfWork,
@@ -12,12 +14,20 @@ export class PrismaContentUnitOfWork<TEntityRepo> implements ContentUnitOfWork<T
         private readonly createEntityRepository: (tx: Prisma.TransactionClient) => TEntityRepo,
     ) { }
 
-    async transaction<T>(work: (r: ContentRepositories<TEntityRepo>) => Promise<T>): Promise<T> {
+    async transaction<T>(
+        work: (
+            repositories: ContentRepositories<TEntityRepo>,
+            outboxEvents: OutboxEventRepository,
+        ) => Promise<T>,
+    ): Promise<T> {
         return this.client.$transaction(async (tx) => {
-            return work({
-                entity: this.createEntityRepository(tx),
-                contentRevisions: new PrismaContentRevisionRepository(tx),
-            });
+            return work(
+                {
+                    entity: this.createEntityRepository(tx),
+                    contentRevisions: new PrismaContentRevisionRepository(tx),
+                },
+                new PrismaOutboxEventRepository(tx),
+            );
         }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     }
 }
