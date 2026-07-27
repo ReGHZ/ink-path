@@ -11,11 +11,13 @@ import { ContentRevision } from "../../domain/support/ContentRevision.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { FactionRepository } from "../../domain/story/FactionRepository.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateFactionInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   projectId: string;
   name: string;
   description?: string | null;
@@ -71,11 +73,13 @@ function toRevisionSnapshot(faction: Faction): Record<string, unknown> {
 
 export type ChangeFactionStatusInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   status: FactionStatus;
 };
 
 export type UpdateFactionInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   name?: string;
   description?: string | null;
   background?: string | null;
@@ -86,7 +90,36 @@ export type UpdateFactionInput = {
 
 export type DeleteFactionInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
 };
+
+// Flow 3 Preconditions table (02-system-design/03_flow_03_content_crud.md:14-18):
+// Writer = full CRUD, Editor = full CRUD except delete is conditional, Reviewer =
+// read-only. Mirrors WorldElementService's assertCanWrite/assertCanDelete exactly.
+function assertCanWrite(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot modify factions",
+    );
+  }
+}
+
+function assertCanDelete(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot delete factions",
+    );
+  }
+
+  if (membership.role === "editor" && !membership.canDelete) {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Editor without delete permission cannot delete factions",
+    );
+  }
+}
 
 function mapFactionError(error: unknown): never {
   if (error instanceof FactionRepositoryNotFoundError) {
@@ -120,6 +153,8 @@ export class FactionService {
   ) {}
 
   async createFaction(input: CreateFactionInput): Promise<CreateFactionResult> {
+    assertCanWrite(input.requestingMembership);
+
     const now = this.clock.now();
     const revisionId = this.idGenerator.generate();
 
@@ -213,6 +248,8 @@ export class FactionService {
     factionId: string,
     input: ChangeFactionStatusInput,
   ): Promise<FactionDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const faction = await this.loadExistingFaction(projectId, factionId);
     const oldVersion = faction.version;
     const beforeSnapshot = toRevisionSnapshot(faction);
@@ -241,6 +278,8 @@ export class FactionService {
     factionId: string,
     input: UpdateFactionInput,
   ): Promise<FactionDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const faction = await this.loadExistingFaction(projectId, factionId);
     const oldVersion = faction.version;
     const beforeSnapshot = toRevisionSnapshot(faction);
@@ -277,6 +316,8 @@ export class FactionService {
     factionId: string,
     input: DeleteFactionInput,
   ): Promise<void> {
+    assertCanDelete(input.requestingMembership);
+
     const faction = await this.loadExistingFaction(projectId, factionId);
     const now = this.clock.now();
 

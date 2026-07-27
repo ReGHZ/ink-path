@@ -16,12 +16,18 @@ import type {
   OutboxEvent,
   OutboxEventRepository,
 } from "../../../../../shared/application/ports/OutboxEventRepository.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ContentRevision } from "../../domain/support/ContentRevision.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 import type { LayerRepository } from "../../domain/world/LayerRepository.js";
 import type { ContentRepositories, ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 const now = new Date("2026-07-22T00:00:00.000Z");
+
+const writer: ProjectMembership = { role: "writer", canDelete: true };
+const editorWithDelete: ProjectMembership = { role: "editor", canDelete: true };
+const editorNoDelete: ProjectMembership = { role: "editor", canDelete: false };
+const reviewer: ProjectMembership = { role: "reviewer", canDelete: false };
 
 class FakeLayerRepository implements LayerRepository {
   readonly layers = new Map<string, Layer>();
@@ -181,6 +187,7 @@ describe("LayerService", () => {
 
       const result = await service.createLayer({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Surface World",
         level: 1,
@@ -197,6 +204,7 @@ describe("LayerService", () => {
 
       const result = await service.createLayer({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Surface World",
         level: 1,
@@ -214,6 +222,7 @@ describe("LayerService", () => {
 
       await service.createLayer({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Surface World",
         level: 1,
@@ -234,6 +243,7 @@ describe("LayerService", () => {
 
       const result = await service.createLayer({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Surface World",
         level: 1,
@@ -255,6 +265,7 @@ describe("LayerService", () => {
 
       const result = await service.createLayer({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         parentId: "layer-1",
         name: "Underworld",
@@ -272,6 +283,7 @@ describe("LayerService", () => {
       await expect(
         service.createLayer({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "missing-parent",
           name: "Underworld",
@@ -302,6 +314,7 @@ describe("LayerService", () => {
       await expect(
         service.createLayer({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "layer-other-project",
           name: "Underworld",
@@ -323,6 +336,7 @@ describe("LayerService", () => {
       await expect(
         service.createLayer({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "layer-1",
           name: "Same Level Child",
@@ -344,6 +358,7 @@ describe("LayerService", () => {
       await expect(
         service.createLayer({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "layer-1",
           name: "Underworld",
@@ -354,6 +369,54 @@ describe("LayerService", () => {
         code: ErrorCode.NOT_FOUND,
         message: "Parent layer not found",
       });
+    });
+
+    it("allows an editor (without canDelete) to create", async () => {
+      const { service } = createService();
+
+      const result = await service.createLayer({
+        requestingUserId: "user-1",
+        requestingMembership: editorNoDelete,
+        projectId: "proj-1",
+        name: "Surface World",
+        level: 1,
+        exposure: "internal_only",
+      });
+
+      expect(result.layerId).toBeDefined();
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to create", async () => {
+      const { layers, service } = createService();
+
+      await expect(
+        service.createLayer({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          name: "Surface World",
+          level: 1,
+          exposure: "internal_only",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(layers.layers.size).toBe(0);
+    });
+
+    it("throws FORBIDDEN for a reviewer even with a dangling parentId (authorization runs before the parent check)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.createLayer({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          parentId: "missing-parent",
+          name: "Underworld",
+          level: 2,
+          exposure: "internal_only",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -484,6 +547,7 @@ describe("LayerService", () => {
 
       const detail = await service.updateLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Layer",
         level: 3,
       });
@@ -499,6 +563,7 @@ describe("LayerService", () => {
 
       const detail = await service.updateLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Layer",
       });
 
@@ -514,6 +579,7 @@ describe("LayerService", () => {
 
       await service.updateLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Layer",
       });
 
@@ -532,6 +598,7 @@ describe("LayerService", () => {
 
       await service.updateLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Layer",
       });
 
@@ -545,6 +612,7 @@ describe("LayerService", () => {
 
       await service.updateLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Surface World",
       });
 
@@ -559,6 +627,7 @@ describe("LayerService", () => {
       await expect(
         service.updateLayer("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -571,6 +640,7 @@ describe("LayerService", () => {
       await expect(
         service.updateLayer("proj-2", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -583,6 +653,7 @@ describe("LayerService", () => {
       await expect(
         service.updateLayer("proj-1", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "   ",
         }),
       ).rejects.toMatchObject({
@@ -596,12 +667,14 @@ describe("LayerService", () => {
       await seedLayer(layers, { content: "Body text" });
       await service.changeLayerStatus("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
       await expect(
         service.updateLayer("proj-1", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           content: null,
         }),
       ).rejects.toMatchObject({
@@ -619,9 +692,50 @@ describe("LayerService", () => {
       await expect(
         service.updateLayer("proj-1", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor (without canDelete) to update", async () => {
+      const { layers, service } = createService();
+      await seedLayer(layers);
+
+      await expect(
+        service.updateLayer("proj-1", "layer-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+          name: "New Name",
+        }),
+      ).resolves.toMatchObject({ name: "New Name" });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to update", async () => {
+      const { layers, service } = createService();
+      await seedLayer(layers);
+
+      await expect(
+        service.updateLayer("proj-1", "layer-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(layers.layers.get("layer-1")?.name).toBe("Surface World");
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the layer does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.updateLayer("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -632,6 +746,7 @@ describe("LayerService", () => {
 
       const detail = await service.changeLayerStatus("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -645,6 +760,7 @@ describe("LayerService", () => {
 
       await service.changeLayerStatus("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -659,6 +775,7 @@ describe("LayerService", () => {
 
       await service.changeLayerStatus("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -677,6 +794,7 @@ describe("LayerService", () => {
 
       await service.changeLayerStatus("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -690,6 +808,7 @@ describe("LayerService", () => {
 
       await service.changeLayerStatus("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "draft",
       });
 
@@ -705,6 +824,7 @@ describe("LayerService", () => {
       await expect(
         service.changeLayerStatus("proj-1", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({
@@ -719,6 +839,7 @@ describe("LayerService", () => {
       await expect(
         service.changeLayerStatus("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -731,9 +852,25 @@ describe("LayerService", () => {
       await expect(
         service.changeLayerStatus("proj-2", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to change status", async () => {
+      const { layers, service } = createService();
+      await seedLayer(layers, { content: "Body text" });
+
+      await expect(
+        service.changeLayerStatus("proj-1", "layer-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          status: "published",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(layers.layers.get("layer-1")?.status).toBe("draft");
     });
   });
 
@@ -744,6 +881,7 @@ describe("LayerService", () => {
 
       await service.deleteLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(layers.layers.has("layer-1")).toBe(false);
@@ -755,6 +893,7 @@ describe("LayerService", () => {
 
       await service.deleteLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       const revision = [...contentRevisions.revisions.values()][0];
@@ -772,6 +911,7 @@ describe("LayerService", () => {
 
       await service.deleteLayer("proj-1", "layer-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(outboxEvents.events).toHaveLength(1);
@@ -784,6 +924,7 @@ describe("LayerService", () => {
       await expect(
         service.deleteLayer("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -795,6 +936,7 @@ describe("LayerService", () => {
       await expect(
         service.deleteLayer("proj-2", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -808,8 +950,60 @@ describe("LayerService", () => {
       await expect(
         service.deleteLayer("proj-1", "layer-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor WITH canDelete to delete", async () => {
+      const { layers, service } = createService();
+      await seedLayer(layers);
+
+      await service.deleteLayer("proj-1", "layer-1", {
+        requestingUserId: "user-1",
+        requestingMembership: editorWithDelete,
+      });
+
+      expect(layers.layers.has("layer-1")).toBe(false);
+    });
+
+    it("throws FORBIDDEN when an editor WITHOUT canDelete attempts to delete", async () => {
+      const { layers, service } = createService();
+      await seedLayer(layers);
+
+      await expect(
+        service.deleteLayer("proj-1", "layer-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(layers.layers.has("layer-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to delete", async () => {
+      const { layers, service } = createService();
+      await seedLayer(layers);
+
+      await expect(
+        service.deleteLayer("proj-1", "layer-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(layers.layers.has("layer-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the layer does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.deleteLayer("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 });

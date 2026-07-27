@@ -1,19 +1,21 @@
+import type { ProjectMembership } from "../../../../../../shared/application/ports/ProjectMembership.js";
 import type {
   ChangeWorldElementStatusInput,
   CreateWorldElementInput,
   UpdateWorldElementInput,
   WorldElementDetail,
-} from "../../application/world/WorldElementService.js";
-import type { ChangeWorldElementStatusRequestDto } from "../dto/world/changeWorldElementStatusSchema.js";
+} from "../../../application/world/WorldElementService.js";
+import type { ChangeWorldElementStatusRequestDto } from "../../dto/world/changeWorldElementStatusSchema.js";
 import type {
   CreateWorldElementRequestDto,
   CreateWorldElementResponseDto,
-} from "../dto/world/createWorldElementSchema.js";
-import type { UpdateWorldElementRequestDto } from "../dto/world/updateWorldElementSchema.js";
+} from "../../dto/world/createWorldElementSchema.js";
+import type { UpdateWorldElementRequestDto } from "../../dto/world/updateWorldElementSchema.js";
 import type {
   WorldElementListResponseDto,
   WorldElementResponseDto,
-} from "../dto/world/worldElementResponseSchema.js";
+} from "../../dto/world/worldElementResponseSchema.js";
+
 
 // Bridges DTO <-> the Input/Output types WorldElementService.ts already defines —
 // never touches the WorldElement domain entity directly (mirrors ProjectDtoMapper.ts,
@@ -23,9 +25,11 @@ export const WorldElementDtoMapper = {
     dto: CreateWorldElementRequestDto,
     requestingUserId: string,
     projectId: string,
+    requestingMembership: ProjectMembership,
   ): CreateWorldElementInput {
     return {
       requestingUserId,
+      requestingMembership,
       projectId,
       name: dto.name,
       description: dto.description,
@@ -69,9 +73,11 @@ export const WorldElementDtoMapper = {
   toUpdateWorldElementInput(
     dto: UpdateWorldElementRequestDto,
     requestingUserId: string,
+    requestingMembership: ProjectMembership,
   ): UpdateWorldElementInput {
     return {
       requestingUserId,
+      requestingMembership,
       name: dto.name,
       description: dto.description,
       category: dto.category,
@@ -82,9 +88,11 @@ export const WorldElementDtoMapper = {
   toChangeWorldElementStatusInput(
     dto: ChangeWorldElementStatusRequestDto,
     requestingUserId: string,
+    requestingMembership: ProjectMembership,
   ): ChangeWorldElementStatusInput {
     return {
       requestingUserId,
+      requestingMembership,
       status: dto.status,
     };
   },

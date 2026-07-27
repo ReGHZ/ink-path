@@ -12,11 +12,13 @@ import {
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { WorldMapRepository } from "../../domain/world/WorldMapRepository.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateWorldMapInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   projectId: string;
   parentId?: string | null;
   name: string;
@@ -75,11 +77,13 @@ function toRevisionSnapshot(worldMap: WorldMap): Record<string, unknown> {
 
 export type ChangeWorldMapStatusInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   status: WorldMapStatus;
 };
 
 export type UpdateWorldMapInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   name?: string;
   scale?: string | null;
   terrain?: string | null;
@@ -90,7 +94,36 @@ export type UpdateWorldMapInput = {
 
 export type DeleteWorldMapInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
 };
+
+// Flow 3 Preconditions table (02-system-design/03_flow_03_content_crud.md:14-18):
+// Writer = full CRUD, Editor = full CRUD except delete is conditional, Reviewer =
+// read-only. Mirrors WorldElementService's assertCanWrite/assertCanDelete exactly.
+function assertCanWrite(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot modify world maps",
+    );
+  }
+}
+
+function assertCanDelete(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot delete world maps",
+    );
+  }
+
+  if (membership.role === "editor" && !membership.canDelete) {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Editor without delete permission cannot delete world maps",
+    );
+  }
+}
 
 function mapWorldMapError(error: unknown): never {
   if (error instanceof WorldMapRepositoryNotFoundError) {
@@ -138,6 +171,10 @@ export class WorldMapService {
   async createWorldMap(
     input: CreateWorldMapInput,
   ): Promise<CreateWorldMapResult> {
+    // Flow 3 step ordering: Authorization is step 4, Parent validation is
+    // step 5 — role is checked BEFORE the parent pre-check below.
+    assertCanWrite(input.requestingMembership);
+
     const now = this.clock.now();
     const revisionId = this.idGenerator.generate();
 
@@ -234,6 +271,8 @@ export class WorldMapService {
     worldMapId: string,
     input: ChangeWorldMapStatusInput,
   ): Promise<WorldMapDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const worldMap = await this.loadExistingWorldMap(projectId, worldMapId);
     const oldVersion = worldMap.version;
     const beforeSnapshot = toRevisionSnapshot(worldMap);
@@ -262,6 +301,8 @@ export class WorldMapService {
     worldMapId: string,
     input: UpdateWorldMapInput,
   ): Promise<WorldMapDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const worldMap = await this.loadExistingWorldMap(projectId, worldMapId);
     const oldVersion = worldMap.version;
     const beforeSnapshot = toRevisionSnapshot(worldMap);
@@ -298,6 +339,8 @@ export class WorldMapService {
     worldMapId: string,
     input: DeleteWorldMapInput,
   ): Promise<void> {
+    assertCanDelete(input.requestingMembership);
+
     const worldMap = await this.loadExistingWorldMap(projectId, worldMapId);
     const now = this.clock.now();
 

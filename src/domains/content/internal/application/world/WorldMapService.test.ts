@@ -16,12 +16,18 @@ import type {
   OutboxEvent,
   OutboxEventRepository,
 } from "../../../../../shared/application/ports/OutboxEventRepository.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ContentRevision } from "../../domain/support/ContentRevision.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 import type { WorldMapRepository } from "../../domain/world/WorldMapRepository.js";
 import type { ContentRepositories, ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 const now = new Date("2026-07-22T00:00:00.000Z");
+
+const writer: ProjectMembership = { role: "writer", canDelete: true };
+const editorWithDelete: ProjectMembership = { role: "editor", canDelete: true };
+const editorNoDelete: ProjectMembership = { role: "editor", canDelete: false };
+const reviewer: ProjectMembership = { role: "reviewer", canDelete: false };
 
 class FakeWorldMapRepository implements WorldMapRepository {
   readonly worldMaps = new Map<string, WorldMap>();
@@ -179,6 +185,7 @@ describe("WorldMapService", () => {
 
       const result = await service.createWorldMap({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Sundered Continent",
       });
@@ -193,6 +200,7 @@ describe("WorldMapService", () => {
 
       const result = await service.createWorldMap({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Sundered Continent",
       });
@@ -208,6 +216,7 @@ describe("WorldMapService", () => {
 
       await service.createWorldMap({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Sundered Continent",
       });
@@ -234,6 +243,7 @@ describe("WorldMapService", () => {
 
       const result = await service.createWorldMap({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Sundered Continent",
       });
@@ -253,6 +263,7 @@ describe("WorldMapService", () => {
 
       const result = await service.createWorldMap({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         parentId: "map-1",
         name: "A Region Within",
@@ -268,6 +279,7 @@ describe("WorldMapService", () => {
       await expect(
         service.createWorldMap({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "missing-parent",
           name: "A Region Within",
@@ -294,6 +306,7 @@ describe("WorldMapService", () => {
       await expect(
         service.createWorldMap({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "map-other-project",
           name: "A Region Within",
@@ -315,6 +328,7 @@ describe("WorldMapService", () => {
       await expect(
         service.createWorldMap({
           requestingUserId: "user-1",
+          requestingMembership: writer,
           projectId: "proj-1",
           parentId: "map-1",
           name: "A Region Within",
@@ -323,6 +337,48 @@ describe("WorldMapService", () => {
         code: ErrorCode.NOT_FOUND,
         message: "Parent world map not found",
       });
+    });
+
+    it("allows an editor (without canDelete) to create", async () => {
+      const { service } = createService();
+
+      const result = await service.createWorldMap({
+        requestingUserId: "user-1",
+        requestingMembership: editorNoDelete,
+        projectId: "proj-1",
+        name: "The Sundered Continent",
+      });
+
+      expect(result.worldMapId).toBeDefined();
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to create", async () => {
+      const { worldMaps, service } = createService();
+
+      await expect(
+        service.createWorldMap({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          name: "The Sundered Continent",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldMaps.worldMaps.size).toBe(0);
+    });
+
+    it("throws FORBIDDEN for a reviewer even with a dangling parentId (authorization runs before the parent check)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.createWorldMap({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          parentId: "missing-parent",
+          name: "A Region Within",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -438,6 +494,7 @@ describe("WorldMapService", () => {
 
       const detail = await service.updateWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Map",
         scale: "region",
       });
@@ -453,6 +510,7 @@ describe("WorldMapService", () => {
 
       const detail = await service.updateWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Map",
       });
 
@@ -468,6 +526,7 @@ describe("WorldMapService", () => {
 
       await service.updateWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Map",
       });
 
@@ -488,6 +547,7 @@ describe("WorldMapService", () => {
 
       await service.updateWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Map",
       });
 
@@ -501,6 +561,7 @@ describe("WorldMapService", () => {
 
       await service.updateWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "The Sundered Continent",
       });
 
@@ -515,6 +576,7 @@ describe("WorldMapService", () => {
       await expect(
         service.updateWorldMap("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -527,6 +589,7 @@ describe("WorldMapService", () => {
       await expect(
         service.updateWorldMap("proj-2", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -539,6 +602,7 @@ describe("WorldMapService", () => {
       await expect(
         service.updateWorldMap("proj-1", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "   ",
         }),
       ).rejects.toMatchObject({
@@ -552,12 +616,14 @@ describe("WorldMapService", () => {
       await seedWorldMap(worldMaps, { content: "Body text" });
       await service.changeWorldMapStatus("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
       await expect(
         service.updateWorldMap("proj-1", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           content: null,
         }),
       ).rejects.toMatchObject({
@@ -575,9 +641,52 @@ describe("WorldMapService", () => {
       await expect(
         service.updateWorldMap("proj-1", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor (without canDelete) to update", async () => {
+      const { worldMaps, service } = createService();
+      await seedWorldMap(worldMaps);
+
+      await expect(
+        service.updateWorldMap("proj-1", "map-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+          name: "New Name",
+        }),
+      ).resolves.toMatchObject({ name: "New Name" });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to update", async () => {
+      const { worldMaps, service } = createService();
+      await seedWorldMap(worldMaps);
+
+      await expect(
+        service.updateWorldMap("proj-1", "map-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldMaps.worldMaps.get("map-1")?.name).toBe(
+        "The Sundered Continent",
+      );
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the map does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.updateWorldMap("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -588,6 +697,7 @@ describe("WorldMapService", () => {
 
       const detail = await service.changeWorldMapStatus("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -601,6 +711,7 @@ describe("WorldMapService", () => {
 
       await service.changeWorldMapStatus("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -615,6 +726,7 @@ describe("WorldMapService", () => {
 
       await service.changeWorldMapStatus("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -633,6 +745,7 @@ describe("WorldMapService", () => {
 
       await service.changeWorldMapStatus("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -646,6 +759,7 @@ describe("WorldMapService", () => {
 
       await service.changeWorldMapStatus("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "draft",
       });
 
@@ -661,6 +775,7 @@ describe("WorldMapService", () => {
       await expect(
         service.changeWorldMapStatus("proj-1", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({
@@ -675,6 +790,7 @@ describe("WorldMapService", () => {
       await expect(
         service.changeWorldMapStatus("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -687,9 +803,25 @@ describe("WorldMapService", () => {
       await expect(
         service.changeWorldMapStatus("proj-2", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to change status", async () => {
+      const { worldMaps, service } = createService();
+      await seedWorldMap(worldMaps, { content: "Body text" });
+
+      await expect(
+        service.changeWorldMapStatus("proj-1", "map-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          status: "published",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldMaps.worldMaps.get("map-1")?.status).toBe("draft");
     });
   });
 
@@ -700,6 +832,7 @@ describe("WorldMapService", () => {
 
       await service.deleteWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(worldMaps.worldMaps.has("map-1")).toBe(false);
@@ -711,6 +844,7 @@ describe("WorldMapService", () => {
 
       await service.deleteWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       const revision = [...contentRevisions.revisions.values()][0];
@@ -728,6 +862,7 @@ describe("WorldMapService", () => {
 
       await service.deleteWorldMap("proj-1", "map-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(outboxEvents.events).toHaveLength(1);
@@ -740,6 +875,7 @@ describe("WorldMapService", () => {
       await expect(
         service.deleteWorldMap("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -751,6 +887,7 @@ describe("WorldMapService", () => {
       await expect(
         service.deleteWorldMap("proj-2", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -764,8 +901,60 @@ describe("WorldMapService", () => {
       await expect(
         service.deleteWorldMap("proj-1", "map-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor WITH canDelete to delete", async () => {
+      const { worldMaps, service } = createService();
+      await seedWorldMap(worldMaps);
+
+      await service.deleteWorldMap("proj-1", "map-1", {
+        requestingUserId: "user-1",
+        requestingMembership: editorWithDelete,
+      });
+
+      expect(worldMaps.worldMaps.has("map-1")).toBe(false);
+    });
+
+    it("throws FORBIDDEN when an editor WITHOUT canDelete attempts to delete", async () => {
+      const { worldMaps, service } = createService();
+      await seedWorldMap(worldMaps);
+
+      await expect(
+        service.deleteWorldMap("proj-1", "map-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldMaps.worldMaps.has("map-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to delete", async () => {
+      const { worldMaps, service } = createService();
+      await seedWorldMap(worldMaps);
+
+      await expect(
+        service.deleteWorldMap("proj-1", "map-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldMaps.worldMaps.has("map-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the map does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.deleteWorldMap("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 });

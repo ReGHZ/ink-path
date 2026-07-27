@@ -12,11 +12,13 @@ import {
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { LayerRepository } from "../../domain/world/LayerRepository.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateLayerInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   projectId: string;
   parentId?: string | null;
   name: string;
@@ -72,6 +74,7 @@ function toRevisionSnapshot(layer: Layer): Record<string, unknown> {
 
 export type ChangeLayerStatusInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   status: LayerStatus;
 };
 
@@ -83,6 +86,7 @@ export type ChangeLayerStatusInput = {
 // which does not exist yet.
 export type UpdateLayerInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   name?: string;
   level?: number;
   exposure?: LayerExposure;
@@ -92,7 +96,30 @@ export type UpdateLayerInput = {
 
 export type DeleteLayerInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
 };
+
+// Flow 3 Preconditions table (02-system-design/03_flow_03_content_crud.md:14-18):
+// Writer = full CRUD, Editor = full CRUD except delete is conditional, Reviewer =
+// read-only. Mirrors WorldElementService's assertCanWrite/assertCanDelete exactly.
+function assertCanWrite(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(ErrorCode.FORBIDDEN, "Reviewer role cannot modify layers");
+  }
+}
+
+function assertCanDelete(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(ErrorCode.FORBIDDEN, "Reviewer role cannot delete layers");
+  }
+
+  if (membership.role === "editor" && !membership.canDelete) {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Editor without delete permission cannot delete layers",
+    );
+  }
+}
 
 function mapLayerError(error: unknown): never {
   if (error instanceof LayerRepositoryNotFoundError) {
@@ -135,6 +162,11 @@ export class LayerService {
   ) {}
 
   async createLayer(input: CreateLayerInput): Promise<CreateLayerResult> {
+    // Flow 3 step ordering matters here: Authorization is step 4, Parent
+    // validation is step 5 — role is checked BEFORE the parent pre-check
+    // below, not after.
+    assertCanWrite(input.requestingMembership);
+
     const now = this.clock.now();
     const revisionId = this.idGenerator.generate();
 
@@ -286,6 +318,8 @@ export class LayerService {
     layerId: string,
     input: ChangeLayerStatusInput,
   ): Promise<LayerDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const layer = await this.loadExistingLayer(projectId, layerId);
     const oldVersion = layer.version;
     const beforeSnapshot = toRevisionSnapshot(layer);
@@ -309,6 +343,8 @@ export class LayerService {
     layerId: string,
     input: UpdateLayerInput,
   ): Promise<LayerDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const layer = await this.loadExistingLayer(projectId, layerId);
     const oldVersion = layer.version;
     const beforeSnapshot = toRevisionSnapshot(layer);
@@ -339,6 +375,8 @@ export class LayerService {
     layerId: string,
     input: DeleteLayerInput,
   ): Promise<void> {
+    assertCanDelete(input.requestingMembership);
+
     const layer = await this.loadExistingLayer(projectId, layerId);
     const now = this.clock.now();
 

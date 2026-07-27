@@ -14,12 +14,18 @@ import type {
   OutboxEvent,
   OutboxEventRepository,
 } from "../../../../../shared/application/ports/OutboxEventRepository.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { FactionRepository } from "../../domain/story/FactionRepository.js";
 import type { ContentRevision } from "../../domain/support/ContentRevision.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 import type { ContentRepositories, ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 const now = new Date("2026-07-20T00:00:00.000Z");
+
+const writer: ProjectMembership = { role: "writer", canDelete: true };
+const editorWithDelete: ProjectMembership = { role: "editor", canDelete: true };
+const editorNoDelete: ProjectMembership = { role: "editor", canDelete: false };
+const reviewer: ProjectMembership = { role: "reviewer", canDelete: false };
 
 class FakeFactionRepository implements FactionRepository {
   readonly factions = new Map<string, Faction>();
@@ -172,6 +178,7 @@ describe("FactionService", () => {
 
       const result = await service.createFaction({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Iron Concord",
       });
@@ -186,6 +193,7 @@ describe("FactionService", () => {
 
       const result = await service.createFaction({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Iron Concord",
       });
@@ -201,6 +209,7 @@ describe("FactionService", () => {
 
       await service.createFaction({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Iron Concord",
       });
@@ -219,6 +228,7 @@ describe("FactionService", () => {
 
       const result = await service.createFaction({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "The Iron Concord",
       });
@@ -230,6 +240,34 @@ describe("FactionService", () => {
       expect(event?.aggregateId).toBe(result.factionId);
       expect(event?.routingKey).toBe("content.created");
       expect(event?.exchange).toBe("saas.events");
+    });
+
+    it("allows an editor (without canDelete) to create", async () => {
+      const { service } = createService();
+
+      const result = await service.createFaction({
+        requestingUserId: "user-1",
+        requestingMembership: editorNoDelete,
+        projectId: "proj-1",
+        name: "The Iron Concord",
+      });
+
+      expect(result.factionId).toBeDefined();
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to create", async () => {
+      const { factions, service } = createService();
+
+      await expect(
+        service.createFaction({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          name: "The Iron Concord",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(factions.factions.size).toBe(0);
     });
   });
 
@@ -362,6 +400,7 @@ describe("FactionService", () => {
 
       const detail = await service.updateFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "The Revised Guild",
         ideology: "New doctrine",
       });
@@ -377,6 +416,7 @@ describe("FactionService", () => {
 
       const detail = await service.updateFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "The Revised Guild",
       });
 
@@ -392,6 +432,7 @@ describe("FactionService", () => {
 
       await service.updateFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "The Revised Guild",
       });
 
@@ -412,6 +453,7 @@ describe("FactionService", () => {
 
       await service.updateFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "The Revised Guild",
       });
 
@@ -425,6 +467,7 @@ describe("FactionService", () => {
 
       await service.updateFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "The Cartographers' Guild",
       });
 
@@ -439,6 +482,7 @@ describe("FactionService", () => {
       await expect(
         service.updateFaction("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -451,6 +495,7 @@ describe("FactionService", () => {
       await expect(
         service.updateFaction("proj-2", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -463,6 +508,7 @@ describe("FactionService", () => {
       await expect(
         service.updateFaction("proj-1", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "   ",
         }),
       ).rejects.toMatchObject({
@@ -479,12 +525,14 @@ describe("FactionService", () => {
       });
       await service.changeFactionStatus("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
       await expect(
         service.updateFaction("proj-1", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           description: null,
         }),
       ).rejects.toMatchObject({
@@ -502,9 +550,52 @@ describe("FactionService", () => {
       await expect(
         service.updateFaction("proj-1", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor (without canDelete) to update", async () => {
+      const { factions, service } = createService();
+      await seedFaction(factions);
+
+      await expect(
+        service.updateFaction("proj-1", "faction-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+          name: "New Name",
+        }),
+      ).resolves.toMatchObject({ name: "New Name" });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to update", async () => {
+      const { factions, service } = createService();
+      await seedFaction(factions);
+
+      await expect(
+        service.updateFaction("proj-1", "faction-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(factions.factions.get("faction-1")?.name).toBe(
+        "The Cartographers' Guild",
+      );
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the faction does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.updateFaction("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -518,6 +609,7 @@ describe("FactionService", () => {
 
       const detail = await service.changeFactionStatus("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -534,6 +626,7 @@ describe("FactionService", () => {
 
       await service.changeFactionStatus("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -551,6 +644,7 @@ describe("FactionService", () => {
 
       await service.changeFactionStatus("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -572,6 +666,7 @@ describe("FactionService", () => {
 
       await service.changeFactionStatus("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -585,6 +680,7 @@ describe("FactionService", () => {
 
       await service.changeFactionStatus("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "draft",
       });
 
@@ -600,6 +696,7 @@ describe("FactionService", () => {
       await expect(
         service.changeFactionStatus("proj-1", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "active",
         }),
       ).rejects.toMatchObject({
@@ -614,6 +711,7 @@ describe("FactionService", () => {
       await expect(
         service.changeFactionStatus("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "active",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -629,9 +727,28 @@ describe("FactionService", () => {
       await expect(
         service.changeFactionStatus("proj-2", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "active",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to change status", async () => {
+      const { factions, service } = createService();
+      await seedFaction(factions, {
+        description: "A guild of mapmakers.",
+        background: "Founded after the Sundering.",
+      });
+
+      await expect(
+        service.changeFactionStatus("proj-1", "faction-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          status: "active",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(factions.factions.get("faction-1")?.status).toBe("draft");
     });
   });
 
@@ -642,6 +759,7 @@ describe("FactionService", () => {
 
       await service.deleteFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(factions.factions.has("faction-1")).toBe(false);
@@ -653,6 +771,7 @@ describe("FactionService", () => {
 
       await service.deleteFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       const revision = [...contentRevisions.revisions.values()][0];
@@ -670,6 +789,7 @@ describe("FactionService", () => {
 
       await service.deleteFaction("proj-1", "faction-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(outboxEvents.events).toHaveLength(1);
@@ -682,6 +802,7 @@ describe("FactionService", () => {
       await expect(
         service.deleteFaction("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -693,6 +814,7 @@ describe("FactionService", () => {
       await expect(
         service.deleteFaction("proj-2", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -706,8 +828,60 @@ describe("FactionService", () => {
       await expect(
         service.deleteFaction("proj-1", "faction-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor WITH canDelete to delete", async () => {
+      const { factions, service } = createService();
+      await seedFaction(factions);
+
+      await service.deleteFaction("proj-1", "faction-1", {
+        requestingUserId: "user-1",
+        requestingMembership: editorWithDelete,
+      });
+
+      expect(factions.factions.has("faction-1")).toBe(false);
+    });
+
+    it("throws FORBIDDEN when an editor WITHOUT canDelete attempts to delete", async () => {
+      const { factions, service } = createService();
+      await seedFaction(factions);
+
+      await expect(
+        service.deleteFaction("proj-1", "faction-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(factions.factions.has("faction-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to delete", async () => {
+      const { factions, service } = createService();
+      await seedFaction(factions);
+
+      await expect(
+        service.deleteFaction("proj-1", "faction-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(factions.factions.has("faction-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the faction does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.deleteFaction("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 });

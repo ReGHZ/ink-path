@@ -14,11 +14,13 @@ import {
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { WorldElementRepository } from "../../domain/world/WorldElementRepository.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateWorldElementInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   projectId: string;
   name: string;
   description?: string | null;
@@ -70,11 +72,13 @@ function toRevisionSnapshot(
 
 export type ChangeWorldElementStatusInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   status: WorldElementStatus;
 };
 
 export type UpdateWorldElementInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   name?: string;
   description?: string | null;
   category?: string;
@@ -83,7 +87,38 @@ export type UpdateWorldElementInput = {
 
 export type DeleteWorldElementInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
 };
+
+// Flow 3 Preconditions table (02-system-design/03_flow_03_content_crud.md:14-18):
+// Writer = full CRUD, Editor = full CRUD except delete is conditional, Reviewer =
+// read-only. Two separate guards because "write" (create/update/changeStatus) and
+// "delete" have different Editor rules — collapsing them into one function would
+// hide that canDelete only matters for the delete path.
+function assertCanWrite(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot modify world elements",
+    );
+  }
+}
+
+function assertCanDelete(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot delete world elements",
+    );
+  }
+
+  if (membership.role === "editor" && !membership.canDelete) {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Editor without delete permission cannot delete world elements",
+    );
+  }
+}
 
 function mapWorldElementError(error: unknown): never {
   if (error instanceof WorldElementRepositoryNotFoundError) {
@@ -128,6 +163,8 @@ export class WorldElementService {
   async createWorldElement(
     input: CreateWorldElementInput,
   ): Promise<CreateWorldElementResult> {
+    assertCanWrite(input.requestingMembership);
+
     const now = this.clock.now();
     const revisionId = this.idGenerator.generate();
 
@@ -236,6 +273,8 @@ export class WorldElementService {
     worldElementId: string,
     input: ChangeWorldElementStatusInput,
   ): Promise<WorldElementDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const worldElement = await this.loadExistingWorldElement(
       projectId,
       worldElementId,
@@ -267,6 +306,8 @@ export class WorldElementService {
     worldElementId: string,
     input: UpdateWorldElementInput,
   ): Promise<WorldElementDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const worldElement = await this.loadExistingWorldElement(
       projectId,
       worldElementId,
@@ -307,6 +348,8 @@ export class WorldElementService {
     worldElementId: string,
     input: DeleteWorldElementInput,
   ): Promise<void> {
+    assertCanDelete(input.requestingMembership);
+
     const worldElement = await this.loadExistingWorldElement(
       projectId,
       worldElementId,
@@ -456,10 +499,14 @@ export class WorldElementService {
 
     // Same NOT_FOUND for "doesn't exist" and "exists but belongs to another
     // project" — distinguishing the two would leak to an unauthorized caller
-    // that the id is valid, just not theirs. No membership check happens
-    // here (that's ProjectMemberMiddleware's job, at the route layer) — this
-    // is the entity-level half: given a project the caller is already
-    // authorized for, does THIS specific row actually belong to it.
+    // that the id is valid, just not theirs. Membership (is this user on this
+    // project at all) is ProjectMemberMiddleware's job, at the route layer;
+    // role-based authorization (assertCanWrite/assertCanDelete above) is this
+    // Service's own job per Flow 3 step 4/3, and deliberately runs BEFORE this
+    // lookup — a Reviewer gets rejected without this method ever needing to
+    // reveal whether the row exists. This check is the remaining, narrower
+    // half: given a project the caller is already authorized for, does THIS
+    // specific row actually belong to it.
     if (worldElement?.projectId !== projectId) {
       throw new AppError(ErrorCode.NOT_FOUND, "World element not found");
     }

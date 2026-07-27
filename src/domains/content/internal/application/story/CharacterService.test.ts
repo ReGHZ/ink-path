@@ -14,12 +14,18 @@ import type {
   OutboxEvent,
   OutboxEventRepository,
 } from "../../../../../shared/application/ports/OutboxEventRepository.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { CharacterRepository } from "../../domain/story/CharacterRepository.js";
 import type { ContentRevision } from "../../domain/support/ContentRevision.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 import type { ContentRepositories, ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 const now = new Date("2026-07-21T00:00:00.000Z");
+
+const writer: ProjectMembership = { role: "writer", canDelete: true };
+const editorWithDelete: ProjectMembership = { role: "editor", canDelete: true };
+const editorNoDelete: ProjectMembership = { role: "editor", canDelete: false };
+const reviewer: ProjectMembership = { role: "reviewer", canDelete: false };
 
 class FakeCharacterRepository implements CharacterRepository {
   readonly characters = new Map<string, Character>();
@@ -185,6 +191,7 @@ describe("CharacterService", () => {
 
       const result = await service.createCharacter({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Kael of Vael",
       });
@@ -199,6 +206,7 @@ describe("CharacterService", () => {
 
       const result = await service.createCharacter({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Kael of Vael",
       });
@@ -214,6 +222,7 @@ describe("CharacterService", () => {
 
       await service.createCharacter({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Kael of Vael",
       });
@@ -232,6 +241,7 @@ describe("CharacterService", () => {
 
       const result = await service.createCharacter({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Kael of Vael",
       });
@@ -244,6 +254,34 @@ describe("CharacterService", () => {
       expect(event?.routingKey).toBe("content.created");
       expect(event?.exchange).toBe("saas.events");
       expect(event?.payload).toMatchObject({ projectId: "proj-1" });
+    });
+
+    it("allows an editor (without canDelete) to create", async () => {
+      const { service } = createService();
+
+      const result = await service.createCharacter({
+        requestingUserId: "user-1",
+        requestingMembership: editorNoDelete,
+        projectId: "proj-1",
+        name: "Kael of Vael",
+      });
+
+      expect(result.characterId).toBeDefined();
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to create", async () => {
+      const { characters, service } = createService();
+
+      await expect(
+        service.createCharacter({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          name: "Kael of Vael",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(characters.characters.size).toBe(0);
     });
   });
 
@@ -349,6 +387,7 @@ describe("CharacterService", () => {
 
       const detail = await service.updateCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Character",
         background: "Updated background",
       });
@@ -364,6 +403,7 @@ describe("CharacterService", () => {
 
       const detail = await service.updateCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Character",
       });
 
@@ -379,6 +419,7 @@ describe("CharacterService", () => {
 
       await service.updateCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Character",
       });
 
@@ -397,6 +438,7 @@ describe("CharacterService", () => {
 
       await service.updateCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Character",
       });
 
@@ -410,6 +452,7 @@ describe("CharacterService", () => {
 
       await service.updateCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Draft Character",
       });
 
@@ -424,6 +467,7 @@ describe("CharacterService", () => {
       await expect(
         service.updateCharacter("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -436,6 +480,7 @@ describe("CharacterService", () => {
       await expect(
         service.updateCharacter("proj-2", "char-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -448,6 +493,7 @@ describe("CharacterService", () => {
       await expect(
         service.updateCharacter("proj-1", "char-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "   ",
         }),
       ).rejects.toMatchObject({
@@ -465,9 +511,50 @@ describe("CharacterService", () => {
       await expect(
         service.updateCharacter("proj-1", "char-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor (without canDelete) to update", async () => {
+      const { characters, service } = createService();
+      await seedCharacter(characters);
+
+      await expect(
+        service.updateCharacter("proj-1", "char-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+          name: "New Name",
+        }),
+      ).resolves.toMatchObject({ name: "New Name" });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to update", async () => {
+      const { characters, service } = createService();
+      await seedCharacter(characters);
+
+      await expect(
+        service.updateCharacter("proj-1", "char-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(characters.characters.get("char-1")?.name).toBe("Draft Character");
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the character does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.updateCharacter("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -483,6 +570,7 @@ describe("CharacterService", () => {
 
       const detail = await service.changeCharacterStatus("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -501,6 +589,7 @@ describe("CharacterService", () => {
 
       await service.changeCharacterStatus("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -520,6 +609,7 @@ describe("CharacterService", () => {
 
       await service.changeCharacterStatus("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -543,6 +633,7 @@ describe("CharacterService", () => {
 
       await service.changeCharacterStatus("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "active",
       });
 
@@ -556,6 +647,7 @@ describe("CharacterService", () => {
 
       await service.changeCharacterStatus("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "draft",
       });
 
@@ -571,6 +663,7 @@ describe("CharacterService", () => {
       await expect(
         service.changeCharacterStatus("proj-1", "char-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "active",
         }),
       ).rejects.toMatchObject({
@@ -585,6 +678,7 @@ describe("CharacterService", () => {
       await expect(
         service.changeCharacterStatus("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "active",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -602,9 +696,30 @@ describe("CharacterService", () => {
       await expect(
         service.changeCharacterStatus("proj-2", "char-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "active",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to change status", async () => {
+      const { characters, service } = createService();
+      await seedCharacter(characters, {
+        archetype: "Hero",
+        background: "BG",
+        personality: "P",
+        description: "D",
+      });
+
+      await expect(
+        service.changeCharacterStatus("proj-1", "char-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          status: "active",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(characters.characters.get("char-1")?.status).toBe("draft");
     });
   });
 
@@ -615,6 +730,7 @@ describe("CharacterService", () => {
 
       await service.deleteCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(characters.characters.has("char-1")).toBe(false);
@@ -626,6 +742,7 @@ describe("CharacterService", () => {
 
       await service.deleteCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       const revision = [...contentRevisions.revisions.values()][0];
@@ -643,6 +760,7 @@ describe("CharacterService", () => {
 
       await service.deleteCharacter("proj-1", "char-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(outboxEvents.events).toHaveLength(1);
@@ -655,6 +773,7 @@ describe("CharacterService", () => {
       await expect(
         service.deleteCharacter("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -666,8 +785,60 @@ describe("CharacterService", () => {
       await expect(
         service.deleteCharacter("proj-2", "char-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("allows an editor WITH canDelete to delete", async () => {
+      const { characters, service } = createService();
+      await seedCharacter(characters);
+
+      await service.deleteCharacter("proj-1", "char-1", {
+        requestingUserId: "user-1",
+        requestingMembership: editorWithDelete,
+      });
+
+      expect(characters.characters.has("char-1")).toBe(false);
+    });
+
+    it("throws FORBIDDEN when an editor WITHOUT canDelete attempts to delete", async () => {
+      const { characters, service } = createService();
+      await seedCharacter(characters);
+
+      await expect(
+        service.deleteCharacter("proj-1", "char-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(characters.characters.has("char-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to delete", async () => {
+      const { characters, service } = createService();
+      await seedCharacter(characters);
+
+      await expect(
+        service.deleteCharacter("proj-1", "char-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(characters.characters.has("char-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the character does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.deleteCharacter("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 });

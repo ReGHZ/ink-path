@@ -14,11 +14,13 @@ import { ContentRevision } from "../../domain/support/ContentRevision.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { CharacterRepository } from "../../domain/story/CharacterRepository.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateCharacterInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   projectId: string;
   name: string;
   archetype?: string | null;
@@ -77,11 +79,13 @@ function toRevisionSnapshot(character: Character): Record<string, unknown> {
 
 export type ChangeCharacterStatusInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   status: CharacterStatus;
 };
 
 export type UpdateCharacterInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
   name?: string;
   archetype?: string | null;
   background?: string | null;
@@ -93,7 +97,38 @@ export type UpdateCharacterInput = {
 
 export type DeleteCharacterInput = {
   requestingUserId: string;
+  requestingMembership: ProjectMembership;
 };
+
+// Flow 3 Preconditions table (02-system-design/03_flow_03_content_crud.md:14-18):
+// Writer = full CRUD, Editor = full CRUD except delete is conditional, Reviewer =
+// read-only. Mirrors WorldElementService's assertCanWrite/assertCanDelete exactly
+// — two guards because Editor's rule differs between write (always allowed) and
+// delete (needs canDelete).
+function assertCanWrite(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot modify characters",
+    );
+  }
+}
+
+function assertCanDelete(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot delete characters",
+    );
+  }
+
+  if (membership.role === "editor" && !membership.canDelete) {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Editor without delete permission cannot delete characters",
+    );
+  }
+}
 
 function mapCharacterError(error: unknown): never {
   if (error instanceof CharacterRepositoryNotFoundError) {
@@ -138,6 +173,8 @@ export class CharacterService {
   async createCharacter(
     input: CreateCharacterInput,
   ): Promise<CreateCharacterResult> {
+    assertCanWrite(input.requestingMembership);
+
     const now = this.clock.now();
     const revisionId = this.idGenerator.generate();
 
@@ -233,6 +270,8 @@ export class CharacterService {
     characterId: string,
     input: ChangeCharacterStatusInput,
   ): Promise<CharacterDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const character = await this.loadExistingCharacter(projectId, characterId);
     const oldVersion = character.version;
     const beforeSnapshot = toRevisionSnapshot(character);
@@ -262,6 +301,8 @@ export class CharacterService {
     characterId: string,
     input: UpdateCharacterInput,
   ): Promise<CharacterDetail> {
+    assertCanWrite(input.requestingMembership);
+
     const character = await this.loadExistingCharacter(projectId, characterId);
     const oldVersion = character.version;
     const beforeSnapshot = toRevisionSnapshot(character);
@@ -299,6 +340,8 @@ export class CharacterService {
     characterId: string,
     input: DeleteCharacterInput,
   ): Promise<void> {
+    assertCanDelete(input.requestingMembership);
+
     const character = await this.loadExistingCharacter(projectId, characterId);
     const now = this.clock.now()
 

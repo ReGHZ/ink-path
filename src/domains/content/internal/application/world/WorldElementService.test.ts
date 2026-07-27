@@ -14,12 +14,18 @@ import type {
   OutboxEvent,
   OutboxEventRepository,
 } from "../../../../../shared/application/ports/OutboxEventRepository.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ContentRevision } from "../../domain/support/ContentRevision.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 import type { WorldElementRepository } from "../../domain/world/WorldElementRepository.js";
 import type { ContentRepositories, ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 const now = new Date("2026-07-20T00:00:00.000Z");
+
+const writer: ProjectMembership = { role: "writer", canDelete: true };
+const editorWithDelete: ProjectMembership = { role: "editor", canDelete: true };
+const editorNoDelete: ProjectMembership = { role: "editor", canDelete: false };
+const reviewer: ProjectMembership = { role: "reviewer", canDelete: false };
 
 class FakeWorldElementRepository implements WorldElementRepository {
   readonly worldElements = new Map<string, WorldElement>();
@@ -181,6 +187,7 @@ describe("WorldElementService", () => {
 
       const result = await service.createWorldElement({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Dragon Range",
         category: "geography",
@@ -196,6 +203,7 @@ describe("WorldElementService", () => {
 
       const result = await service.createWorldElement({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Dragon Range",
         category: "geography",
@@ -212,6 +220,7 @@ describe("WorldElementService", () => {
 
       await service.createWorldElement({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Dragon Range",
         category: "geography",
@@ -231,6 +240,7 @@ describe("WorldElementService", () => {
 
       const result = await service.createWorldElement({
         requestingUserId: "user-1",
+        requestingMembership: writer,
         projectId: "proj-1",
         name: "Dragon Range",
         category: "geography",
@@ -243,6 +253,36 @@ describe("WorldElementService", () => {
       expect(event?.aggregateId).toBe(result.worldElementId);
       expect(event?.routingKey).toBe("content.created");
       expect(event?.exchange).toBe("saas.events");
+    });
+
+    it("allows an editor (without canDelete) to create", async () => {
+      const { service } = createService();
+
+      const result = await service.createWorldElement({
+        requestingUserId: "user-1",
+        requestingMembership: editorNoDelete,
+        projectId: "proj-1",
+        name: "Dragon Range",
+        category: "geography",
+      });
+
+      expect(result.worldElementId).toBeDefined();
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to create", async () => {
+      const { worldElements, service } = createService();
+
+      await expect(
+        service.createWorldElement({
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          projectId: "proj-1",
+          name: "Dragon Range",
+          category: "geography",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldElements.worldElements.size).toBe(0);
     });
   });
 
@@ -324,6 +364,15 @@ describe("WorldElementService", () => {
         service.getWorldElementById("proj-2", "we-1"),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
+
+    it("allows a reviewer to read (read has no role restriction)", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements);
+
+      await expect(
+        service.getWorldElementById("proj-1", "we-1"),
+      ).resolves.toMatchObject({ id: "we-1" });
+    });
   });
 
   describe("listWorldElementsByProject", () => {
@@ -375,6 +424,7 @@ describe("WorldElementService", () => {
 
       const detail = await service.updateWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Setting",
         description: "A windswept coastal town",
       });
@@ -390,6 +440,7 @@ describe("WorldElementService", () => {
 
       const detail = await service.updateWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Setting",
       });
 
@@ -405,6 +456,7 @@ describe("WorldElementService", () => {
 
       await service.updateWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Setting",
       });
 
@@ -423,6 +475,7 @@ describe("WorldElementService", () => {
 
       await service.updateWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Revised Setting",
       });
 
@@ -436,6 +489,7 @@ describe("WorldElementService", () => {
 
       await service.updateWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         name: "Draft Setting",
       });
 
@@ -450,6 +504,7 @@ describe("WorldElementService", () => {
       await expect(
         service.updateWorldElement("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -462,6 +517,7 @@ describe("WorldElementService", () => {
       await expect(
         service.updateWorldElement("proj-2", "we-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -474,6 +530,7 @@ describe("WorldElementService", () => {
       await expect(
         service.updateWorldElement("proj-1", "we-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "   ",
         }),
       ).rejects.toMatchObject({
@@ -491,9 +548,50 @@ describe("WorldElementService", () => {
       await expect(
         service.updateWorldElement("proj-1", "we-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           name: "New Name",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
+    });
+
+    it("allows an editor (without canDelete) to update", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements);
+
+      await expect(
+        service.updateWorldElement("proj-1", "we-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+          name: "New Name",
+        }),
+      ).resolves.toMatchObject({ name: "New Name" });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to update", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements);
+
+      await expect(
+        service.updateWorldElement("proj-1", "we-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldElements.worldElements.get("we-1")?.name).toBe("Draft Setting");
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the world element does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.updateWorldElement("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          name: "New Name",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 
@@ -504,6 +602,7 @@ describe("WorldElementService", () => {
 
       const detail = await service.changeWorldElementStatus("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -517,6 +616,7 @@ describe("WorldElementService", () => {
 
       await service.changeWorldElementStatus("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -531,6 +631,7 @@ describe("WorldElementService", () => {
 
       await service.changeWorldElementStatus("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -549,6 +650,7 @@ describe("WorldElementService", () => {
 
       await service.changeWorldElementStatus("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "published",
       });
 
@@ -563,6 +665,7 @@ describe("WorldElementService", () => {
 
       await service.changeWorldElementStatus("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
         status: "draft",
       });
 
@@ -580,6 +683,7 @@ describe("WorldElementService", () => {
       await expect(
         service.changeWorldElementStatus("proj-1", "we-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({
@@ -594,6 +698,7 @@ describe("WorldElementService", () => {
       await expect(
         service.changeWorldElementStatus("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
@@ -606,9 +711,25 @@ describe("WorldElementService", () => {
       await expect(
         service.changeWorldElementStatus("proj-2", "we-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
           status: "published",
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to change status", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements, { content: "Body text" });
+
+      await expect(
+        service.changeWorldElementStatus("proj-1", "we-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+          status: "published",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldElements.worldElements.get("we-1")?.status).toBe("draft");
     });
   });
 
@@ -619,6 +740,7 @@ describe("WorldElementService", () => {
 
       await service.deleteWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(worldElements.worldElements.has("we-1")).toBe(false);
@@ -630,6 +752,7 @@ describe("WorldElementService", () => {
 
       await service.deleteWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       const revision = [...contentRevisions.revisions.values()][0];
@@ -647,6 +770,7 @@ describe("WorldElementService", () => {
 
       await service.deleteWorldElement("proj-1", "we-1", {
         requestingUserId: "user-1",
+        requestingMembership: writer,
       });
 
       expect(outboxEvents.events).toHaveLength(1);
@@ -659,6 +783,7 @@ describe("WorldElementService", () => {
       await expect(
         service.deleteWorldElement("proj-1", "missing", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
     });
@@ -670,8 +795,60 @@ describe("WorldElementService", () => {
       await expect(
         service.deleteWorldElement("proj-2", "we-1", {
           requestingUserId: "user-1",
+          requestingMembership: writer,
         }),
       ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+    });
+
+    it("allows an editor WITH canDelete to delete", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements);
+
+      await service.deleteWorldElement("proj-1", "we-1", {
+        requestingUserId: "user-1",
+        requestingMembership: editorWithDelete,
+      });
+
+      expect(worldElements.worldElements.has("we-1")).toBe(false);
+    });
+
+    it("throws FORBIDDEN when an editor WITHOUT canDelete attempts to delete", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements);
+
+      await expect(
+        service.deleteWorldElement("proj-1", "we-1", {
+          requestingUserId: "user-1",
+          requestingMembership: editorNoDelete,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldElements.worldElements.has("we-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN when a reviewer attempts to delete", async () => {
+      const { worldElements, service } = createService();
+      await seedWorldElement(worldElements);
+
+      await expect(
+        service.deleteWorldElement("proj-1", "we-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      expect(worldElements.worldElements.has("we-1")).toBe(true);
+    });
+
+    it("throws FORBIDDEN for a reviewer even when the world element does not exist (authorization runs before entity lookup)", async () => {
+      const { service } = createService();
+
+      await expect(
+        service.deleteWorldElement("proj-1", "missing", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
     });
   });
 });
