@@ -340,7 +340,7 @@ describe("CharacterService", () => {
     });
   });
 
-  describe("listCharacterByProject", () => {
+  describe("listCharactersByProject", () => {
     it("returns only characters belonging to the given project", async () => {
       const { characters, service } = createService();
 
@@ -365,7 +365,7 @@ describe("CharacterService", () => {
         }),
       );
 
-      const found = await service.listCharacterByProject("proj-1");
+      const found = await service.listCharactersByProject("proj-1");
 
       expect(found).toHaveLength(1);
       expect(found[0]?.id).toBe("char-1");
@@ -374,7 +374,7 @@ describe("CharacterService", () => {
     it("returns an empty array when the project has no characters", async () => {
       const { service } = createService();
 
-      const found = await service.listCharacterByProject("proj-1");
+      const found = await service.listCharactersByProject("proj-1");
 
       expect(found).toHaveLength(0);
     });

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 
+import { mountContentModule } from "./domains/content/public/index.js";
 import { mountProjectModule } from "./domains/project/public/index.js";
 import { mountUserModule } from "./domains/user/public/index.js";
 import { handleError } from "./shared/http/errorHandler.js";
@@ -37,6 +38,7 @@ export function createApp(container: AwilixContainer<AppCradle>) {
 
   mountUserModule(apiV1, container);
   mountProjectModule(apiV1, container)
+  mountContentModule(apiV1, container);
   app.route("/api/v1", apiV1);
 
   return app;

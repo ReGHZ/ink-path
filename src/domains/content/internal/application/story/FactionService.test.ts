@@ -353,7 +353,7 @@ describe("FactionService", () => {
     });
   });
 
-  describe("listFactionByProject", () => {
+  describe("listFactionsByProject", () => {
     it("returns only factions belonging to the given project", async () => {
       const { factions, service } = createService();
 
@@ -378,7 +378,7 @@ describe("FactionService", () => {
         }),
       );
 
-      const found = await service.listFactionByProject("proj-1");
+      const found = await service.listFactionsByProject("proj-1");
 
       expect(found).toHaveLength(1);
       expect(found[0]?.id).toBe("faction-1");
@@ -387,7 +387,7 @@ describe("FactionService", () => {
     it("returns an empty array when the project has no factions", async () => {
       const { service } = createService();
 
-      const found = await service.listFactionByProject("proj-1");
+      const found = await service.listFactionsByProject("proj-1");
 
       expect(found).toHaveLength(0);
     });

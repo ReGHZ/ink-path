@@ -237,7 +237,7 @@ export class FactionService {
     return this.toFactionDetail(faction);
   }
 
-  async listFactionByProject(projectId: string): Promise<FactionDetail[]> {
+  async listFactionsByProject(projectId: string): Promise<FactionDetail[]> {
     const factions = await this.factionRepository.findByProjectId(projectId);
 
     return factions.map((faction) => this.toFactionDetail(faction));

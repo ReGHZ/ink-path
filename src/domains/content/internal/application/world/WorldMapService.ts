@@ -260,7 +260,7 @@ export class WorldMapService {
     return this.toWorldMapDetail(worldMap);
   }
 
-  async listWorldMapByProject(projectId: string): Promise<WorldMapDetail[]> {
+  async listWorldMapsByProject(projectId: string): Promise<WorldMapDetail[]> {
     const worldMaps = await this.worldMapRepository.findByProjectId(projectId);
 
     return worldMaps.map((worldMap) => this.toWorldMapDetail(worldMap));

@@ -447,7 +447,7 @@ describe("WorldMapService", () => {
     });
   });
 
-  describe("listWorldMapByProject", () => {
+  describe("listWorldMapsByProject", () => {
     it("returns only maps belonging to the given project", async () => {
       const { worldMaps, service } = createService();
 
@@ -472,7 +472,7 @@ describe("WorldMapService", () => {
         }),
       );
 
-      const found = await service.listWorldMapByProject("proj-1");
+      const found = await service.listWorldMapsByProject("proj-1");
 
       expect(found).toHaveLength(1);
       expect(found[0]?.id).toBe("map-1");
@@ -481,7 +481,7 @@ describe("WorldMapService", () => {
     it("returns an empty array when the project has no maps", async () => {
       const { service } = createService();
 
-      const found = await service.listWorldMapByProject("proj-1");
+      const found = await service.listWorldMapsByProject("proj-1");
 
       expect(found).toHaveLength(0);
     });

@@ -258,7 +258,7 @@ export class CharacterService {
     return this.toCharacterDetail(character);
   }
 
-  async listCharacterByProject(projectId: string): Promise<CharacterDetail[]> {
+  async listCharactersByProject(projectId: string): Promise<CharacterDetail[]> {
     const characters =
       await this.characterRepository.findByProjectId(projectId);
 

@@ -2,7 +2,7 @@ import {
   requireProjectId,
   requireProjectMember,
   requireUserId,
-  requireWorldElementId,
+  requireRouteParameter,
   type AppEnvironment,
 } from "../../../../../shared/http/context.js";
 import { parseJsonBody } from "../../../../../shared/http/requestValidation.js";
@@ -29,6 +29,7 @@ export class WorldElementController {
     const dto = await parseJsonBody(c, createWorldElementSchema);
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
+
     const member = requireProjectMember(c);
     const input = WorldElementDtoMapper.toCreateWorldElementInput(
       dto,
@@ -48,7 +49,11 @@ export class WorldElementController {
 
   async getWorldElement(c: Context<AppEnvironment>) {
     const projectId = requireProjectId(c);
-    const worldElementId = requireWorldElementId(c);
+    const worldElementId = requireRouteParameter(
+      c,
+      "worldElementId",
+      "World element not found",
+    );
 
     const detail = await this.worldElementService.getWorldElementById(
       projectId,
@@ -75,7 +80,12 @@ export class WorldElementController {
     const dto = await parseJsonBody(c, updateWorldElementSchema);
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
-    const worldElementId = requireWorldElementId(c);
+    const worldElementId = requireRouteParameter(
+      c,
+      "worldElementId",
+      "World element not found",
+    );
+
     const member = requireProjectMember(c);
     const input = WorldElementDtoMapper.toUpdateWorldElementInput(dto, userId, {
       role: member.role,
@@ -97,7 +107,12 @@ export class WorldElementController {
     const dto = await parseJsonBody(c, changeWorldElementStatusSchema);
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
-    const worldElementId = requireWorldElementId(c);
+    const worldElementId = requireRouteParameter(
+      c,
+      "worldElementId",
+      "World element not found",
+    );
+
     const member = requireProjectMember(c);
     const input = WorldElementDtoMapper.toChangeWorldElementStatusInput(
       dto,
@@ -119,7 +134,12 @@ export class WorldElementController {
   async deleteWorldElement(c: Context<AppEnvironment>) {
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
-    const worldElementId = requireWorldElementId(c);
+    const worldElementId = requireRouteParameter(
+      c,
+      "worldElementId",
+      "World element not found",
+    );
+
     const member = requireProjectMember(c);
 
     await this.worldElementService.deleteWorldElement(

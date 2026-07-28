@@ -50,14 +50,14 @@ export function requireProjectId(c: Context<AppEnvironment>): string {
   return projectId;
 }
 
-export function requireWorldElementId(c: Context<AppEnvironment>): string {
-  const worldElementId = c.req.param("worldElementId");
-
-  if (!worldElementId) {
-    throw new AppError(ErrorCode.NOT_FOUND, "World element not found");
-  }
-
-  return worldElementId;
+export function requireRouteParameter(
+  c: Context<AppEnvironment>,
+  parameterName: string,
+  notFoundMessage: string,
+): string {
+  const value = c.req.param(parameterName);
+  if (!value) throw new AppError(ErrorCode.NOT_FOUND, notFoundMessage);
+  return value;
 }
 
 export function requireProjectMember(
