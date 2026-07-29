@@ -20,6 +20,10 @@ import {
   type RabbitMqPublisher,
 } from "./queue/publisher.js";
 import {
+  createQdrantClient,
+  createQdrantVectorIndex,
+} from "./vector/QdrantVectorIndex.js";
+import {
   registerContentDomain,
   type ContentDomainCradle,
 } from "../domains/content/register.js";
@@ -36,7 +40,9 @@ import {
 
 import type { RabbitMqManager } from "./queue/rabbitmqManager.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
+import type { VectorIndex } from "../shared/application/ports/VectorIndex.js";
 import type { AppEnvironment } from "../shared/http/context.js";
+import type { QdrantClient } from "@qdrant/js-client-rest";
 import type { MiddlewareHandler } from "hono";
 
 export type AppCradle = {
@@ -47,6 +53,8 @@ export type AppCradle = {
   outboxDispatcher: OutboxDispatcher;
   jwtVerifier: JwtVerifier;
   authMiddleware: MiddlewareHandler<AppEnvironment>;
+  qdrantClient: QdrantClient;
+  vectorIndex: VectorIndex;
 } & UserDomainCradle & ProjectDomainCradle & ContentDomainCradle
 
 export function createAppContainer(): AwilixContainer<AppCradle> {
@@ -76,6 +84,11 @@ export function createAppContainer(): AwilixContainer<AppCradle> {
   container.register(
     "authMiddleware",
     asFunction(createAppAuthMiddleware).singleton(),
+  );
+  container.register("qdrantClient", asFunction(createQdrantClient).singleton());
+  container.register(
+    "vectorIndex",
+    asFunction(createQdrantVectorIndex).singleton(),
   );
   registerUserDomain(container);
   registerProjectDomain(container)
