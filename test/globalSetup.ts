@@ -22,6 +22,10 @@ const POSTGRES_PORT = 5432;
 
 const RABBITMQ_IMAGE = "rabbitmq:management";
 const RABBITMQ_PORT = 5672;
+// The management HTTP API — exposed so tests can force-close a specific broker
+// connection (simulating a network blip / broker restart) without needing a
+// test-only escape hatch bolted onto RabbitMqManager itself.
+const RABBITMQ_MANAGEMENT_PORT = 15672;
 
 function buildDatabaseUrl(container: StartedTestContainer): string {
   const host = container.getHost();
@@ -35,6 +39,13 @@ function buildRabbitMqUrl(container: StartedTestContainer): string {
   const port = container.getMappedPort(RABBITMQ_PORT);
 
   return `amqp://guest:guest@${host}:${port}`;
+}
+
+function buildRabbitMqManagementUrl(container: StartedTestContainer): string {
+  const host = container.getHost();
+  const port = container.getMappedPort(RABBITMQ_MANAGEMENT_PORT);
+
+  return `http://${host}:${port}`;
 }
 
 async function runMigrations(databaseUrl: string): Promise<void> {
@@ -64,13 +75,18 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const databaseUrl = buildDatabaseUrl(postgresContainer);
 
   const rabbitMqContainer = await new GenericContainer(RABBITMQ_IMAGE)
-    .withExposedPorts(RABBITMQ_PORT)
+    .withExposedPorts(RABBITMQ_PORT, RABBITMQ_MANAGEMENT_PORT)
     .withWaitStrategy(Wait.forLogMessage("Server startup complete"))
     .start();
 
   const rabbitMqUrl = buildRabbitMqUrl(rabbitMqContainer);
+  const rabbitMqManagementUrl = buildRabbitMqManagementUrl(rabbitMqContainer);
 
-  await writeRuntimeEnvironment({ databaseUrl, rabbitMqUrl });
+  await writeRuntimeEnvironment({
+    databaseUrl,
+    rabbitMqUrl,
+    rabbitMqManagementUrl,
+  });
   await runMigrations(databaseUrl);
 
   return async () => {

@@ -6,6 +6,7 @@ const runtimeEnvironmentPath = resolve("test/.runtime/test-environment.json");
 type RuntimeEnvironment = {
   databaseUrl: string;
   rabbitMqUrl: string;
+  rabbitMqManagementUrl: string;
 };
 
 export async function writeRuntimeEnvironment(
@@ -23,9 +24,9 @@ export async function readRuntimeEnvironment(): Promise<RuntimeEnvironment> {
   const raw = await readFile(runtimeEnvironmentPath, "utf8");
   const parsed = JSON.parse(raw) as Partial<RuntimeEnvironment>;
 
-  const { databaseUrl, rabbitMqUrl } = parsed;
+  const { databaseUrl, rabbitMqUrl, rabbitMqManagementUrl } = parsed;
 
-  if (!databaseUrl || !rabbitMqUrl) {
+  if (!databaseUrl || !rabbitMqUrl || !rabbitMqManagementUrl) {
     const missing: string[] = [];
 
     if (!databaseUrl) {
@@ -36,6 +37,10 @@ export async function readRuntimeEnvironment(): Promise<RuntimeEnvironment> {
       missing.push("RABBITMQ_URL");
     }
 
+    if (!rabbitMqManagementUrl) {
+      missing.push("RABBITMQ_MANAGEMENT_URL");
+    }
+
     throw new Error(
       `Missing required environment variable(s): ${missing.join(", ")}`,
     );
@@ -44,6 +49,7 @@ export async function readRuntimeEnvironment(): Promise<RuntimeEnvironment> {
   return {
     databaseUrl,
     rabbitMqUrl,
+    rabbitMqManagementUrl,
   };
 }
 

@@ -32,8 +32,10 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   // `restart: "no"`), so caching a permanent rejection here would mean one transient
   // failure (network drop mid-download, etc.) wedges this instance until a human notices
   // and restarts it manually. Clearing on failure lets the next call retry fresh; once the
-  // embedding worker (5.2) exists, repeated failures are naturally bounded by the outbox's
-  // own retry/backoff/DLQ (same pattern as OutboxDispatcher), not by this class.
+  // embedding worker (5.2) exists, repeated failures are naturally bounded by the embedding
+  // worker's own Consumer-level retry/backoff/dead-letter (RabbitMqConsumer's
+  // isRetryableError/maxProcessingAttempts — this is a message CONSUMER, not the outbox
+  // dispatcher, so the bounding mechanism lives on the consume side), not by this class.
   private getExtractor(): Promise<FeatureExtractionPipeline> {
     this.extractorPromise ??= pipeline("feature-extraction", MODEL_NAME, {
       dtype: "q8",

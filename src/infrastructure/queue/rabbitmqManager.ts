@@ -84,7 +84,15 @@ export class RabbitMqManager {
 
   private stopped = false;
 
-  constructor(private readonly url: string) {}
+  constructor(
+    private readonly url: string,
+    // connectionName is surfaced as the AMQP client_properties.connection_name,
+    // visible in the RabbitMQ management API/UI — lets a test unambiguously find
+    // and force-close its own connection (simulating a network blip) without
+    // adding a test-only escape hatch elsewhere in this class. Optional and
+    // unused in production, where connections aren't individually identified.
+    private readonly connectionName?: string,
+  ) {}
 
   async start(): Promise<void> {
     await this.connect();
@@ -132,7 +140,11 @@ export class RabbitMqManager {
     this.connecting = true;
 
     try {
-      const connection = await amqp.connect(this.url);
+      const connection = await amqp.connect(this.url, {
+        clientProperties: this.connectionName
+          ? { connection_name: this.connectionName }
+          : undefined,
+      });
 
       this.connection = connection;
 
