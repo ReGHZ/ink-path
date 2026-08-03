@@ -174,7 +174,27 @@ export class RabbitMqConsumer<Payload = unknown> implements Consumer {
       return;
     }
 
-    const channel = this.requireChannel();
+    // amqplib's own delivery callback (channel.consume() above) can still fire for a
+    // message that was already in the pipe even after stop() has nulled this.channel and
+    // closed it — closing a channel isn't synchronous with respect to already-dispatched
+    // deliveries. Previously this called requireChannel() unconditionally here, which
+    // THROWS for exactly this case — a throw with no catch around it (this is the first
+    // line of the function, before any try/catch), from a promise that's fire-and-forget
+    // at the call site (`void task.finally(...)` doesn't add a rejection handler to `task`
+    // itself) — a real unhandled promise rejection, the same crash-risk class fixed for the
+    // retry-sleep race, just at an earlier point in this same function. Same resolution:
+    // leave the message unacked for redelivery instead of reaching for a channel that's
+    // already gone.
+    if (!this.channel) {
+      logger.warn(
+        { routingKey: message.fields.routingKey },
+        "Message delivered after channel was already closed (shutdown race); leaving unacked for redelivery",
+      );
+
+      return;
+    }
+
+    const channel = this.channel;
     const routingKey = message.fields.routingKey;
 
     let payload: Payload;
@@ -277,13 +297,6 @@ export class RabbitMqConsumer<Payload = unknown> implements Consumer {
     }
   }
 
-  private requireChannel(): RabbitMqChannel {
-    if (!this.channel) {
-      throw new Error("RabbitMQ consumer channel not available");
-    }
-
-    return this.channel;
-  }
 }
 
 export function createRabbitMqConsumer<Payload = unknown>(

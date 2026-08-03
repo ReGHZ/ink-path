@@ -27,6 +27,14 @@ const RABBITMQ_PORT = 5672;
 // test-only escape hatch bolted onto RabbitMqManager itself.
 const RABBITMQ_MANAGEMENT_PORT = 15672;
 
+// Same image as .devcontainer/docker-compose.yml's `qdrant` service. Previously tests hit
+// that persistent devcontainer instance directly (QDRANT_URL pointed at it) — points
+// accumulated across every run with nothing to clean them up (145 stray points found from
+// a single day's worth of test/manual-verification runs). An ephemeral testcontainer here
+// gives Qdrant the exact same per-run isolation Postgres/RabbitMQ already have.
+const QDRANT_IMAGE = "qdrant/qdrant:latest";
+const QDRANT_PORT = 6333;
+
 function buildDatabaseUrl(container: StartedTestContainer): string {
   const host = container.getHost();
   const port = container.getMappedPort(POSTGRES_PORT);
@@ -44,6 +52,13 @@ function buildRabbitMqUrl(container: StartedTestContainer): string {
 function buildRabbitMqManagementUrl(container: StartedTestContainer): string {
   const host = container.getHost();
   const port = container.getMappedPort(RABBITMQ_MANAGEMENT_PORT);
+
+  return `http://${host}:${port}`;
+}
+
+function buildQdrantUrl(container: StartedTestContainer): string {
+  const host = container.getHost();
+  const port = container.getMappedPort(QDRANT_PORT);
 
   return `http://${host}:${port}`;
 }
@@ -82,14 +97,23 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const rabbitMqUrl = buildRabbitMqUrl(rabbitMqContainer);
   const rabbitMqManagementUrl = buildRabbitMqManagementUrl(rabbitMqContainer);
 
+  const qdrantContainer = await new GenericContainer(QDRANT_IMAGE)
+    .withExposedPorts(QDRANT_PORT)
+    .withWaitStrategy(Wait.forLogMessage("Qdrant HTTP listening on 6333"))
+    .start();
+
+  const qdrantUrl = buildQdrantUrl(qdrantContainer);
+
   await writeRuntimeEnvironment({
     databaseUrl,
     rabbitMqUrl,
     rabbitMqManagementUrl,
+    qdrantUrl,
   });
   await runMigrations(databaseUrl);
 
   return async () => {
+    await qdrantContainer.stop();
     await rabbitMqContainer.stop();
     await postgresContainer.stop();
 

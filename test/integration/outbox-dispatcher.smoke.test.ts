@@ -20,11 +20,27 @@ let publisher: RabbitMqPublisher;
 let consumer: RabbitMqConsumer;
 
 const received: RabbitMqMessage[] = [];
-
-async function cleanOutbox(client: PrismaClient): Promise<void> {
-  await client.deadLetterEvent.deleteMany({});
-  await client.outboxEvent.deleteMany({});
-}
+// Tracks only the rows THIS file creates, cleaned up by id in afterAll — NOT a blanket
+// `outboxEvent.deleteMany({})` between tests. This table is shared with whatever else runs
+// concurrently in the full suite (e.g. outbox-worker-qdrant.end2end.test.ts's real dispatcher,
+// outbox-stale-lock-recovery.integration.test.ts's own seeded rows); a blanket per-test wipe
+// here deletes their in-flight rows out from under them (confirmed: this exact wipe caused
+// both of those files to fail/timeout when run as part of the full suite).
+//
+// Known residual flakiness (rare, load-dependent, NOT fixed here): OutboxDispatcher.
+// claimDueEvents() claims globally by design (status IN (pending, failed), no scoping by
+// exchange/routingKey/anything test-specific — that's correct production behavior). If
+// another real dispatcher happens to be polling the same shared table at the same moment
+// (e.g. outbox-worker-qdrant.end2end.test.ts's, which uses the real publisher), it can win
+// the FOR UPDATE SKIP LOCKED race for a row THIS file seeded before this file's own
+// (much faster-polling) dispatcher does — observed once during a heavily-contended
+// full-suite run: the "dead-letter path" test's row ended up `published` by a different
+// test's dispatcher instead of `dead_lettered` by its own. Not reproducible standalone.
+// Properly eliminating this would mean either scoping claimDueEvents by something
+// test-only (weakens real dispatcher semantics) or isolating Postgres per test file
+// (larger infra change) — noted rather than "fixed" with a workaround that would make the
+// assertions here weaker than what they're meant to prove.
+const createdIds: string[] = [];
 
 async function seedOutboxEvent(
   overrides: { maxRetries?: number } = {},
@@ -45,6 +61,8 @@ async function seedOutboxEvent(
     },
     select: { id: true },
   });
+
+  createdIds.push(id);
 
   return { id, marker };
 }
@@ -79,14 +97,16 @@ describe("outbox dispatcher smoke", () => {
     await consumer.start();
   });
 
-  beforeEach(async () => {
-    await cleanOutbox(prisma);
+  beforeEach(() => {
     received.length = 0;
   });
 
   afterAll(async () => {
     await consumer.stop();
     await rabbitmq.stop();
+
+    await prisma.deadLetterEvent.deleteMany({ where: { outboxEventId: { in: createdIds } } });
+    await prisma.outboxEvent.deleteMany({ where: { id: { in: createdIds } } });
     await prisma.$disconnect();
   });
 
