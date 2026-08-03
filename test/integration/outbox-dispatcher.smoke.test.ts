@@ -26,14 +26,17 @@ async function cleanOutbox(client: PrismaClient): Promise<void> {
   await client.outboxEvent.deleteMany({});
 }
 
-async function seedOutboxEvent(overrides: { maxRetries?: number } = {}): Promise<{ id: string }> {
-  return prisma.outboxEvent.create({
+async function seedOutboxEvent(
+  overrides: { maxRetries?: number } = {},
+): Promise<{ id: string; marker: string }> {
+  const marker = crypto.randomUUID();
+  const { id } = await prisma.outboxEvent.create({
     data: {
       eventType: "content.created",
       eventVersion: 1,
       aggregateType: "content",
       aggregateId: crypto.randomUUID(),
-      payload: { test: true },
+      payload: { test: true, marker },
       status: "pending",
       routingKey: ROUTING_KEY,
       exchange: EXCHANGE,
@@ -42,6 +45,8 @@ async function seedOutboxEvent(overrides: { maxRetries?: number } = {}): Promise
     },
     select: { id: true },
   });
+
+  return { id, marker };
 }
 
 function makeFailingPublisher(): RabbitMqPublisher {
@@ -86,7 +91,7 @@ describe("outbox dispatcher smoke", () => {
   });
 
   it("happy path: publishes outbox event and consumer receives it", async () => {
-    const { id } = await seedOutboxEvent();
+    const { id, marker } = await seedOutboxEvent();
 
     const dispatcher = new OutboxDispatcher(outboxRepository, publisher, {
       workerId: "smoke-happy-worker",
@@ -96,8 +101,18 @@ describe("outbox dispatcher smoke", () => {
     await dispatcher.start();
 
     try {
-      await expect.poll(() => received.length, { timeout: 10_000 }).toBe(1);
-      expect(received[0].routingKey).toBe(ROUTING_KEY);
+      // Filters by this seed's own marker rather than asserting received.length === 1 —
+      // "sample-consumer" is a durable, fixed-name queue bound to the same "content.created"
+      // routing key real content-creating flows use (e.g. outbox-worker-qdrant.end2end.test.ts),
+      // so it can legitimately receive other tests' real events too when run in the same
+      // suite; this test only cares about the one it seeded.
+      const findSeededMessage = () =>
+        received.find(
+          (message) => (message.payload as { marker?: string }).marker === marker,
+        );
+
+      await expect.poll(findSeededMessage, { timeout: 10_000 }).toBeDefined();
+      expect(findSeededMessage()?.routingKey).toBe(ROUTING_KEY);
 
       await dispatcher.stop();
 

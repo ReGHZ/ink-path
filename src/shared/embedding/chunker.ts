@@ -13,6 +13,15 @@
 // or assumes anything about how that counting actually happens.
 export type TokenCounter = (text: string) => number;
 
+// Own resolved module URL — used by chunkerSourceHash.ts to hash whichever file is
+// actually executing (this .ts file under tsx/vitest in dev, the compiled .js under
+// dist/ in production). Reading it here, from chunker.ts's own import.meta.url, is
+// deliberate: guessing a relative "./chunker.js" path from a DIFFERENT module doesn't
+// work, because readFileSync is a raw filesystem read with no awareness of the
+// .js-specifier-resolves-to-.ts-source mapping that import statements get from the
+// dev loader — only chunker.ts itself always knows its own real, currently-loaded path.
+export const CHUNKER_MODULE_URL = import.meta.url;
+
 const DEFAULT_MAX_CHUNK_TOKENS = 500;
 const DEFAULT_CHUNK_OVERLAP_TOKENS = 75;
 const DEFAULT_MIN_CHUNK_TOKENS = 50;

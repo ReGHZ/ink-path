@@ -39,6 +39,8 @@ function samplePoint(overrides: Partial<VectorIndexPoint["payload"]> = {}): Vect
       embedding_provider: "local",
       embedding_model: "paraphrase-multilingual-mpnet-base-v2",
       embedding_version: "1",
+      icu_version: "78.3",
+      chunker_source_hash: "b".repeat(64),
       point_key: `${projectId}:layer:${entityId}:description:${randomUUID()}:0`,
       created_at: new Date().toISOString(),
       ...overrides,
@@ -135,5 +137,123 @@ describe("QdrantVectorIndex", () => {
     });
 
     expect(remaining.map((r) => r.id)).toEqual([otherPoint.id]);
+  });
+
+  it("deletePointsForField deletes only points for the targeted field, leaving other fields on the same entity untouched", async () => {
+    await vectorIndex.ensureCollection();
+
+    const projectId = randomUUID();
+    const entityId = randomUUID();
+
+    const descriptionChunk = samplePoint({
+      project_id: projectId,
+      entity_id: entityId,
+      content_field: "description",
+    });
+    const contentChunk = samplePoint({
+      project_id: projectId,
+      entity_id: entityId,
+      content_field: "content",
+    });
+
+    await vectorIndex.upsertPoints([descriptionChunk, contentChunk]);
+
+    await vectorIndex.deletePointsForField({
+      projectId,
+      entityType: "layer",
+      entityId,
+      contentField: "description",
+    });
+
+    const remaining = await client.retrieve(CONTENT_EMBEDDINGS_COLLECTION, {
+      ids: [descriptionChunk.id, contentChunk.id],
+    });
+
+    expect(remaining.map((r) => r.id)).toEqual([contentChunk.id]);
+  });
+
+  it("deletePointsForField deletes points regardless of revision_id (§17 step 12, addendum 2026-07-30)", async () => {
+    await vectorIndex.ensureCollection();
+
+    const projectId = randomUUID();
+    const entityId = randomUUID();
+
+    const oldRevisionChunk = samplePoint({
+      project_id: projectId,
+      entity_id: entityId,
+      content_field: "description",
+      revision_id: randomUUID(),
+    });
+    const currentRevisionChunk = samplePoint({
+      project_id: projectId,
+      entity_id: entityId,
+      content_field: "description",
+      revision_id: randomUUID(),
+    });
+
+    await vectorIndex.upsertPoints([oldRevisionChunk, currentRevisionChunk]);
+
+    await vectorIndex.deletePointsForField({
+      projectId,
+      entityType: "layer",
+      entityId,
+      contentField: "description",
+    });
+
+    const remaining = await client.retrieve(CONTENT_EMBEDDINGS_COLLECTION, {
+      ids: [oldRevisionChunk.id, currentRevisionChunk.id],
+    });
+
+    expect(remaining).toHaveLength(0);
+  });
+
+  it("getFieldProvenance returns null when the field has never been indexed", async () => {
+    await vectorIndex.ensureCollection();
+
+    const result = await vectorIndex.getFieldProvenance({
+      projectId: randomUUID(),
+      entityType: "layer",
+      entityId: randomUUID(),
+      contentField: "description",
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("getFieldProvenance returns the stored provenance for an indexed field", async () => {
+    await vectorIndex.ensureCollection();
+
+    const projectId = randomUUID();
+    const entityId = randomUUID();
+
+    const point = samplePoint({
+      project_id: projectId,
+      entity_id: entityId,
+      content_field: "description",
+      content_hash: "c".repeat(64),
+      embedding_provider: "local",
+      embedding_model: "paraphrase-multilingual-mpnet-base-v2",
+      embedding_version: "1",
+      icu_version: "78.3",
+      chunker_source_hash: "d".repeat(64),
+    });
+
+    await vectorIndex.upsertPoints([point]);
+
+    const result = await vectorIndex.getFieldProvenance({
+      projectId,
+      entityType: "layer",
+      entityId,
+      contentField: "description",
+    });
+
+    expect(result).toEqual({
+      contentHash: "c".repeat(64),
+      icuVersion: "78.3",
+      chunkerSourceHash: "d".repeat(64),
+      embeddingProvider: "local",
+      embeddingModel: "paraphrase-multilingual-mpnet-base-v2",
+      embeddingVersion: "1",
+    });
   });
 });

@@ -72,6 +72,40 @@ services:
       qdrant:
         condition: service_started
 
+  embedding-worker:
+    profiles: ["embedding-worker"]
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    container_name: ink-path-embedding-worker
+    command: pnpm embedding-worker:dev
+    working_dir: /workspace
+    init: true
+    tty: true
+    stdin_open: true
+    volumes:
+      - ..:/workspace:cached
+      - node_modules:/workspace/node_modules
+      - pnpm_store:/home/node/.local/share/pnpm/store
+      - zsh_history:/home/node/.cache/zsh
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ink_path
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+      JWT_SECRET: dev-only-change-me
+      JWT_REFRESH_SECRET: dev-only-refresh-change-me
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
   postgres:
     image: postgres:17-alpine
     container_name: ink-path-postgres

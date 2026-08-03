@@ -8,6 +8,7 @@ import type {
   EmbeddingProvider,
   EmbeddingResult,
 } from "../../shared/application/ports/EmbeddingProvider.js";
+import type { TokenCounter } from "../../shared/embedding/chunker.js";
 
 const MODEL_NAME = "Xenova/paraphrase-multilingual-mpnet-base-v2";
 const DIMENSION = 768;
@@ -60,6 +61,15 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
 
   async embedBatch(texts: string[]): Promise<EmbeddingResult[]> {
     return this.embedVectors(texts);
+  }
+
+  // The pipeline's tokenizer is loaded together with the model itself (same
+  // `getExtractor()` promise) — awaiting it once here and handing back a
+  // plain sync closure keeps chunker.ts's TokenCounter contract synchronous.
+  async getTokenCounter(): Promise<TokenCounter> {
+    const extractor = await this.getExtractor();
+
+    return (text: string) => extractor.tokenizer.encode(text).length;
   }
 
   // A single batched call, not a loop over embed() — the pipeline accepts string[]

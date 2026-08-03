@@ -53,3 +53,39 @@ describe("LocalEmbeddingProvider — extractor load failure recovery", () => {
     expect(pipelineMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("LocalEmbeddingProvider — getTokenCounter", () => {
+  beforeEach(() => {
+    pipelineMock.mockReset();
+  });
+
+  it("returns a sync function backed by the loaded pipeline's tokenizer", async () => {
+    const encode = vi.fn((text: string) => Array.from({ length: text.length }, () => 0));
+    const fakeExtractor = Object.assign(vi.fn(), { tokenizer: { encode } });
+
+    pipelineMock.mockResolvedValue(fakeExtractor);
+
+    const provider = new LocalEmbeddingProvider();
+    const countTokens = await provider.getTokenCounter();
+
+    expect(countTokens("hello")).toBe(5);
+    expect(encode).toHaveBeenCalledWith("hello");
+  });
+
+  it("reuses the same loaded extractor as embed()/embedBatch() (no second pipeline() call)", async () => {
+    const encode = vi.fn(() => [0, 0]);
+    const fakeExtractor = Object.assign(
+      vi.fn(() => ({ tolist: () => [[0.1, 0.2]] })),
+      { tokenizer: { encode } },
+    );
+
+    pipelineMock.mockResolvedValue(fakeExtractor);
+
+    const provider = new LocalEmbeddingProvider();
+
+    await provider.embed("halo");
+    await provider.getTokenCounter();
+
+    expect(pipelineMock).toHaveBeenCalledTimes(1);
+  });
+});

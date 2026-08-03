@@ -6,6 +6,10 @@ import {
 } from "awilix";
 
 import { createPrismaClient } from "./database/prisma.js";
+import { createEmbeddingWorker, type EmbeddingWorker } from "./embedding/EmbeddingWorker.js";
+import { createEmbeddingWorkerConsumer } from "./embedding/embeddingWorkerConsumer.js";
+import { createLocalEmbeddingProvider } from "./embedding/LocalEmbeddingProvider.js";
+import { createPrismaAiUsageLogWriter } from "./embedding/PrismaAiUsageLogWriter.js";
 import {
   createOutboxDispatcher,
   type OutboxDispatcher,
@@ -40,6 +44,9 @@ import {
 
 import type { RabbitMqManager } from "./queue/rabbitmqManager.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
+import type { AiUsageLogWriter } from "../shared/application/ports/AiUsageLogWriter.js";
+import type { Consumer } from "../shared/application/ports/Consumer.js";
+import type { EmbeddingProvider } from "../shared/application/ports/EmbeddingProvider.js";
 import type { VectorIndex } from "../shared/application/ports/VectorIndex.js";
 import type { AppEnvironment } from "../shared/http/context.js";
 import type { QdrantClient } from "@qdrant/js-client-rest";
@@ -55,6 +62,10 @@ export type AppCradle = {
   authMiddleware: MiddlewareHandler<AppEnvironment>;
   qdrantClient: QdrantClient;
   vectorIndex: VectorIndex;
+  embeddingProvider: EmbeddingProvider;
+  aiUsageLogWriter: AiUsageLogWriter;
+  embeddingWorker: EmbeddingWorker;
+  embeddingWorkerConsumer: Consumer;
 } & UserDomainCradle & ProjectDomainCradle & ContentDomainCradle
 
 export function createAppContainer(): AwilixContainer<AppCradle> {
@@ -89,6 +100,22 @@ export function createAppContainer(): AwilixContainer<AppCradle> {
   container.register(
     "vectorIndex",
     asFunction(createQdrantVectorIndex).singleton(),
+  );
+  container.register(
+    "embeddingProvider",
+    asFunction(createLocalEmbeddingProvider).singleton(),
+  );
+  container.register(
+    "aiUsageLogWriter",
+    asFunction(createPrismaAiUsageLogWriter).singleton(),
+  );
+  container.register(
+    "embeddingWorker",
+    asFunction(createEmbeddingWorker).singleton(),
+  );
+  container.register(
+    "embeddingWorkerConsumer",
+    asFunction(createEmbeddingWorkerConsumer).singleton(),
   );
   registerUserDomain(container);
   registerProjectDomain(container)

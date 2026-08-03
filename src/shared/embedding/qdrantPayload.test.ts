@@ -16,6 +16,8 @@ const BASE_INPUT: BuildQdrantPointInput = {
   embeddingProvider: "local",
   embeddingModel: "paraphrase-multilingual-mpnet-base-v2",
   embeddingVersion: "1",
+  icuVersion: "78.3",
+  chunkerSourceHash: "b".repeat(64),
   now: new Date("2026-07-29T10:00:00.000Z"),
 };
 
@@ -71,5 +73,12 @@ describe("buildQdrantPoint", () => {
     const point = buildQdrantPoint({ ...BASE_INPUT, chunkCount: 5 });
 
     expect(point.payload.chunk_count).toBe(5);
+  });
+
+  it("stores icu_version and chunker_source_hash as separate provenance fields (addendum 2026-07-30)", () => {
+    const point = buildQdrantPoint(BASE_INPUT);
+
+    expect(point.payload.icu_version).toBe("78.3");
+    expect(point.payload.chunker_source_hash).toBe("b".repeat(64));
   });
 });

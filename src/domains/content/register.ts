@@ -20,6 +20,7 @@ import {
   createWorldMapService,
   type WorldMapService,
 } from "./internal/application/world/WorldMapService.js";
+import { createContentEntityReader } from "./internal/infrastructure/ContentEntityReader.js";
 import { createCharacterRepository } from "./internal/infrastructure/story/PrismaCharacterRepository.js";
 import { createCharacterUnitOfWork } from "./internal/infrastructure/story/PrismaCharacterUnitOfWork.js";
 import { createFactionRepository } from "./internal/infrastructure/story/PrismaFactionRepository.js";
@@ -57,6 +58,7 @@ import type { FactionRepository } from "./internal/domain/story/FactionRepositor
 import type { LayerRepository } from "./internal/domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "./internal/domain/world/WorldElementRepository.js";
 import type { WorldMapRepository } from "./internal/domain/world/WorldMapRepository.js";
+import type { ContentEntityReader } from "../../shared/application/ports/ContentEntityReader.js";
 
 // `clock`/`idGenerator` are NOT registered here — they're already registered by
 // registerUserDomain (SystemClock/UuidGenerator) onto the same shared container,
@@ -83,6 +85,7 @@ export type ContentDomainCradle = {
   characterUnitOfWork: ContentUnitOfWork<CharacterRepository>;
   characterService: CharacterService;
   characterController: CharacterController;
+  contentEntityReader: ContentEntityReader;
 };
 
 export function registerContentDomain(
@@ -115,5 +118,6 @@ export function registerContentDomain(
     characterUnitOfWork: asFunction(createCharacterUnitOfWork).singleton(),
     characterService: asFunction(createCharacterService).singleton(),
     characterController: asFunction(createCharacterController).singleton(),
+    contentEntityReader: asFunction(createContentEntityReader).singleton(),
   });
 }

@@ -1,9 +1,14 @@
 import { buildPointKey, derivePointId, type PointKeyParts } from "./pointId.js";
 
 // 05-implementation-policy/03_qdrant_point_id_chunking.md:§5, amended to add
-// `embedding_provider` as its own field (addendum, see the doc's own changelog).
-// `embedding_model` is the bare model name only — provider is no longer encoded
-// into it now that it has a dedicated field.
+// `embedding_provider` as its own field (addendum 2026-07-29), then `icu_version` +
+// `chunker_source_hash` (addendum 2026-07-30). `embedding_model` is the bare model
+// name only — provider is no longer encoded into it now that it has a dedicated
+// field. `icu_version`/`chunker_source_hash` exist purely as §18 skip-decision
+// inputs (via VectorIndex.getFieldProvenance) — see the addendum for why: ICU/
+// Unicode segmentation rules bundled with the Node runtime, and the chunking
+// algorithm's own implementation, can each change the resulting chunk boundaries
+// for unchanged content, independently of content_hash and of each other.
 export type QdrantPointPayload = {
   project_id: string;
   entity_type: string;
@@ -18,6 +23,8 @@ export type QdrantPointPayload = {
   embedding_provider: string;
   embedding_model: string;
   embedding_version: string;
+  icu_version: string;
+  chunker_source_hash: string;
   point_key: string;
   created_at: string;
   content_text_preview?: string;
@@ -30,6 +37,8 @@ export type BuildQdrantPointInput = PointKeyParts & {
   embeddingProvider: string;
   embeddingModel: string;
   embeddingVersion: string;
+  icuVersion: string;
+  chunkerSourceHash: string;
   now: Date;
   contentTextPreview?: string;
 };
@@ -60,6 +69,8 @@ export function buildQdrantPoint(input: BuildQdrantPointInput): QdrantPoint {
       embedding_provider: input.embeddingProvider,
       embedding_model: input.embeddingModel,
       embedding_version: input.embeddingVersion,
+      icu_version: input.icuVersion,
+      chunker_source_hash: input.chunkerSourceHash,
       point_key: pointKey,
       created_at: input.now.toISOString(),
       ...(input.contentTextPreview !== undefined

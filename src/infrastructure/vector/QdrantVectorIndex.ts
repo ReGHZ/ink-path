@@ -1,9 +1,11 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 
 import type {
+  FieldProvenance,
   VectorIndex,
   VectorIndexPoint,
 } from "../../shared/application/ports/VectorIndex.js";
+import type { QdrantPointPayload } from "../../shared/embedding/qdrantPayload.js";
 
 // Single collection for every content entity type (Layer, WorldMap, WorldElement, Faction,
 // Character, ...) — not one collection per entity type. `entity_type` is already a mandatory
@@ -105,7 +107,80 @@ export class QdrantVectorIndex implements VectorIndex {
       },
     });
   }
+
+  async deletePointsForField(parameters: {
+    projectId: string;
+    entityType: string;
+    entityId: string;
+    contentField: string;
+  }): Promise<void> {
+    await this.client.delete(CONTENT_EMBEDDINGS_COLLECTION, {
+      filter: {
+        must: [
+          { key: "project_id", match: { value: parameters.projectId } },
+          { key: "entity_type", match: { value: parameters.entityType } },
+          { key: "entity_id", match: { value: parameters.entityId } },
+          { key: "content_field", match: { value: parameters.contentField } },
+        ],
+      },
+    });
+  }
+
+  async getFieldProvenance(parameters: {
+    projectId: string;
+    entityType: string;
+    entityId: string;
+    contentField: string;
+  }): Promise<FieldProvenance | null> {
+    const { points } = await this.client.scroll(CONTENT_EMBEDDINGS_COLLECTION, {
+      filter: {
+        must: [
+          { key: "project_id", match: { value: parameters.projectId } },
+          { key: "entity_type", match: { value: parameters.entityType } },
+          { key: "entity_id", match: { value: parameters.entityId } },
+          { key: "content_field", match: { value: parameters.contentField } },
+        ],
+      },
+      // Every chunk of this field from the same run carries identical
+      // provenance (computed once per run, not per chunk) — one point is
+      // enough to answer the §18 skip-decision question.
+      limit: 1,
+      with_payload: true,
+      with_vector: false,
+    });
+
+    const point = points[0];
+
+    if (!point) {
+      return null;
+    }
+
+    const payload = point.payload as unknown as QdrantPointPayload;
+
+    return {
+      contentHash: payload.content_hash,
+      icuVersion: payload.icu_version,
+      chunkerSourceHash: payload.chunker_source_hash,
+      embeddingProvider: payload.embedding_provider,
+      embeddingModel: payload.embedding_model,
+      embeddingVersion: payload.embedding_version,
+    };
+  }
 }
+
+// @qdrant/js-client-rest's own constructor defaults `timeout` to 300_000ms when
+// the caller doesn't pass one (confirmed in dist/esm/qdrant-client.js: `timeout
+// = 300000` in the destructured constructor params) — so a request was never
+// actually unbounded, contrary to an earlier gate-review claim that omitting
+// `timeout` here meant the AbortController/QdrantClientTimeoutError middleware
+// never gets installed at all (dist/esm/api-client.js only skips it when
+// `Number.isFinite(timeout)` is false, and 300_000 is finite). What omitting it
+// DID mean: a merely-slow (not down) Qdrant would hold a prefetch slot — and
+// the retry mechanism the classifier feeds (infrastructure/queue/consumer.ts)
+// — for up to 5 minutes before QdrantClientTimeoutError even fires. Set
+// explicitly to bound that to something proportionate to the consumer's own
+// retryBaseDelayMs/backoff instead of inheriting the library's generic default.
+const QDRANT_REQUEST_TIMEOUT_MS = 10_000;
 
 export function createQdrantClient(): QdrantClient {
   const url = process.env.QDRANT_URL;
@@ -114,7 +189,7 @@ export function createQdrantClient(): QdrantClient {
     throw new Error("Missing QDRANT_URL environment variable");
   }
 
-  return new QdrantClient({ url });
+  return new QdrantClient({ url, timeout: QDRANT_REQUEST_TIMEOUT_MS });
 }
 
 export function createQdrantVectorIndex({

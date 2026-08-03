@@ -44,7 +44,8 @@ async function findManagementConnectionName(
 
     const connections = (await response.json()) as ManagementConnection[];
     const match = connections.find(
-      (connection) => connection.client_properties?.connection_name === connectionName,
+      (connection) =>
+        connection.client_properties?.connection_name === connectionName,
     );
 
     if (match) {
@@ -179,7 +180,10 @@ describe("RabbitMqConsumer retry + dead-letter behavior", () => {
       try {
         await expect
           .poll(
-            () => dlqChannel.run((channel) => channel.get(`${queue}.dlq`, { noAck: true })),
+            () =>
+              dlqChannel.run((channel) =>
+                channel.get(`${queue}.dlq`, { noAck: true }),
+              ),
             { timeout: 5_000 },
           )
           .not.toBe(false);
@@ -227,7 +231,10 @@ describe("RabbitMqConsumer retry + dead-letter behavior", () => {
       try {
         await expect
           .poll(
-            () => dlqChannel.run((channel) => channel.get(`${queue}.dlq`, { noAck: true })),
+            () =>
+              dlqChannel.run((channel) =>
+                channel.get(`${queue}.dlq`, { noAck: true }),
+              ),
             { timeout: 5_000 },
           )
           .not.toBe(false);
@@ -280,7 +287,10 @@ describe("RabbitMqConsumer retry + dead-letter behavior", () => {
       try {
         await expect
           .poll(
-            () => dlqChannel.run((channel) => channel.get(`${queue}.dlq`, { noAck: true })),
+            () =>
+              dlqChannel.run((channel) =>
+                channel.get(`${queue}.dlq`, { noAck: true }),
+              ),
             { timeout: 5_000 },
           )
           .not.toBe(false);
@@ -294,7 +304,7 @@ describe("RabbitMqConsumer retry + dead-letter behavior", () => {
     }
   });
 
-  // Regression test for a real bug (found by dosen's review): stop() used to close
+  // Regression test for a real bug (found by mentors review): stop() used to close
   // the channel immediately without waiting for a message that was mid-retry-sleep.
   // Once that sleep finished, the retry loop's ack/nack call threw against the
   // now-closed channel, and since consumeMessage runs fire-and-forget from the raw
@@ -332,7 +342,7 @@ describe("RabbitMqConsumer retry + dead-letter behavior", () => {
       await publisher.publish(routingKey, { test: true });
 
       // Let attempt 1 fail and enter its ~1000ms backoff sleep, then stop() mid-sleep —
-      // exactly the race dosen reproduced.
+      // exactly the race mentor reproduced.
       await expect.poll(() => attempts, { timeout: 5_000 }).toBe(1);
       await sleep(150);
 
