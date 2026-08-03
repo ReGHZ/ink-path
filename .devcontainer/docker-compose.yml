@@ -106,6 +106,37 @@ services:
       qdrant:
         condition: service_started
 
+  outbox-recovery-worker:
+    profiles: ["outbox-recovery-worker"]
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    container_name: ink-path-outbox-recovery-worker
+    command: pnpm outbox-recovery-worker:dev
+    working_dir: /workspace
+    init: true
+    tty: true
+    stdin_open: true
+    volumes:
+      - ..:/workspace:cached
+      - node_modules:/workspace/node_modules
+      - pnpm_store:/home/node/.local/share/pnpm/store
+      - zsh_history:/home/node/.cache/zsh
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ink_path
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+      JWT_SECRET: dev-only-change-me
+      JWT_REFRESH_SECRET: dev-only-refresh-change-me
+    depends_on:
+      # Deliberately only postgres — this job never touches RabbitMQ/Redis/Qdrant, unlike
+      # its worker/embedding-worker siblings above. The whole point (see
+      # src/outboxRecoveryWorker.ts) is independence from what it's recovering.
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:17-alpine
     container_name: ink-path-postgres

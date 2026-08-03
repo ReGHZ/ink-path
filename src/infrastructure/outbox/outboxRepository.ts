@@ -110,6 +110,115 @@ export class OutboxRepository {
     return result.count === 1;
   }
 
+  // 05-implementation-policy/04_stale_worker_recovery.md §2/§15 — a dispatcher process that
+  // dies (crash, kill, container termination) between claimDueEvents() locking a row and one
+  // of markPublished/markFailed/markDeadLettered releasing it leaves that row stuck in
+  // `processing` forever: claimDueEvents only ever looks at `pending`/`failed`. This heals
+  // that: `locked_at` older than the caller's staleness threshold is treated as an orphaned
+  // lock, regardless of who `locked_by` says owns it (they're gone). Deliberately does NOT
+  // increment retry_count here (unlike markFailed/markDeadLettered) — the policy text for
+  // this specific recovery path never mentions it, because we genuinely don't know whether
+  // the crashed worker's publish actually succeeded before it died (see §2's own idempotency
+  // note); this path is "we lost track", not "we tried and failed".
+  async recoverStaleLocks(
+    staleBefore: Date,
+    batchSize: number,
+  ): Promise<{ recoveredToFailed: number; recoveredToDeadLetter: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      const staleRows = await tx.$queryRaw<
+        Array<{ id: string; retry_count: number; max_retries: number }>
+      >`
+        SELECT id, retry_count, max_retries
+        FROM outbox_events
+        WHERE status = 'processing' AND locked_at < ${staleBefore}
+        ORDER BY locked_at ASC
+        LIMIT ${batchSize}
+        FOR UPDATE SKIP LOCKED
+      `;
+
+      if (staleRows.length === 0) {
+        return { recoveredToFailed: 0, recoveredToDeadLetter: 0 };
+      }
+
+      const toFailedIds = staleRows
+        .filter((row) => row.retry_count < row.max_retries)
+        .map((row) => row.id);
+      const toDeadLetterIds = staleRows
+        .filter((row) => row.retry_count >= row.max_retries)
+        .map((row) => row.id);
+
+      if (toFailedIds.length > 0) {
+        await tx.outboxEvent.updateMany({
+          where: { id: { in: toFailedIds } },
+          data: {
+            status: "failed",
+            nextRetryAt: new Date(),
+            lockedAt: null,
+            lockedBy: null,
+            lastErrorCode: "STALE_OUTBOX_LOCK",
+            lastErrorMessage:
+              "Outbox event lock expired before publish completion",
+          },
+        });
+      }
+
+      for (const id of toDeadLetterIds) {
+        const outboxEvent = await tx.outboxEvent.findUniqueOrThrow({
+          where: { id },
+        });
+
+        await tx.outboxEvent.update({
+          where: { id },
+          data: {
+            status: "dead_lettered",
+            lockedAt: null,
+            lockedBy: null,
+            nextRetryAt: null,
+            lastErrorCode: "STALE_OUTBOX_LOCK",
+            lastErrorMessage:
+              "Outbox event lock expired before publish completion; retries exhausted",
+          },
+        });
+
+        await tx.deadLetterEvent.create({
+          data: {
+            outboxEventId: outboxEvent.id,
+            rootOutboxEventId: outboxEvent.id,
+            failureSource: "outbox_publish",
+
+            eventType: outboxEvent.eventType,
+            eventVersion: outboxEvent.eventVersion,
+
+            aggregateType: outboxEvent.aggregateType,
+            aggregateId: outboxEvent.aggregateId,
+
+            projectId: outboxEvent.projectId,
+            triggeredByUserId: outboxEvent.triggeredByUserId,
+
+            exchange: outboxEvent.exchange,
+            routingKey: outboxEvent.routingKey,
+
+            payload: outboxEvent.payload as Prisma.InputJsonValue,
+
+            retryCount: outboxEvent.retryCount,
+            maxRetries: outboxEvent.maxRetries,
+
+            lastErrorCode: "STALE_OUTBOX_LOCK",
+            lastErrorMessage:
+              "Outbox event lock expired before publish completion; retries exhausted",
+
+            failedAt: new Date(),
+          },
+        });
+      }
+
+      return {
+        recoveredToFailed: toFailedIds.length,
+        recoveredToDeadLetter: toDeadLetterIds.length,
+      };
+    });
+  }
+
   async markDeadLettered(parameters: {
     eventId: string;
     workerId: string;

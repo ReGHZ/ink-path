@@ -18,6 +18,10 @@ import {
   createOutboxRepository,
   type OutboxRepository,
 } from "./outbox/outboxRepository.js";
+import {
+  createOutboxStaleLockRecoveryJob,
+  type OutboxStaleLockRecoveryJob,
+} from "./outbox/outboxStaleLockRecoveryJob.js";
 import { createRabbitMqConnection } from "./queue/connection.js";
 import {
   createRabbitMqPublisher,
@@ -58,6 +62,7 @@ export type AppCradle = {
   rabbitMqPublisher: RabbitMqPublisher;
   outboxRepository: OutboxRepository;
   outboxDispatcher: OutboxDispatcher;
+  outboxStaleLockRecoveryJob: OutboxStaleLockRecoveryJob;
   jwtVerifier: JwtVerifier;
   authMiddleware: MiddlewareHandler<AppEnvironment>;
   qdrantClient: QdrantClient;
@@ -90,6 +95,10 @@ export function createAppContainer(): AwilixContainer<AppCradle> {
   container.register(
     "outboxDispatcher",
     asFunction(createOutboxDispatcher).singleton(),
+  );
+  container.register(
+    "outboxStaleLockRecoveryJob",
+    asFunction(createOutboxStaleLockRecoveryJob).singleton(),
   );
   container.register("jwtVerifier", asFunction(createJwtVerifier).singleton());
   container.register(

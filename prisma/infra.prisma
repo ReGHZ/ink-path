@@ -49,6 +49,7 @@ model OutboxEvent {
 
   @@index([status, createdAt])
   @@index([status, nextRetryAt, createdAt])
+  @@index([status, lockedAt])
   @@index([eventType, createdAt])
   @@index([eventType, status, createdAt])
   @@index([aggregateType, aggregateId])
