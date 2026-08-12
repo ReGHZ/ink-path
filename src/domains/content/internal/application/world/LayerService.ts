@@ -222,23 +222,36 @@ export class LayerService {
       }
     }
 
-    const layer = Layer.create({
-      id: this.idGenerator.generate(),
-      projectId: input.projectId,
-      createdByUserId: input.requestingUserId,
-      parentId: input.parentId,
-      name: input.name,
-      level: input.level,
-      exposure: input.exposure,
-      description: input.description,
-      content: input.content,
-      // Pre-generated so the in-memory entity is domain-valid from the
-      // start (policy 06 §4 currentRevisionId decision) — the physical row
-      // is written without it first; see LayerMapper.toCreatePersistence
-      // and LayerRepository.linkRevision for the DB-side half.
-      currentRevisionId: revisionId,
-      now,
-    });
+    // Construction is inside try/catch, aligned with the Phase 6 services
+    // (2026-08-12): a DomainError raised here would otherwise escape past
+    // mapLayerError and reach errorHandler.ts as a raw 500. Unreachable over
+    // HTTP today — `layerNameSchema` is `.trim().min(1)`, so the Controller
+    // rejects the only input that triggers it — but that makes this service's
+    // behaviour depend on a guarantee owned by a different layer, and the
+    // live-editing checkpoint path (C2 of notes/collab-editing-layer-design.md)
+    // is a non-HTTP caller with no schema in front of it.
+    let layer: Layer;
+    try {
+      layer = Layer.create({
+        id: this.idGenerator.generate(),
+        projectId: input.projectId,
+        createdByUserId: input.requestingUserId,
+        parentId: input.parentId,
+        name: input.name,
+        level: input.level,
+        exposure: input.exposure,
+        description: input.description,
+        content: input.content,
+        // Pre-generated so the in-memory entity is domain-valid from the
+        // start (policy 06 §4 currentRevisionId decision) — the physical row
+        // is written without it first; see LayerMapper.toCreatePersistence
+        // and LayerRepository.linkRevision for the DB-side half.
+        currentRevisionId: revisionId,
+        now,
+      });
+    } catch (error) {
+      mapLayerError(error);
+    }
 
     const revision = ContentRevision.create({
       id: revisionId,

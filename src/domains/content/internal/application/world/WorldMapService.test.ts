@@ -195,6 +195,25 @@ describe("WorldMapService", () => {
       expect(contentRevisions.revisions.size).toBe(1);
     });
 
+    // Locks the 2026-08-12 alignment with the Phase 6 services: before it, a
+    // DomainError raised while constructing the entity escaped mapWorldMapError
+    // and became a raw 500. Unreachable over HTTP (the DTO schema trims and
+    // requires min length), but reachable by any non-HTTP caller.
+    it("maps a domain validation failure at construction to a 400, not a 500", async () => {
+      const { worldMaps, service } = createService();
+
+      await expect(
+        service.createWorldMap({
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+          projectId: "proj-1",
+          name: "   ",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+      expect(worldMaps.worldMaps.size).toBe(0);
+    });
+
     it("links the created entity to its own create revision, at version 0", async () => {
       const { worldMaps, service } = createService();
 

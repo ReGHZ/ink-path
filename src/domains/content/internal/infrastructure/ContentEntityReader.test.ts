@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import { createContentEntityReader } from "./ContentEntityReader.js";
+import { Chapter } from "../domain/story/Chapter.js";
 import { Character } from "../domain/story/Character.js";
 import { Faction } from "../domain/story/Faction.js";
+import { Plot } from "../domain/story/Plot.js";
+import { Scene } from "../domain/story/Scene.js";
+import { Event } from "../domain/world/Event.js";
 import { Layer } from "../domain/world/Layer.js";
 import { WorldElement } from "../domain/world/WorldElement.js";
 import { WorldMap } from "../domain/world/WorldMap.js";
 
+import type { ChapterRepository } from "../domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "../domain/story/CharacterRepository.js";
 import type { FactionRepository } from "../domain/story/FactionRepository.js";
+import type { PlotRepository } from "../domain/story/PlotRepository.js";
+import type { SceneRepository } from "../domain/story/SceneRepository.js";
+import type { EventRepository } from "../domain/world/EventRepository.js";
 import type { LayerRepository } from "../domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "../domain/world/WorldElementRepository.js";
 import type { WorldMapRepository } from "../domain/world/WorldMapRepository.js";
@@ -52,12 +60,40 @@ function stubCharacterRepository(
   } as unknown as CharacterRepository;
 }
 
+function stubEventRepository(event: Event | null): EventRepository {
+  return {
+    findById: () => Promise.resolve(event),
+  } as unknown as EventRepository;
+}
+
+function stubPlotRepository(plot: Plot | null): PlotRepository {
+  return {
+    findById: () => Promise.resolve(plot),
+  } as unknown as PlotRepository;
+}
+
+function stubChapterRepository(chapter: Chapter | null): ChapterRepository {
+  return {
+    findById: () => Promise.resolve(chapter),
+  } as unknown as ChapterRepository;
+}
+
+function stubSceneRepository(scene: Scene | null): SceneRepository {
+  return {
+    findById: () => Promise.resolve(scene),
+  } as unknown as SceneRepository;
+}
+
 function buildReader(overrides: {
   layer?: Layer | null;
   worldMap?: WorldMap | null;
   worldElement?: WorldElement | null;
   faction?: Faction | null;
   character?: Character | null;
+  event?: Event | null;
+  plot?: Plot | null;
+  chapter?: Chapter | null;
+  scene?: Scene | null;
 }) {
   return createContentEntityReader({
     layerRepository: stubLayerRepository(overrides.layer ?? null),
@@ -67,6 +103,10 @@ function buildReader(overrides: {
     ),
     factionRepository: stubFactionRepository(overrides.faction ?? null),
     characterRepository: stubCharacterRepository(overrides.character ?? null),
+    eventRepository: stubEventRepository(overrides.event ?? null),
+    plotRepository: stubPlotRepository(overrides.plot ?? null),
+    chapterRepository: stubChapterRepository(overrides.chapter ?? null),
+    sceneRepository: stubSceneRepository(overrides.scene ?? null),
   });
 }
 
@@ -304,10 +344,184 @@ describe("createContentEntityReader", () => {
   it("throws for an unrecognized entity type instead of silently returning null", async () => {
     const reader = buildReader({});
 
+    // `event` was the placeholder here until Phase 6.4 gave it a descriptor;
+    // any string outside the nine known content entity types works the same.
     await expect(
-      reader.read({ entityType: "event", entityId: "any-id" }),
+      reader.read({ entityType: "comment", entityId: "any-id" }),
     ).rejects.toThrow(
-      /No ContentEntityReader descriptor for entity type "event"/,
+      /No ContentEntityReader descriptor for entity type "comment"/,
     );
+  });
+
+  it("extracts event fields with the classifications policy §13 names", async () => {
+    const event = Event.create({
+      id: "event-1",
+      projectId: "project-1",
+      createdByUserId: "user-1",
+      title: "Collapse of the Northern Qi Spire",
+      era: "Era of the Sundered Meridian",
+      eventType: "cataclysm",
+      significance: "world_shaking",
+      description: "The spire's qi anchor failed.",
+      content: "Full account.",
+      currentRevisionId: "revision-1",
+      now: NOW,
+    });
+
+    const reader = buildReader({ event });
+
+    expect(await reader.read({ entityType: "event", entityId: "event-1" })).toEqual({
+      projectId: "project-1",
+      entityName: "Collapse of the Northern Qi Spire",
+      currentRevisionId: "revision-1",
+      content: "Full account.",
+      fields: {
+        title: {
+          value: "Collapse of the Northern Qi Spire",
+          classification: "short",
+        },
+        era: {
+          value: "Era of the Sundered Meridian",
+          classification: "short",
+        },
+        event_type: { value: "cataclysm", classification: "short" },
+        significance: { value: "world_shaking", classification: "short" },
+        description: {
+          value: "The spire's qi anchor failed.",
+          classification: "medium",
+        },
+      },
+    });
+  });
+
+  it("extracts plot fields", async () => {
+    const plot = Plot.create({
+      id: "plot-1",
+      projectId: "project-1",
+      createdByUserId: "user-1",
+      name: "The Hollow Core Rebellion",
+      theme: "scarcity as doctrine",
+      conflict: "the qi tithe cannot be paid",
+      resolution: "the tithe ledger is burned",
+      description: "Disciples with ruptured cores seize the lower peaks.",
+      content: "Arc body.",
+      currentRevisionId: "revision-1",
+      now: NOW,
+    });
+
+    const reader = buildReader({ plot });
+
+    expect(await reader.read({ entityType: "plot", entityId: "plot-1" })).toEqual({
+      projectId: "project-1",
+      entityName: "The Hollow Core Rebellion",
+      currentRevisionId: "revision-1",
+      content: "Arc body.",
+      fields: {
+        name: {
+          value: "The Hollow Core Rebellion",
+          classification: "short",
+        },
+        theme: { value: "scarcity as doctrine", classification: "short" },
+        conflict: {
+          value: "the qi tithe cannot be paid",
+          classification: "medium",
+        },
+        resolution: {
+          value: "the tithe ledger is burned",
+          classification: "medium",
+        },
+        description: {
+          value: "Disciples with ruptured cores seize the lower peaks.",
+          classification: "medium",
+        },
+      },
+    });
+  });
+
+  it("extracts chapter fields", async () => {
+    const chapter = Chapter.create({
+      id: "chapter-1",
+      projectId: "project-1",
+      createdByUserId: "user-1",
+      title: "The Measuring Hall",
+      order: 1,
+      summary: "An outer disciple fails the qi threshold.",
+      content: "Chapter body.",
+      currentRevisionId: "revision-1",
+      now: NOW,
+    });
+
+    const reader = buildReader({ chapter });
+
+    expect(
+      await reader.read({ entityType: "chapter", entityId: "chapter-1" }),
+    ).toEqual({
+      projectId: "project-1",
+      entityName: "The Measuring Hall",
+      currentRevisionId: "revision-1",
+      content: "Chapter body.",
+      fields: {
+        title: { value: "The Measuring Hall", classification: "short" },
+        summary: {
+          value: "An outer disciple fails the qi threshold.",
+          classification: "medium",
+        },
+      },
+    });
+  });
+
+  it("extracts scene fields", async () => {
+    const scene = Scene.create({
+      id: "scene-1",
+      projectId: "project-1",
+      createdByUserId: "user-1",
+      chapterId: "chapter-1",
+      orderInChapter: 1,
+      title: "Before the Gauge",
+      summary: "A disciple kneels before the qi gauge.",
+      content: "Scene body.",
+      currentRevisionId: "revision-1",
+      now: NOW,
+    });
+
+    const reader = buildReader({ scene });
+
+    expect(await reader.read({ entityType: "scene", entityId: "scene-1" })).toEqual({
+      projectId: "project-1",
+      entityName: "Before the Gauge",
+      currentRevisionId: "revision-1",
+      content: "Scene body.",
+      fields: {
+        title: { value: "Before the Gauge", classification: "short" },
+        summary: {
+          value: "A disciple kneels before the qi gauge.",
+          classification: "medium",
+        },
+      },
+    });
+  });
+
+  // Scene is the only entity type whose title may be null; the reader must not
+  // invent a stand-in label, because it would be embedded as authored text.
+  it("falls back to an empty entityName for an untitled scene", async () => {
+    const scene = Scene.create({
+      id: "scene-2",
+      projectId: "project-1",
+      createdByUserId: "user-1",
+      chapterId: "chapter-1",
+      orderInChapter: 2,
+      content: "Scene body.",
+      currentRevisionId: "revision-1",
+      now: NOW,
+    });
+
+    const reader = buildReader({ scene });
+    const result = await reader.read({
+      entityType: "scene",
+      entityId: "scene-2",
+    });
+
+    expect(result?.entityName).toBe("");
+    expect(result?.fields.title?.value).toBeNull();
   });
 });

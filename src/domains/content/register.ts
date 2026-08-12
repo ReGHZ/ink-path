@@ -1,6 +1,10 @@
 import { asFunction, type AwilixContainer } from "awilix";
 
 import {
+  createChapterService,
+  type ChapterService,
+} from "./internal/application/story/ChapterService.js";
+import {
   createCharacterService,
   type CharacterService,
 } from "./internal/application/story/CharacterService.js";
@@ -8,6 +12,18 @@ import {
   createFactionService,
   type FactionService,
 } from "./internal/application/story/FactionService.js";
+import {
+  createPlotService,
+  type PlotService,
+} from "./internal/application/story/PlotService.js";
+import {
+  createSceneService,
+  type SceneService,
+} from "./internal/application/story/SceneService.js";
+import {
+  createEventService,
+  type EventService,
+} from "./internal/application/world/EventService.js";
 import {
   createLayerService,
   type LayerService,
@@ -98,18 +114,22 @@ export type ContentDomainCradle = {
   characterService: CharacterService;
   characterController: CharacterController;
   contentEntityReader: ContentEntityReader;
-  // Phase 6.3 — repository + unit of work only. Service/controller entries
-  // land in 6.4/6.5; the ContentEntityReader descriptors for these four types
-  // land with them too (the reader only matters once a service starts writing
-  // outbox events for the type).
+  // Phase 6.3 (repository + unit of work) and 6.4 (service). Controllers land
+  // in 6.5. The ContentEntityReader descriptors for these four types were
+  // added with 6.4, because a service writing `content.*` outbox events is
+  // exactly what makes the embedding worker ask the reader for them.
   eventRepository: EventRepository;
   eventUnitOfWork: ContentUnitOfWork<EventRepository>;
+  eventService: EventService;
   plotRepository: PlotRepository;
   plotUnitOfWork: ContentUnitOfWork<PlotRepository>;
+  plotService: PlotService;
   chapterRepository: ChapterRepository;
   chapterUnitOfWork: ContentUnitOfWork<ChapterRepository>;
+  chapterService: ChapterService;
   sceneRepository: SceneRepository;
   sceneUnitOfWork: ContentUnitOfWork<SceneRepository>;
+  sceneService: SceneService;
 };
 
 export function registerContentDomain(
@@ -145,11 +165,15 @@ export function registerContentDomain(
     contentEntityReader: asFunction(createContentEntityReader).singleton(),
     eventRepository: asFunction(createEventRepository).singleton(),
     eventUnitOfWork: asFunction(createEventUnitOfWork).singleton(),
+    eventService: asFunction(createEventService).singleton(),
     plotRepository: asFunction(createPlotRepository).singleton(),
     plotUnitOfWork: asFunction(createPlotUnitOfWork).singleton(),
+    plotService: asFunction(createPlotService).singleton(),
     chapterRepository: asFunction(createChapterRepository).singleton(),
     chapterUnitOfWork: asFunction(createChapterUnitOfWork).singleton(),
+    chapterService: asFunction(createChapterService).singleton(),
     sceneRepository: asFunction(createSceneRepository).singleton(),
     sceneUnitOfWork: asFunction(createSceneUnitOfWork).singleton(),
+    sceneService: asFunction(createSceneService).singleton(),
   });
 }

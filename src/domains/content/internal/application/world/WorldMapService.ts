@@ -186,20 +186,27 @@ export class WorldMapService {
       }
     }
 
-    const worldMap = WorldMap.create({
-      id: this.idGenerator.generate(),
-      projectId: input.projectId,
-      createdByUserId: input.requestingUserId,
-      parentId: input.parentId,
-      name: input.name,
-      scale: input.scale,
-      terrain: input.terrain,
-      environment: input.environment,
-      description: input.description,
-      content: input.content,
-      currentRevisionId: revisionId,
-      now,
-    });
+    // See LayerService.createLayer for why construction is wrapped (aligned
+    // 2026-08-12 with the Phase 6 services).
+    let worldMap: WorldMap;
+    try {
+      worldMap = WorldMap.create({
+        id: this.idGenerator.generate(),
+        projectId: input.projectId,
+        createdByUserId: input.requestingUserId,
+        parentId: input.parentId,
+        name: input.name,
+        scale: input.scale,
+        terrain: input.terrain,
+        environment: input.environment,
+        description: input.description,
+        content: input.content,
+        currentRevisionId: revisionId,
+        now,
+      });
+    } catch (error) {
+      mapWorldMapError(error);
+    }
 
     const revision = ContentRevision.create({
       id: revisionId,

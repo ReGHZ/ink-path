@@ -199,6 +199,24 @@ describe("LayerService", () => {
       expect(contentRevisions.revisions.size).toBe(1);
     });
 
+    // See WorldMapService.test.ts for the reasoning behind this case.
+    it("maps a domain validation failure at construction to a 400, not a 500", async () => {
+      const { layers, service } = createService();
+
+      await expect(
+        service.createLayer({
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+          projectId: "proj-1",
+          name: "   ",
+          level: 1,
+          exposure: "internal_only",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+      expect(layers.layers.size).toBe(0);
+    });
+
     it("links the created entity to its own create revision, at version 0", async () => {
       const { layers, service } = createService();
 

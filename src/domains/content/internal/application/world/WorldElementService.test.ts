@@ -198,6 +198,23 @@ describe("WorldElementService", () => {
       expect(contentRevisions.revisions.size).toBe(1);
     });
 
+    // See WorldMapService.test.ts for the reasoning behind this case.
+    it("maps a domain validation failure at construction to a 400, not a 500", async () => {
+      const { worldElements, service } = createService();
+
+      await expect(
+        service.createWorldElement({
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+          projectId: "proj-1",
+          name: "   ",
+          category: "geography",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+      expect(worldElements.worldElements.size).toBe(0);
+    });
+
     it("links the created entity to its own create revision, at version 0", async () => {
       const { worldElements, service } = createService();
 

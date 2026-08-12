@@ -188,6 +188,22 @@ describe("FactionService", () => {
       expect(contentRevisions.revisions.size).toBe(1);
     });
 
+    // See WorldMapService.test.ts for the reasoning behind this case.
+    it("maps a domain validation failure at construction to a 400, not a 500", async () => {
+      const { factions, service } = createService();
+
+      await expect(
+        service.createFaction({
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+          projectId: "proj-1",
+          name: "   ",
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+      expect(factions.factions.size).toBe(0);
+    });
+
     it("links the created entity to its own create revision, at version 0", async () => {
       const { factions, service } = createService();
 

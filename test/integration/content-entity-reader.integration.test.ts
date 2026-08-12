@@ -31,7 +31,20 @@ describe("ContentEntityReader wiring", () => {
     await prisma.$disconnect();
   });
 
-  it.each(["layer", "map", "world_element", "faction", "character"])(
+  // All nine content entity types: the five from Phase 4 plus the four wired
+  // in Phase 6.4, each resolved through the real container so a missing
+  // repository registration fails here rather than at runtime in the worker.
+  it.each([
+    "layer",
+    "map",
+    "world_element",
+    "faction",
+    "character",
+    "event",
+    "plot",
+    "chapter",
+    "scene",
+  ])(
     "resolves and reads entity type %s without a wiring error (random id -> null)",
     async (entityType) => {
       const result = await contentEntityReader.read({
@@ -44,8 +57,14 @@ describe("ContentEntityReader wiring", () => {
   );
 
   it("throws for an entity type with no descriptor, resolved from the real container", async () => {
+    // `event` served as the unknown type until 6.4 gave it a descriptor.
     await expect(
-      contentEntityReader.read({ entityType: "event", entityId: randomUUID() }),
-    ).rejects.toThrow(/No ContentEntityReader descriptor for entity type "event"/);
+      contentEntityReader.read({
+        entityType: "comment",
+        entityId: randomUUID(),
+      }),
+    ).rejects.toThrow(
+      /No ContentEntityReader descriptor for entity type "comment"/,
+    );
   });
 });

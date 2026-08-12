@@ -2,8 +2,12 @@ import type {
   ContentEntityReader,
   IndexableContentEntity,
 } from "../../../../shared/application/ports/ContentEntityReader.js";
+import type { ChapterRepository } from "../domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "../domain/story/CharacterRepository.js";
 import type { FactionRepository } from "../domain/story/FactionRepository.js";
+import type { PlotRepository } from "../domain/story/PlotRepository.js";
+import type { SceneRepository } from "../domain/story/SceneRepository.js";
+import type { EventRepository } from "../domain/world/EventRepository.js";
 import type { LayerRepository } from "../domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "../domain/world/WorldElementRepository.js";
 import type { WorldMapRepository } from "../domain/world/WorldMapRepository.js";
@@ -14,6 +18,10 @@ type Dependencies = {
   worldElementRepository: WorldElementRepository;
   factionRepository: FactionRepository;
   characterRepository: CharacterRepository;
+  eventRepository: EventRepository;
+  plotRepository: PlotRepository;
+  chapterRepository: ChapterRepository;
+  sceneRepository: SceneRepository;
 };
 
 // One combined descriptor per entity_type — repo dispatch AND field
@@ -140,6 +148,88 @@ function createDescriptors(
             value: character.description,
             classification: "medium",
           },
+        },
+      };
+    },
+    // Phase 6 entity types. Every classification below is taken verbatim from
+    // the frozen field lists in 05-implementation-policy/
+    // 03_qdrant_point_id_chunking.md:412-424 — title/era/event_type/
+    // significance/theme/name are named there as SHORT, and description/
+    // summary/conflict/resolution as MEDIUM. Nothing here is a judgement call.
+    event: async (entityId) => {
+      const event = await dependencies.eventRepository.findById(entityId);
+
+      if (!event) return null;
+
+      return {
+        projectId: event.projectId,
+        entityName: event.title,
+        currentRevisionId: event.currentRevisionId,
+        content: event.content,
+        fields: {
+          title: { value: event.title, classification: "short" },
+          era: { value: event.era, classification: "short" },
+          event_type: { value: event.eventType, classification: "short" },
+          significance: { value: event.significance, classification: "short" },
+          description: { value: event.description, classification: "medium" },
+        },
+      };
+    },
+    plot: async (entityId) => {
+      const plot = await dependencies.plotRepository.findById(entityId);
+
+      if (!plot) return null;
+
+      return {
+        projectId: plot.projectId,
+        entityName: plot.name,
+        currentRevisionId: plot.currentRevisionId,
+        content: plot.content,
+        fields: {
+          name: { value: plot.name, classification: "short" },
+          theme: { value: plot.theme, classification: "short" },
+          conflict: { value: plot.conflict, classification: "medium" },
+          resolution: { value: plot.resolution, classification: "medium" },
+          description: { value: plot.description, classification: "medium" },
+        },
+      };
+    },
+    chapter: async (entityId) => {
+      const chapter = await dependencies.chapterRepository.findById(entityId);
+
+      if (!chapter) return null;
+
+      return {
+        projectId: chapter.projectId,
+        entityName: chapter.title,
+        currentRevisionId: chapter.currentRevisionId,
+        content: chapter.content,
+        fields: {
+          title: { value: chapter.title, classification: "short" },
+          summary: { value: chapter.summary, classification: "medium" },
+        },
+      };
+    },
+    scene: async (entityId) => {
+      const scene = await dependencies.sceneRepository.findById(entityId);
+
+      if (!scene) return null;
+
+      return {
+        projectId: scene.projectId,
+        // Scene is the only one of the nine entity types whose name/title is
+        // nullable (`content-story.prisma:169`), and `entityName` feeds the
+        // "Entity Name/Title:" line of the canonical embedding text. An
+        // untitled scene therefore contributes an empty label rather than a
+        // synthesised one like "Scene 3": a generated string would enter the
+        // embedding as if the author had written it, which is worse than a
+        // blank — the scene's own content is what carries its meaning.
+        entityName: scene.title ?? "",
+        currentRevisionId: scene.currentRevisionId,
+        content: scene.content,
+        fields: {
+          title: { value: scene.title, classification: "short" },
+          summary: { value: scene.summary, classification: "medium" },
         },
       };
     },

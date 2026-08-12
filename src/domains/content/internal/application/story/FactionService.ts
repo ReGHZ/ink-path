@@ -158,23 +158,30 @@ export class FactionService {
     const now = this.clock.now();
     const revisionId = this.idGenerator.generate();
 
-    const faction = Faction.create({
-      id: this.idGenerator.generate(),
-      projectId: input.projectId,
-      createdByUserId: input.requestingUserId,
-      name: input.name,
-      description: input.description,
-      background: input.background,
-      ideology: input.ideology,
-      size: input.size,
-      content: input.content,
-      // Pre-generated so the in-memory entity is domain-valid from the
-      // start (policy 06 §4 currentRevisionId decision) — the physical row
-      // is written without it first; see FactionMapper.toCreatePersistence
-      // and FactionRepository.linkRevision for the DB-side half.
-      currentRevisionId: revisionId,
-      now,
-    });
+    // See LayerService.createLayer for why construction is wrapped (aligned
+    // 2026-08-12 with the Phase 6 services).
+    let faction: Faction;
+    try {
+      faction = Faction.create({
+        id: this.idGenerator.generate(),
+        projectId: input.projectId,
+        createdByUserId: input.requestingUserId,
+        name: input.name,
+        description: input.description,
+        background: input.background,
+        ideology: input.ideology,
+        size: input.size,
+        content: input.content,
+        // Pre-generated so the in-memory entity is domain-valid from the
+        // start (policy 06 §4 currentRevisionId decision) — the physical row
+        // is written without it first; see FactionMapper.toCreatePersistence
+        // and FactionRepository.linkRevision for the DB-side half.
+        currentRevisionId: revisionId,
+        now,
+      });
+    } catch (error) {
+      mapFactionError(error);
+    }
 
     const revision = ContentRevision.create({
       id: revisionId,
