@@ -21,10 +21,18 @@ import {
   type WorldMapService,
 } from "./internal/application/world/WorldMapService.js";
 import { createContentEntityReader } from "./internal/infrastructure/ContentEntityReader.js";
+import { createChapterRepository } from "./internal/infrastructure/story/PrismaChapterRepository.js";
+import { createChapterUnitOfWork } from "./internal/infrastructure/story/PrismaChapterUnitOfWork.js";
 import { createCharacterRepository } from "./internal/infrastructure/story/PrismaCharacterRepository.js";
 import { createCharacterUnitOfWork } from "./internal/infrastructure/story/PrismaCharacterUnitOfWork.js";
 import { createFactionRepository } from "./internal/infrastructure/story/PrismaFactionRepository.js";
 import { createFactionUnitOfWork } from "./internal/infrastructure/story/PrismaFactionUnitOfWork.js";
+import { createPlotRepository } from "./internal/infrastructure/story/PrismaPlotRepository.js";
+import { createPlotUnitOfWork } from "./internal/infrastructure/story/PrismaPlotUnitOfWork.js";
+import { createSceneRepository } from "./internal/infrastructure/story/PrismaSceneRepository.js";
+import { createSceneUnitOfWork } from "./internal/infrastructure/story/PrismaSceneUnitOfWork.js";
+import { createEventRepository } from "./internal/infrastructure/world/PrismaEventRepository.js";
+import { createEventUnitOfWork } from "./internal/infrastructure/world/PrismaEventUnitOfWork.js";
 import { createLayerRepository } from "./internal/infrastructure/world/PrismaLayerRepository.js";
 import { createLayerUnitOfWork } from "./internal/infrastructure/world/PrismaLayerUnitOfWork.js";
 import { createWorldElementRepository } from "./internal/infrastructure/world/PrismaWorldElementRepository.js";
@@ -53,8 +61,12 @@ import {
 } from "./internal/interface/world/WorldMapController.js";
 
 import type { ContentUnitOfWork } from "./internal/application/ports/ContentUnitOfWork.js";
+import type { ChapterRepository } from "./internal/domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "./internal/domain/story/CharacterRepository.js";
 import type { FactionRepository } from "./internal/domain/story/FactionRepository.js";
+import type { PlotRepository } from "./internal/domain/story/PlotRepository.js";
+import type { SceneRepository } from "./internal/domain/story/SceneRepository.js";
+import type { EventRepository } from "./internal/domain/world/EventRepository.js";
 import type { LayerRepository } from "./internal/domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "./internal/domain/world/WorldElementRepository.js";
 import type { WorldMapRepository } from "./internal/domain/world/WorldMapRepository.js";
@@ -86,6 +98,18 @@ export type ContentDomainCradle = {
   characterService: CharacterService;
   characterController: CharacterController;
   contentEntityReader: ContentEntityReader;
+  // Phase 6.3 — repository + unit of work only. Service/controller entries
+  // land in 6.4/6.5; the ContentEntityReader descriptors for these four types
+  // land with them too (the reader only matters once a service starts writing
+  // outbox events for the type).
+  eventRepository: EventRepository;
+  eventUnitOfWork: ContentUnitOfWork<EventRepository>;
+  plotRepository: PlotRepository;
+  plotUnitOfWork: ContentUnitOfWork<PlotRepository>;
+  chapterRepository: ChapterRepository;
+  chapterUnitOfWork: ContentUnitOfWork<ChapterRepository>;
+  sceneRepository: SceneRepository;
+  sceneUnitOfWork: ContentUnitOfWork<SceneRepository>;
 };
 
 export function registerContentDomain(
@@ -119,5 +143,13 @@ export function registerContentDomain(
     characterService: asFunction(createCharacterService).singleton(),
     characterController: asFunction(createCharacterController).singleton(),
     contentEntityReader: asFunction(createContentEntityReader).singleton(),
+    eventRepository: asFunction(createEventRepository).singleton(),
+    eventUnitOfWork: asFunction(createEventUnitOfWork).singleton(),
+    plotRepository: asFunction(createPlotRepository).singleton(),
+    plotUnitOfWork: asFunction(createPlotUnitOfWork).singleton(),
+    chapterRepository: asFunction(createChapterRepository).singleton(),
+    chapterUnitOfWork: asFunction(createChapterUnitOfWork).singleton(),
+    sceneRepository: asFunction(createSceneRepository).singleton(),
+    sceneUnitOfWork: asFunction(createSceneUnitOfWork).singleton(),
   });
 }

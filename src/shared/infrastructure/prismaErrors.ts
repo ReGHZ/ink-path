@@ -65,6 +65,19 @@ export function isForeignKeyViolation(error: unknown): boolean {
 // mistranslate it. The caller owns the per-table constant it compares against,
 // so this helper stays free of schema coupling.
 export function extractForeignKeyConstraint(error: unknown): string | null {
+    const constraint = extractConstraint(error);
+    if (constraint === null) {
+        return null;
+    }
+
+    const index = (constraint as { index?: unknown }).index;
+    return typeof index === "string" ? index : null;
+}
+
+// Shared navigation for both P2003 and P2002: meta.driverAdapterError.cause
+// .constraint. Kept private — callers get a typed accessor per violation kind
+// because the two do NOT carry the same payload (see below).
+function extractConstraint(error: unknown): object | null {
     if (typeof error !== "object" || error === null) {
         return null;
     }
@@ -90,10 +103,76 @@ export function extractForeignKeyConstraint(error: unknown): string | null {
     }
 
     const constraint = (cause as { constraint?: unknown }).constraint;
-    if (typeof constraint !== "object" || constraint === null) {
+    return typeof constraint === "object" && constraint !== null
+        ? constraint
+        : null;
+}
+
+// Returns the COLUMN names of the unique index a P2002 fired on, or null when
+// the shape cannot be read.
+//
+// VERIFIED empirically against Postgres 17 / Prisma 7.8.0 via
+// `@prisma/adapter-pg` (probe 2026-08-12 inside the ink-path devcontainer,
+// temp script removed afterwards). A P2002 surfaces as:
+//
+//   meta.driverAdapterError.cause = {
+//     kind: "UniqueConstraintViolation",
+//     originalCode: "23505",
+//     originalMessage: "...violates unique constraint \"chapters_project_id_order_key\"",
+//     constraint: { fields: ["project_id", "\"order\""] }
+//   }
+//
+// Two differences from the P2003 shape that matter and are easy to get wrong:
+// (1) it carries `fields`, NOT `index` — reusing extractForeignKeyConstraint()
+// here would always return null, so every unique violation would silently fall
+// through to the generic Conflict branch; (2) the entries are raw DATABASE
+// column names (`project_id`, not `projectId`) and reserved words arrive
+// quoted (`"order"`), so they are unquoted here before being handed back.
+// Matching on columns rather than parsing the constraint name out of
+// `originalMessage` keeps this free of message-format coupling.
+export function extractUniqueConstraintColumns(
+    error: unknown,
+): string[] | null {
+    const constraint = extractConstraint(error);
+    if (constraint === null) {
         return null;
     }
 
-    const index = (constraint as { index?: unknown }).index;
-    return typeof index === "string" ? index : null;
+    const fields = (constraint as { fields?: unknown }).fields;
+    if (!Array.isArray(fields)) {
+        return null;
+    }
+
+    const columns: string[] = [];
+
+    for (const field of fields) {
+        if (typeof field !== "string") {
+            return null;
+        }
+
+        columns.push(field.replaceAll(/^"|"$/g, ""));
+    }
+
+    return columns;
+}
+
+// True when a P2002 fired on exactly the given composite unique index. Order
+// insensitive on purpose: the column order Postgres reports is an index
+// detail, not something a caller should have to mirror. Callers own the
+// column tuple (the schema coupling stays next to the repository that knows
+// the table); a null/mismatched shape answers false so the safe default is
+// the caller's generic conflict branch.
+export function matchesUniqueConstraint(
+    error: unknown,
+    columns: readonly string[],
+): boolean {
+    const actual = extractUniqueConstraintColumns(error);
+
+    if (actual?.length !== columns.length) {
+        return false;
+    }
+
+    const expected = new Set(columns);
+
+    return actual.every((column) => expected.has(column));
 }
