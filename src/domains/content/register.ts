@@ -56,6 +56,10 @@ import { createWorldElementUnitOfWork } from "./internal/infrastructure/world/Pr
 import { createWorldMapRepository } from "./internal/infrastructure/world/PrismaWorldMapRepository.js";
 import { createWorldMapUnitOfWork } from "./internal/infrastructure/world/PrismaWorldMapUnitOfWork.js";
 import {
+  createChapterController,
+  type ChapterController,
+} from "./internal/interface/story/ChapterController.js";
+import {
   createCharacterController,
   type CharacterController,
 } from "./internal/interface/story/CharacterController.js";
@@ -63,6 +67,18 @@ import {
   createFactionController,
   type FactionController,
 } from "./internal/interface/story/FactionController.js";
+import {
+  createPlotController,
+  type PlotController,
+} from "./internal/interface/story/PlotController.js";
+import {
+  createSceneController,
+  type SceneController,
+} from "./internal/interface/story/SceneController.js";
+import {
+  createEventController,
+  type EventController,
+} from "./internal/interface/world/EventController.js";
 import {
   createLayerController,
   type LayerController,
@@ -114,22 +130,26 @@ export type ContentDomainCradle = {
   characterService: CharacterService;
   characterController: CharacterController;
   contentEntityReader: ContentEntityReader;
-  // Phase 6.3 (repository + unit of work) and 6.4 (service). Controllers land
-  // in 6.5. The ContentEntityReader descriptors for these four types were
-  // added with 6.4, because a service writing `content.*` outbox events is
-  // exactly what makes the embedding worker ask the reader for them.
+  // Phase 6.3 (repository + unit of work), 6.4 (service), 6.5 (controller).
+  // The ContentEntityReader descriptors for these four types were added with
+  // 6.4, because a service writing `content.*` outbox events is exactly what
+  // makes the embedding worker ask the reader for them.
   eventRepository: EventRepository;
   eventUnitOfWork: ContentUnitOfWork<EventRepository>;
   eventService: EventService;
+  eventController: EventController;
   plotRepository: PlotRepository;
   plotUnitOfWork: ContentUnitOfWork<PlotRepository>;
   plotService: PlotService;
+  plotController: PlotController;
   chapterRepository: ChapterRepository;
   chapterUnitOfWork: ContentUnitOfWork<ChapterRepository>;
   chapterService: ChapterService;
+  chapterController: ChapterController;
   sceneRepository: SceneRepository;
   sceneUnitOfWork: ContentUnitOfWork<SceneRepository>;
   sceneService: SceneService;
+  sceneController: SceneController;
 };
 
 export function registerContentDomain(
@@ -166,14 +186,18 @@ export function registerContentDomain(
     eventRepository: asFunction(createEventRepository).singleton(),
     eventUnitOfWork: asFunction(createEventUnitOfWork).singleton(),
     eventService: asFunction(createEventService).singleton(),
+    eventController: asFunction(createEventController).singleton(),
     plotRepository: asFunction(createPlotRepository).singleton(),
     plotUnitOfWork: asFunction(createPlotUnitOfWork).singleton(),
     plotService: asFunction(createPlotService).singleton(),
+    plotController: asFunction(createPlotController).singleton(),
     chapterRepository: asFunction(createChapterRepository).singleton(),
     chapterUnitOfWork: asFunction(createChapterUnitOfWork).singleton(),
     chapterService: asFunction(createChapterService).singleton(),
+    chapterController: asFunction(createChapterController).singleton(),
     sceneRepository: asFunction(createSceneRepository).singleton(),
     sceneUnitOfWork: asFunction(createSceneUnitOfWork).singleton(),
     sceneService: asFunction(createSceneService).singleton(),
+    sceneController: asFunction(createSceneController).singleton(),
   });
 }

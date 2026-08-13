@@ -1,21 +1,14 @@
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono } from "hono";
 
 import type { CharacterController } from "./CharacterController.js";
 import type { AppEnvironment } from "../../../../../shared/http/context.js";
 
 export function createCharacterRoutes({
   characterController,
-  authMiddleware,
-  projectMemberMiddleware,
 }: {
   characterController: CharacterController;
-  authMiddleware: MiddlewareHandler<AppEnvironment>;
-  projectMemberMiddleware: MiddlewareHandler<AppEnvironment>;
 }) {
   const routes = new Hono<AppEnvironment>({ strict: true });
-
-  routes.use("*", authMiddleware);
-  routes.use("/:projectId/*", projectMemberMiddleware);
 
   routes.post("/:projectId/characters", (c) =>
     characterController.createCharacter(c),

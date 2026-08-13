@@ -1,21 +1,14 @@
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono } from "hono";
 
 import type { WorldMapController } from "./WorldMapController.js";
 import type { AppEnvironment } from "../../../../../shared/http/context.js";
 
 export function createWorldMapRoutes({
   worldMapController,
-  authMiddleware,
-  projectMemberMiddleware,
 }: {
   worldMapController: WorldMapController;
-  authMiddleware: MiddlewareHandler<AppEnvironment>;
-  projectMemberMiddleware: MiddlewareHandler<AppEnvironment>;
 }) {
   const routes = new Hono<AppEnvironment>({ strict: true });
-
-  routes.use("*", authMiddleware);
-  routes.use("/:projectId/*", projectMemberMiddleware);
 
   routes.post("/:projectId/world-maps", (c) =>
     worldMapController.createWorldMap(c),

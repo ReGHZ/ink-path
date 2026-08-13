@@ -114,6 +114,35 @@ async function createLayer(
   return (payload.data as JsonObject).layerId as string;
 }
 
+async function createChapter(
+  accessToken: string,
+  projectId: string,
+  body: JsonObject,
+): Promise<string> {
+  const response = await request(`/api/v1/projects/${projectId}/chapters`, {
+    method: "POST",
+    accessToken,
+    body,
+  });
+
+  expect(response.status).toBe(201);
+  const payload = await readJson(response);
+
+  return (payload.data as JsonObject).chapterId as string;
+}
+
+function changeChapterStatus(
+  accessToken: string,
+  chapterPath: string,
+  status: string,
+): Promise<Response> {
+  return request(`${chapterPath}/status`, {
+    method: "PATCH",
+    accessToken,
+    body: { status },
+  });
+}
+
 type EntityCase = {
   label: string;
   segment: string;
@@ -160,6 +189,12 @@ beforeEach(async () => {
     const projectIds = projects.map((p) => p.id);
 
     if (projectIds.length > 0) {
+      // Scenes before chapters: `scenes.chapter_id` is onDelete: Restrict, so the
+      // reverse order fails on a leftover scene rather than cleaning up.
+      await prisma.scene.deleteMany({ where: { projectId: { in: projectIds } } });
+      await prisma.chapter.deleteMany({ where: { projectId: { in: projectIds } } });
+      await prisma.event.deleteMany({ where: { projectId: { in: projectIds } } });
+      await prisma.plot.deleteMany({ where: { projectId: { in: projectIds } } });
       await prisma.layer.deleteMany({ where: { projectId: { in: projectIds } } });
       await prisma.map.deleteMany({ where: { projectId: { in: projectIds } } });
       await prisma.worldElement.deleteMany({
@@ -271,6 +306,54 @@ describe("Content end-to-end", () => {
         updateField: "name",
         updateValue: "Aria Renamed",
         findPersisted: (id) => prisma.character.findUnique({ where: { id } }),
+      },
+      {
+        label: "event",
+        segment: "events",
+        createBody: {
+          title: "The Sundering",
+          era: "First Age",
+          eventType: "historical",
+          description: "The night the sky split",
+        },
+        createIdField: "eventId",
+        listField: "events",
+        updateBody: { title: "The Sundering Renamed" },
+        updateField: "title",
+        updateValue: "The Sundering Renamed",
+        findPersisted: (id) => prisma.event.findUnique({ where: { id } }),
+      },
+      {
+        label: "plot",
+        segment: "plots",
+        createBody: {
+          name: "The Long Return",
+          description: "A soldier walks home",
+          theme: "belonging",
+        },
+        createIdField: "plotId",
+        listField: "plots",
+        updateBody: { name: "The Long Return Renamed" },
+        updateField: "name",
+        updateValue: "The Long Return Renamed",
+        findPersisted: (id) => prisma.plot.findUnique({ where: { id } }),
+      },
+      {
+        // Stays in `outline` for the whole round trip — the only status where
+        // ordinary edits are allowed (Flow 5). Transitions get their own test.
+        label: "chapter",
+        segment: "chapters",
+        createBody: {
+          title: "Chapter One",
+          order: 1,
+          summary: "The soldier sets out",
+        },
+        createIdField: "chapterId",
+        listField: "chapters",
+        updateBody: { title: "Chapter One Renamed" },
+        updateField: "title",
+        updateValue: "Chapter One Renamed",
+        findPersisted: (id) => prisma.chapter.findUnique({ where: { id } }),
       },
     ];
 
@@ -452,5 +535,357 @@ describe("Content end-to-end", () => {
     );
 
     expect(deleteParentResponse.status).toBe(200);
+  });
+
+  // Flow 5 end to end through the single /status endpoint. The point of walking
+  // the whole machine rather than spot-checking one edge: `review -> draft` and
+  // `published -> draft` are two DIFFERENT transitions that land on the same
+  // target, so only a run that reaches draft from both sides proves the endpoint
+  // resolves the (origin, target) PAIR instead of just the target.
+  it("walks a chapter through every Flow 5 transition and rejects invalid ones", async () => {
+    const session = await registerAndLogin("chapter-lifecycle");
+    const projectId = await createProject(
+      session.accessToken,
+      "Chapter Lifecycle Project",
+    );
+    const chapterId = await createChapter(session.accessToken, projectId, {
+      title: "Chapter One",
+      order: 1,
+      summary: "The soldier sets out",
+    });
+    const chapterPath = `/api/v1/projects/${projectId}/chapters/${chapterId}`;
+
+    const toDraft = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "draft",
+    );
+
+    expect(toDraft.status).toBe(200);
+    expect((await readJson(toDraft)).data).toMatchObject({
+      status: "draft",
+      publishedAt: null,
+    });
+
+    // Skipping an edge: draft -> published is not in the table at all.
+    const skipEdge = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "published",
+    );
+
+    expect(skipEdge.status).toBe(400);
+    await expect(readJson(skipEdge)).resolves.toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Cannot transition chapter from draft to published",
+      },
+    });
+
+    // draft -> review needs content; the chapter has none yet.
+    const missingContent = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "review",
+    );
+
+    expect(missingContent.status).toBe(400);
+    await expect(readJson(missingContent)).resolves.toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Chapter content is required before submitting for review",
+      },
+    });
+
+    const addContent = await request(chapterPath, {
+      method: "PATCH",
+      accessToken: session.accessToken,
+      body: { content: "He left before the gate bell rang." },
+    });
+
+    expect(addContent.status).toBe(200);
+
+    const toReview = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "review",
+    );
+
+    expect(toReview.status).toBe(200);
+    expect((await readJson(toReview)).data).toMatchObject({ status: "review" });
+
+    // "Semua editing terjadi di draft" — enforced by the entity, surfaced as 400.
+    const editInReview = await request(chapterPath, {
+      method: "PATCH",
+      accessToken: session.accessToken,
+      body: { title: "Renamed While Under Review" },
+    });
+
+    expect(editInReview.status).toBe(400);
+    await expect(readJson(editInReview)).resolves.toMatchObject({
+      error: {
+        code: "VALIDATION_ERROR",
+        message:
+          "Chapter cannot be edited while status is review; transition back to draft first",
+      },
+    });
+
+    // First of the two edges that land on draft: revision request.
+    const backFromReview = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "draft",
+    );
+
+    expect(backFromReview.status).toBe(200);
+    expect((await readJson(backFromReview)).data).toMatchObject({
+      status: "draft",
+      publishedAt: null,
+    });
+
+    expect(
+      (await changeChapterStatus(session.accessToken, chapterPath, "review"))
+        .status,
+    ).toBe(200);
+
+    const published = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "published",
+    );
+
+    expect(published.status).toBe(200);
+    const publishedData = (await readJson(published)).data as JsonObject;
+
+    expect(publishedData.status).toBe("published");
+    expect(publishedData.publishedAt).not.toBeNull();
+
+    // Second edge landing on draft: unpublish, which also clears publishedAt.
+    const unpublished = await changeChapterStatus(
+      session.accessToken,
+      chapterPath,
+      "draft",
+    );
+
+    expect(unpublished.status).toBe(200);
+    expect((await readJson(unpublished)).data).toMatchObject({
+      status: "draft",
+      publishedAt: null,
+    });
+  });
+
+  it("rejects a chapter that reuses an order already taken in the project", async () => {
+    const session = await registerAndLogin("chapter-order-conflict");
+    const projectId = await createProject(
+      session.accessToken,
+      "Chapter Order Conflict Project",
+    );
+
+    await createChapter(session.accessToken, projectId, {
+      title: "Chapter One",
+      order: 1,
+    });
+
+    const response = await request(`/api/v1/projects/${projectId}/chapters`, {
+      method: "POST",
+      accessToken: session.accessToken,
+      body: { title: "Also Chapter One", order: 1 },
+    });
+
+    // 409, not 400: the request is well-formed, the position is simply taken.
+    // Distinct from the generic version conflict — retrying this unchanged can
+    // never succeed, so the message names the fix.
+    expect(response.status).toBe(409);
+    await expect(readJson(response)).resolves.toMatchObject({
+      error: {
+        code: "CONFLICT",
+        message: "Another chapter in this project already uses that order",
+      },
+    });
+  });
+
+  it("round-trips a scene through its nested collection and flat item endpoints", async () => {
+    const session = await registerAndLogin("scene-crud");
+    const projectId = await createProject(session.accessToken, "Scene CRUD Project");
+    const chapterId = await createChapter(session.accessToken, projectId, {
+      title: "Chapter One",
+      order: 1,
+      summary: "The soldier sets out",
+    });
+    const basePath = `/api/v1/projects/${projectId}`;
+
+    const createResponse = await request(
+      `${basePath}/chapters/${chapterId}/scenes`,
+      {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: {
+          orderInChapter: 0,
+          title: "At the gate",
+          content: "The bell had not rung yet.",
+        },
+      },
+    );
+
+    expect(createResponse.status).toBe(201);
+    const sceneId = (await readJson(createResponse)).data as JsonObject;
+    const id = sceneId.sceneId as string;
+
+    expect(id).toBeTruthy();
+
+    const listResponse = await request(
+      `${basePath}/chapters/${chapterId}/scenes`,
+      { accessToken: session.accessToken },
+    );
+
+    expect(listResponse.status).toBe(200);
+    const scenes = (await readJson(listResponse)).data as JsonObject;
+
+    expect((scenes.scenes as JsonObject[]).map((s) => s.id)).toContain(id);
+
+    const getResponse = await request(`${basePath}/scenes/${id}`, {
+      accessToken: session.accessToken,
+    });
+
+    expect(getResponse.status).toBe(200);
+    expect((await readJson(getResponse)).data).toMatchObject({
+      id,
+      chapterId,
+      title: "At the gate",
+    });
+
+    const updateResponse = await request(`${basePath}/scenes/${id}`, {
+      method: "PATCH",
+      accessToken: session.accessToken,
+      body: { title: "At the gate, renamed" },
+    });
+
+    expect(updateResponse.status).toBe(200);
+    expect((await readJson(updateResponse)).data).toMatchObject({
+      title: "At the gate, renamed",
+    });
+
+    const statusResponse = await request(`${basePath}/scenes/${id}/status`, {
+      method: "PATCH",
+      accessToken: session.accessToken,
+      body: { status: "published" },
+    });
+
+    expect(statusResponse.status).toBe(200);
+    expect((await readJson(statusResponse)).data).toMatchObject({
+      status: "published",
+    });
+
+    const deleteResponse = await request(`${basePath}/scenes/${id}`, {
+      method: "DELETE",
+      accessToken: session.accessToken,
+    });
+
+    expect(deleteResponse.status).toBe(200);
+    await expect(
+      prisma.scene.findUnique({ where: { id } }),
+    ).resolves.toBeNull();
+  });
+
+  it("refuses to hang a scene off a chapter that belongs to a different project", async () => {
+    const ownerSession = await registerAndLogin("scene-cross-project-owner");
+    const projectA = await createProject(
+      ownerSession.accessToken,
+      "Scene Cross Project A",
+    );
+    const chapterId = await createChapter(ownerSession.accessToken, projectA, {
+      title: "Chapter In Project A",
+      order: 1,
+    });
+
+    const outsiderSession = await registerAndLogin("scene-cross-project-outsider");
+    const projectB = await createProject(
+      outsiderSession.accessToken,
+      "Scene Cross Project B",
+    );
+
+    // `scenes.chapter_id` is a plain FK, so the database alone would accept
+    // this write — the same cross-tenant hole found in Layer/WorldMap in
+    // Phase 4. Only SceneService's parent pre-check stops it.
+    const createResponse = await request(
+      `/api/v1/projects/${projectB}/chapters/${chapterId}/scenes`,
+      {
+        method: "POST",
+        accessToken: outsiderSession.accessToken,
+        body: { orderInChapter: 0, title: "Smuggled scene" },
+      },
+    );
+
+    expect(createResponse.status).toBe(404);
+    await expect(readJson(createResponse)).resolves.toMatchObject({
+      error: { code: "NOT_FOUND", message: "Chapter not found" },
+    });
+
+    // The nested list is scoped the same way, and answers 404 rather than an
+    // empty array: "no such chapter here" is not "this chapter has no scenes".
+    const listResponse = await request(
+      `/api/v1/projects/${projectB}/chapters/${chapterId}/scenes`,
+      { accessToken: outsiderSession.accessToken },
+    );
+
+    expect(listResponse.status).toBe(404);
+    await expect(readJson(listResponse)).resolves.toMatchObject({
+      error: { code: "NOT_FOUND", message: "Chapter not found" },
+    });
+  });
+
+  it("refuses to delete a chapter that still has scenes, then allows it once the scene is gone", async () => {
+    const session = await registerAndLogin("chapter-delete-guard");
+    const projectId = await createProject(
+      session.accessToken,
+      "Chapter Delete Guard Project",
+    );
+    const chapterId = await createChapter(session.accessToken, projectId, {
+      title: "Chapter One",
+      order: 1,
+    });
+    const basePath = `/api/v1/projects/${projectId}`;
+
+    const createSceneResponse = await request(
+      `${basePath}/chapters/${chapterId}/scenes`,
+      {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: { orderInChapter: 0, title: "Only scene" },
+      },
+    );
+
+    expect(createSceneResponse.status).toBe(201);
+    const sceneId = ((await readJson(createSceneResponse)).data as JsonObject)
+      .sceneId as string;
+
+    // Deliberately not cascaded: scenes carry their own revisions and Qdrant
+    // points, so deleting them silently would skip both.
+    const blockedResponse = await request(`${basePath}/chapters/${chapterId}`, {
+      method: "DELETE",
+      accessToken: session.accessToken,
+    });
+
+    expect(blockedResponse.status).toBe(409);
+    await expect(readJson(blockedResponse)).resolves.toMatchObject({
+      error: {
+        code: "CONFLICT",
+        message: "Chapter still has scenes and cannot be deleted",
+      },
+    });
+
+    const deleteSceneResponse = await request(`${basePath}/scenes/${sceneId}`, {
+      method: "DELETE",
+      accessToken: session.accessToken,
+    });
+
+    expect(deleteSceneResponse.status).toBe(200);
+
+    const deleteChapterResponse = await request(
+      `${basePath}/chapters/${chapterId}`,
+      { method: "DELETE", accessToken: session.accessToken },
+    );
+
+    expect(deleteChapterResponse.status).toBe(200);
   });
 });
