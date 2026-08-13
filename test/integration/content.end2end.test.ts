@@ -131,6 +131,30 @@ async function createChapter(
   return (payload.data as JsonObject).chapterId as string;
 }
 
+// Seeded straight into `user_projects` rather than through an endpoint: there is
+// no invitation API yet (Phase 12), and the project creator is always writer +
+// canDelete, so every other point of the permission matrix is unreachable over
+// HTTP today. Mirrors seedSecondMembership in project.end2end.test.ts.
+async function seedMembership(
+  projectId: string,
+  userId: string,
+  role: "writer" | "editor" | "reviewer",
+  canDelete: boolean,
+): Promise<void> {
+  await prisma.userProject.create({
+    data: {
+      id: crypto.randomUUID(),
+      projectId,
+      userId,
+      role,
+      canDelete,
+      aiAccess: "full",
+      status: "active",
+      joinedAt: new Date(),
+    },
+  });
+}
+
 function changeChapterStatus(
   accessToken: string,
   chapterPath: string,
@@ -152,6 +176,23 @@ type EntityCase = {
   updateBody: JsonObject;
   updateField: string;
   updateValue: unknown;
+  // Target for the PATCH .../status leg. Per-entity rather than a shared
+  // constant, because neither the enums nor the guards are uniform:
+  //
+  //   Layer/WorldMap/WorldElement/Event  draft|published      published needs `content`
+  //   Plot                               draft|active|completed  active needs `content`
+  //   Faction                            draft|active|archived   active needs description + background
+  //   Character                          draft|active|archived   active needs archetype + background
+  //                                                              + personality + description
+  //
+  // That is why several createBody entries below carry fields the CRUD legs
+  // alone would not need — they are what each entity demands before it will
+  // leave draft. Getting this wrong fails loudly (400), which is how Character's
+  // four-field guard was found rather than assumed.
+  //
+  // Omitted only for Chapter, whose transitions are resolved as (origin,
+  // target) pairs and are covered by their own dedicated test.
+  statusTarget?: string;
   findPersisted: (id: string) => Promise<unknown>;
 };
 
@@ -243,23 +284,31 @@ describe("Content end-to-end", () => {
           level: 1,
           exposure: "reader_visible",
           description: "Base layer of the tower",
+          content: "Stone corridors ring the base of the tower.",
         },
         createIdField: "layerId",
         listField: "layers",
         updateBody: { name: "Updated Ground Floor" },
         updateField: "name",
         updateValue: "Updated Ground Floor",
+        statusTarget: "published",
         findPersisted: (id) => prisma.layer.findUnique({ where: { id } }),
       },
       {
         label: "world map",
         segment: "world-maps",
-        createBody: { name: "Old Town", scale: "settlement", description: "A market town" },
+        createBody: {
+          name: "Old Town",
+          scale: "settlement",
+          description: "A market town",
+          content: "Three roads meet at the well in the square.",
+        },
         createIdField: "worldMapId",
         listField: "worldMaps",
         updateBody: { name: "Old Town Renamed" },
         updateField: "name",
         updateValue: "Old Town Renamed",
+        statusTarget: "published",
         findPersisted: (id) => prisma.map.findUnique({ where: { id } }),
       },
       {
@@ -269,12 +318,14 @@ describe("Content end-to-end", () => {
           name: "Mana Crystal",
           category: "artifact",
           description: "Glows faintly with stored magic",
+          content: "Cut from the seam under the old quarry.",
         },
         createIdField: "worldElementId",
         listField: "worldElements",
         updateBody: { name: "Mana Crystal Renamed" },
         updateField: "name",
         updateValue: "Mana Crystal Renamed",
+        statusTarget: "published",
         findPersisted: (id) => prisma.worldElement.findUnique({ where: { id } }),
       },
       {
@@ -290,6 +341,7 @@ describe("Content end-to-end", () => {
         updateBody: { name: "Silver Hand Renamed" },
         updateField: "name",
         updateValue: "Silver Hand Renamed",
+        statusTarget: "active",
         findPersisted: (id) => prisma.faction.findUnique({ where: { id } }),
       },
       {
@@ -298,6 +350,8 @@ describe("Content end-to-end", () => {
         createBody: {
           name: "Aria",
           archetype: "mentor",
+          background: "Left the academy after the second siege",
+          personality: "Patient, and slow to name her reasons",
           description: "A wandering sage",
         },
         createIdField: "characterId",
@@ -305,6 +359,7 @@ describe("Content end-to-end", () => {
         updateBody: { name: "Aria Renamed" },
         updateField: "name",
         updateValue: "Aria Renamed",
+        statusTarget: "active",
         findPersisted: (id) => prisma.character.findUnique({ where: { id } }),
       },
       {
@@ -315,12 +370,14 @@ describe("Content end-to-end", () => {
           era: "First Age",
           eventType: "historical",
           description: "The night the sky split",
+          content: "Two moons crossed and the horizon tore open.",
         },
         createIdField: "eventId",
         listField: "events",
         updateBody: { title: "The Sundering Renamed" },
         updateField: "title",
         updateValue: "The Sundering Renamed",
+        statusTarget: "published",
         findPersisted: (id) => prisma.event.findUnique({ where: { id } }),
       },
       {
@@ -330,12 +387,14 @@ describe("Content end-to-end", () => {
           name: "The Long Return",
           description: "A soldier walks home",
           theme: "belonging",
+          content: "He walks north while the war keeps moving south.",
         },
         createIdField: "plotId",
         listField: "plots",
         updateBody: { name: "The Long Return Renamed" },
         updateField: "name",
         updateValue: "The Long Return Renamed",
+        statusTarget: "active",
         findPersisted: (id) => prisma.plot.findUnique({ where: { id } }),
       },
       {
@@ -415,6 +474,35 @@ describe("Content end-to-end", () => {
         (updatePayload.data as JsonObject)[entityCase.updateField],
         `${entityCase.label} updated field`,
       ).toBe(entityCase.updateValue);
+
+      // Status changes are a separate endpoint from update for all nine content
+      // entities, so a round trip that only exercises PATCH .../:id leaves the
+      // whole `changeXStatus` path — body schema, toChangeXStatusInput, the
+      // service call — unproven over HTTP. It was: before this leg, the only
+      // `/status` requests anywhere in test/ were Chapter's and Scene's, which
+      // means the five Phase 4 entities had carried an untested endpoint since
+      // 4.6.
+      if (entityCase.statusTarget) {
+        const statusResponse = await request(
+          `${basePath}/${entityCase.segment}/${entityId}/status`,
+          {
+            method: "PATCH",
+            accessToken: session.accessToken,
+            body: { status: entityCase.statusTarget },
+          },
+        );
+
+        expect(statusResponse.status, `${entityCase.label} change status`).toBe(
+          200,
+        );
+
+        const statusPayload = await readJson(statusResponse);
+
+        expect(
+          (statusPayload.data as JsonObject).status,
+          `${entityCase.label} status after change`,
+        ).toBe(entityCase.statusTarget);
+      }
 
       const deleteResponse = await request(
         `${basePath}/${entityCase.segment}/${entityId}`,
@@ -832,6 +920,191 @@ describe("Content end-to-end", () => {
     await expect(readJson(listResponse)).resolves.toMatchObject({
       error: { code: "NOT_FOUND", message: "Chapter not found" },
     });
+  });
+
+  it("rejects a second scene that reuses an order already taken in the chapter", async () => {
+    const session = await registerAndLogin("scene-order-conflict");
+    const projectId = await createProject(
+      session.accessToken,
+      "Scene Order Conflict Project",
+    );
+    const chapterId = await createChapter(session.accessToken, projectId, {
+      title: "Chapter One",
+      order: 1,
+    });
+    const scenesPath = `/api/v1/projects/${projectId}/chapters/${chapterId}/scenes`;
+
+    const first = await request(scenesPath, {
+      method: "POST",
+      accessToken: session.accessToken,
+      body: { orderInChapter: 0, title: "First" },
+    });
+
+    expect(first.status).toBe(201);
+
+    const second = await request(scenesPath, {
+      method: "POST",
+      accessToken: session.accessToken,
+      body: { orderInChapter: 0, title: "Also first" },
+    });
+
+    // The Chapter twin of this case was already covered; this one closes the
+    // other half of the pair. Same 409-not-400 reasoning: the request is
+    // well-formed and the position is simply taken, so retrying it unchanged
+    // can never succeed — the message has to name the fix, and the repository
+    // must have told the service `SceneRepositoryOrderConflictError` rather
+    // than the generic version conflict, whose advice ("reload and retry")
+    // would be wrong here.
+    expect(second.status).toBe(409);
+    await expect(readJson(second)).resolves.toMatchObject({
+      error: {
+        code: "CONFLICT",
+        message: "Another scene in this chapter already uses that order",
+      },
+    });
+
+    // Sanity: the same order IS free in a different chapter, so the constraint
+    // really is (chapter_id, order_in_chapter) and not project-wide.
+    const otherChapterId = await createChapter(session.accessToken, projectId, {
+      title: "Chapter Two",
+      order: 2,
+    });
+    const otherChapterScene = await request(
+      `/api/v1/projects/${projectId}/chapters/${otherChapterId}/scenes`,
+      {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: { orderInChapter: 0, title: "First of chapter two" },
+      },
+    );
+
+    expect(otherChapterScene.status).toBe(201);
+  });
+
+  // The role matrix is already exhausted in the four service unit-test files.
+  // What CANNOT be proven there is that the Controller actually forwards the
+  // membership it read from the request context — a controller that passed a
+  // hardcoded `{ role: "writer", canDelete: true }` would keep every one of
+  // those unit tests green. Hence one representative denial per entity here,
+  // over real HTTP, rather than a full matrix duplicated at this level.
+  it("enforces role and canDelete at the HTTP boundary for every timeline+story entity", async () => {
+    const owner = await registerAndLogin("matrix-owner");
+    const projectId = await createProject(owner.accessToken, "Role Matrix Project");
+    const reviewer = await registerAndLogin("matrix-reviewer");
+    const editorNoDelete = await registerAndLogin("matrix-editor-plain");
+    const editorCanDelete = await registerAndLogin("matrix-editor-deleter");
+
+    await seedMembership(projectId, reviewer.userId, "reviewer", false);
+    await seedMembership(projectId, editorNoDelete.userId, "editor", false);
+    await seedMembership(projectId, editorCanDelete.userId, "editor", true);
+
+    const basePath = `/api/v1/projects/${projectId}`;
+    // Parent for the scene case; kept out of the delete cases below by using an
+    // order no other chapter in this test claims.
+    const parentChapterId = await createChapter(owner.accessToken, projectId, {
+      title: "Parent Chapter",
+      order: 99,
+      summary: "Holds the scene used by the matrix",
+    });
+
+    const matrixCases = [
+      {
+        label: "event",
+        createPath: `${basePath}/events`,
+        createBody: { title: "Matrix Event" },
+        idField: "eventId",
+        itemPath: (id: string) => `${basePath}/events/${id}`,
+      },
+      {
+        label: "plot",
+        createPath: `${basePath}/plots`,
+        createBody: { name: "Matrix Plot" },
+        idField: "plotId",
+        itemPath: (id: string) => `${basePath}/plots/${id}`,
+      },
+      {
+        label: "chapter",
+        createPath: `${basePath}/chapters`,
+        createBody: { title: "Matrix Chapter", order: 1 },
+        idField: "chapterId",
+        itemPath: (id: string) => `${basePath}/chapters/${id}`,
+      },
+      {
+        label: "scene",
+        createPath: `${basePath}/chapters/${parentChapterId}/scenes`,
+        createBody: { orderInChapter: 0, title: "Matrix Scene" },
+        idField: "sceneId",
+        itemPath: (id: string) => `${basePath}/scenes/${id}`,
+      },
+    ];
+
+    for (const matrixCase of matrixCases) {
+      const created = await request(matrixCase.createPath, {
+        method: "POST",
+        accessToken: owner.accessToken,
+        body: matrixCase.createBody,
+      });
+
+      expect(created.status, `${matrixCase.label} created by owner`).toBe(201);
+      const entityId = ((await readJson(created)).data as JsonObject)[
+        matrixCase.idField
+      ] as string;
+
+      // Reviewer is a genuine member, so this is 403 from the service's own
+      // authorization, not 404 from the membership middleware. For scene it
+      // also pins the ORDER of the checks: authorization runs before the parent
+      // chapter is loaded, so a reviewer never learns whether the chapter in
+      // the URL exists.
+      const reviewerCreate = await request(matrixCase.createPath, {
+        method: "POST",
+        accessToken: reviewer.accessToken,
+        body: matrixCase.createBody,
+      });
+
+      expect(
+        reviewerCreate.status,
+        `${matrixCase.label} create as reviewer`,
+      ).toBe(403);
+
+      const blockedDelete = await request(matrixCase.itemPath(entityId), {
+        method: "DELETE",
+        accessToken: editorNoDelete.accessToken,
+      });
+
+      expect(
+        blockedDelete.status,
+        `${matrixCase.label} delete as editor without canDelete`,
+      ).toBe(403);
+
+      // The positive half matters as much as the denials: without it, a
+      // controller that rejected every delete would pass just as happily, and
+      // `canDelete` would look enforced while actually being ignored.
+      const allowedDelete = await request(matrixCase.itemPath(entityId), {
+        method: "DELETE",
+        accessToken: editorCanDelete.accessToken,
+      });
+
+      expect(
+        allowedDelete.status,
+        `${matrixCase.label} delete as editor with canDelete`,
+      ).toBe(200);
+    }
+
+    // Proves the ordering claimed above instead of merely asserting it: the
+    // chapter in this URL does not exist, so a service that loaded the parent
+    // before checking authorization would answer 404. 403 means a reviewer is
+    // turned away before anything is read — no probing for which chapter ids
+    // are real.
+    const reviewerUnknownChapter = await request(
+      `${basePath}/chapters/${crypto.randomUUID()}/scenes`,
+      {
+        method: "POST",
+        accessToken: reviewer.accessToken,
+        body: { orderInChapter: 0, title: "Never created" },
+      },
+    );
+
+    expect(reviewerUnknownChapter.status).toBe(403);
   });
 
   it("refuses to delete a chapter that still has scenes, then allows it once the scene is gone", async () => {
