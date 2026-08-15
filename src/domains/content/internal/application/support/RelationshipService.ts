@@ -1,0 +1,400 @@
+import { AppError } from "../../../../../shared/errors/AppError.js";
+import { DomainError } from "../../../../../shared/errors/DomainError.js";
+import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
+import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import {
+  ContentRelationshipRepositoryConflictError,
+  ContentRelationshipRepositoryDuplicateError,
+  ContentRelationshipRepositoryNotFoundError,
+} from "../../domain/support/ContentRelationshipRepositoryError.js";
+
+import type { Clock } from "../../../../../shared/application/ports/Clock.js";
+import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
+import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
+import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
+import type {
+  ContentEntityLocation,
+  ContentEntityLocator,
+} from "../ports/ContentEntityLocator.js";
+
+export type CreateRelationshipInput = {
+  requestingUserId: string;
+  requestingMembership: ProjectMembership;
+  projectId: string;
+  sourceEntityType: ContentEntityType;
+  sourceEntityId: string;
+  targetEntityType: ContentEntityType;
+  targetEntityId: string;
+  // Plain `string`, not `RelationType`: Rule 1 belongs to the domain, so the
+  // wire value is handed to `ContentRelationship.create()` unnarrowed and both
+  // entry paths (this service and 7.7) get the same rejection
+  // (`ContentRelationship.ts:48-54`). Entity types stay narrowed because they
+  // arrive as route constants, never as free text.
+  relationType: string;
+  note?: string | null;
+};
+
+export type UpdateRelationshipNoteInput = {
+  requestingUserId: string;
+  requestingMembership: ProjectMembership;
+  note: string | null;
+};
+
+export type DeleteRelationshipInput = {
+  requestingUserId: string;
+  requestingMembership: ProjectMembership;
+};
+
+// `version` is deliberately absent. It is not withheld from the client as a
+// courtesy — it must not travel at all: Flow 4 §Delete (FROZEN 2026-08-14)
+// rules that `expectedVersion` never crosses the wire, and the service reads it
+// from the row it just loaded. Publishing it here would invite a future
+// `If-Match` that contradicts the frozen decision.
+export type RelationshipDetail = {
+  id: string;
+  projectId: string;
+  sourceEntityType: ContentEntityType;
+  sourceEntityId: string;
+  targetEntityType: ContentEntityType;
+  targetEntityId: string;
+  relationType: string;
+  note: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+// ONE write guard for create, update AND delete — no `assertCanDelete` twin,
+// which is the deliberate difference from every Phase 4-6 content service.
+// Flow 4 says so twice (`02-system-design/03_flow_04_content_relationship.md:17`
+// and `:159`): an Editor may delete a relationship WITHOUT `can_delete`,
+// because cutting a link is not destroying content — both entities survive
+// untouched, and there is no revision history to lose.
+function assertCanWrite(membership: ProjectMembership): void {
+  if (membership.role === "reviewer") {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      "Reviewer role cannot modify relationships",
+    );
+  }
+}
+
+// "Does not exist" and "exists in another project" answer the SAME 404, and the
+// message names neither condition: distinguishing them would turn this endpoint
+// into an existence oracle for other tenants' entities (Flow 4 §Create error
+// path, `:52`, and notes K3). 403 would be the same leak in a different code.
+function assertEntityInProject(
+  location: ContentEntityLocation | null,
+  projectId: string,
+  subject: string,
+): void {
+  if (location?.projectId !== projectId) {
+    throw new AppError(ErrorCode.NOT_FOUND, `${subject} entity not found`);
+  }
+}
+
+function mapRelationshipError(error: unknown): never {
+  if (error instanceof ContentRelationshipRepositoryNotFoundError) {
+    throw new AppError(ErrorCode.NOT_FOUND, "Relationship not found");
+  }
+
+  // Two 409s that must not collapse into one message. The repository keeps the
+  // errors apart (`ContentRelationshipRepositoryError.ts:1-37`) precisely so
+  // this layer can tell the caller which of the two happened, and Flow 4 lists
+  // them as separate error paths: a duplicate is deterministic and the user
+  // fixes it by not re-adding the link, a version conflict is transient and the
+  // user fixes it by retrying.
+  if (error instanceof ContentRelationshipRepositoryDuplicateError) {
+    throw new AppError(
+      ErrorCode.CONFLICT,
+      "This relationship already exists — for a non-directional relation type the same pair in reverse is the same relationship",
+    );
+  }
+
+  if (error instanceof ContentRelationshipRepositoryConflictError) {
+    throw new AppError(
+      ErrorCode.CONFLICT,
+      "Relationship was modified concurrently",
+    );
+  }
+
+  // Generic catch, same as mapCharacterError (`../story/CharacterService.ts:155-159`):
+  // every DomainError out of ContentRelationship is a Flow 4 "400 Domain
+  // validation error" by definition — unknown relation type, disallowed pair,
+  // self-relationship, dedicated hierarchy. Without this branch errorHandler.ts
+  // only special-cases AppError, so "unknown relation type" would reach the
+  // client as a raw 500 instead of the 400 the flow specifies.
+  if (error instanceof DomainError) {
+    throw new AppError(ErrorCode.VALIDATION_ERROR, error.message);
+  }
+
+  throw error;
+}
+
+// No ContentUnitOfWork here, unlike every Phase 4-6 content service: a
+// relationship write produces no `content_revisions` row and no outbox event
+// (notes §3 — relationship changes no entity's content, so nothing is
+// re-indexed), and each operation is a single statement, so there is no
+// multi-write atomicity to protect.
+//
+// ACCEPTED RISK, and the reason that sentence stops there: create is still a
+// check-then-act across two connections. Between `locate()` and `insert()` a
+// concurrent delete of either endpoint leaves a relationship row pointing at an
+// entity that no longer exists, and NOTHING catches it afterwards — this table
+// references entities polymorphically, with no FK, so there is no P2003 backstop
+// like the one that turns the same race into a 404 for Layer/WorldMap parents
+// (`../world/LayerService.ts:140-147`). A transaction would not close it either:
+// entity-delete reads relationships while relationship-create reads entities, so
+// the two take their locks in opposite order. This is the mirror image of the
+// window `notes/phase-7-content-relationship.md:467-471` flags for item 7.4b —
+// "jangan diasumsikan rapat" — and it is deliberately left open here rather than
+// patched per-side, because the two halves must be decided together in 7.4b
+// (accept and document, or a pessimistic lock, which
+// `05-implementation-policy/06_concurrency_control_policy.md` reserves for rare,
+// critical operations). Until then, the orphan is silent and the guard is
+// best-effort.
+//
+// That does not close the door on 7.7 (NarrativeTransition `relationship_add`/
+// `relationship_remove`, which must write inside the transition's transaction,
+// notes §5): repositories in this codebase are built per client, so 7.7
+// constructs a RelationshipService over the transaction's repository instead of
+// this one. No batch API and no optional-repository parameter is invented here
+// for a caller that does not exist yet.
+export class RelationshipService {
+  constructor(
+    private readonly clock: Clock,
+    private readonly idGenerator: IdGenerator,
+    private readonly contentRelationshipRepository: ContentRelationshipRepository,
+    private readonly contentEntityLocator: ContentEntityLocator,
+  ) { }
+
+  async createRelationship(
+    input: CreateRelationshipInput,
+  ): Promise<RelationshipDetail> {
+    assertCanWrite(input.requestingMembership);
+
+    // Rules 5, 6 and 7 in two calls — existence and project ownership are the
+    // same question for a polymorphic endpoint, so `locate()` answers both at
+    // once. Issued together because neither depends on the other; the checks
+    // are still REPORTED source-first, so the error a caller sees is
+    // deterministic when both endpoints are wrong (Flow 4 steps 5 then 6).
+    const [source, target] = await Promise.all([
+      this.contentEntityLocator.locate({
+        entityType: input.sourceEntityType,
+        entityId: input.sourceEntityId,
+      }),
+      this.contentEntityLocator.locate({
+        entityType: input.targetEntityType,
+        entityId: input.targetEntityId,
+      }),
+    ]);
+
+    assertEntityInProject(source, input.projectId, "Source");
+    assertEntityInProject(target, input.projectId, "Target");
+
+    // Wrapped construction, the Phase 6 invariant "`X.create()` wajib di dalam
+    // try/catch": create() carries rules 1, 3, 4, 9, 10 and 11, all of which are
+    // caller-fixable 400s rather than bugs.
+    let relationship: ContentRelationship;
+    try {
+      relationship = ContentRelationship.create({
+        id: this.idGenerator.generate(),
+        projectId: input.projectId,
+        relationType: input.relationType,
+        source: {
+          entityType: input.sourceEntityType,
+          entityId: input.sourceEntityId,
+        },
+        target: {
+          entityType: input.targetEntityType,
+          entityId: input.targetEntityId,
+        },
+        note: input.note,
+        createdByUserId: input.requestingUserId,
+        now: this.clock.now(),
+      });
+    } catch (error) {
+      mapRelationshipError(error);
+    }
+
+    // No duplicate lookup before this line, and none may be added: the domain
+    // canonicalised the endpoints, so the 6-column unique index catches `A↔B`
+    // and `B↔A` alike and surfaces as a Duplicate error (Flow 4 step 8,
+    // superseded 2026-08-14). A read-before-write would only add a race window.
+    try {
+      await this.contentRelationshipRepository.insert(relationship);
+    } catch (error) {
+      mapRelationshipError(error);
+    }
+
+    return toRelationshipDetail(relationship);
+  }
+
+  // No role guard on either read: Flow 4 §Read Relation step 3 — every role,
+  // Reviewer included, may read relationships. Membership itself is already
+  // enforced upstream by the project-scoped router (6.5).
+  async getRelationshipById(
+    projectId: string,
+    relationshipId: string,
+  ): Promise<RelationshipDetail> {
+    const relationship = await this.loadExistingRelationship(
+      projectId,
+      relationshipId,
+    );
+
+    return toRelationshipDetail(relationship);
+  }
+
+  async listRelationshipsByEntity(
+    projectId: string,
+    entityType: ContentEntityType,
+    entityId: string,
+  ): Promise<RelationshipDetail[]> {
+    // Flow 4 §Read Relation step 4: the entity itself is validated before its
+    // relationships are listed, so an id from another project answers 404
+    // rather than a plausible-looking empty list.
+    const location = await this.contentEntityLocator.locate({
+      entityType,
+      entityId,
+    });
+
+    assertEntityInProject(location, projectId, "Content");
+
+    const relationships =
+      await this.contentRelationshipRepository.findByEntity(
+        projectId,
+        entityType,
+        entityId,
+      );
+
+    return relationships.map((relationship) =>
+      toRelationshipDetail(relationship),
+    );
+  }
+
+  async updateRelationshipNote(
+    projectId: string,
+    relationshipId: string,
+    input: UpdateRelationshipNoteInput,
+  ): Promise<RelationshipDetail> {
+    assertCanWrite(input.requestingMembership);
+
+    const relationship = await this.loadExistingRelationship(
+      projectId,
+      relationshipId,
+    );
+
+    let changed: boolean;
+    try {
+      changed = relationship.updateNote({
+        note: input.note,
+        now: this.clock.now(),
+      });
+    } catch (error) {
+      mapRelationshipError(error);
+    }
+
+    // A PATCH that changes nothing must not burn a version increment — same
+    // no-op contract as Scene/Character updates, and here it also keeps a
+    // pointless write from colliding with a concurrent one.
+    if (!changed) {
+      return toRelationshipDetail(relationship);
+    }
+
+    try {
+      // The aggregate still carries the version it was read at; the adapter
+      // uses it as the guard and the mapper does the increment.
+      await this.contentRelationshipRepository.update(relationship);
+    } catch (error) {
+      mapRelationshipError(error);
+    }
+
+    return toRelationshipDetail(relationship);
+  }
+
+  async deleteRelationship(
+    projectId: string,
+    relationshipId: string,
+    input: DeleteRelationshipInput,
+  ): Promise<void> {
+    assertCanWrite(input.requestingMembership);
+
+    // This read is not just a 404 check: it is where `expectedVersion` comes
+    // from (Flow 4 §Delete step 4). What the guard protects is the interleaving
+    // between this read and the delete below, inside this one request — not
+    // client staleness, which is why nothing about the version is asked of the
+    // caller.
+    const relationship = await this.loadExistingRelationship(
+      projectId,
+      relationshipId,
+    );
+
+    try {
+      await this.contentRelationshipRepository.delete(
+        relationship.id,
+        relationship.version,
+      );
+    } catch (error) {
+      mapRelationshipError(error);
+    }
+  }
+
+  // `findById` is not project-scoped (see the port's comment), so ownership is
+  // compared HERE and a row from another project answers 404, never 403 — the
+  // API must not confirm that another tenant's relationship exists. Identical
+  // shape to CharacterService.loadExistingCharacter.
+  private async loadExistingRelationship(
+    projectId: string,
+    relationshipId: string,
+  ): Promise<ContentRelationship> {
+    const relationship =
+      await this.contentRelationshipRepository.findById(relationshipId);
+
+    if (relationship?.projectId !== projectId) {
+      throw new AppError(ErrorCode.NOT_FOUND, "Relationship not found");
+    }
+
+    return relationship;
+  }
+}
+
+// Free function rather than a private method: it reads no service state, and
+// 7.3's RelationshipDtoMapper will need the same shape when it adds `direction`
+// and the effective label for a given perspective.
+function toRelationshipDetail(
+  relationship: ContentRelationship,
+): RelationshipDetail {
+  return {
+    id: relationship.id,
+    projectId: relationship.projectId,
+    sourceEntityType: relationship.sourceEntityType,
+    sourceEntityId: relationship.sourceEntityId,
+    targetEntityType: relationship.targetEntityType,
+    targetEntityId: relationship.targetEntityId,
+    relationType: relationship.relationType,
+    note: relationship.note,
+    createdByUserId: relationship.createdByUserId,
+    createdAt: relationship.createdAt,
+    updatedAt: relationship.updatedAt,
+  };
+}
+
+export function createRelationshipService({
+  clock,
+  idGenerator,
+  contentRelationshipRepository,
+  contentEntityLocator,
+}: {
+  clock: Clock;
+  idGenerator: IdGenerator;
+  contentRelationshipRepository: ContentRelationshipRepository;
+  contentEntityLocator: ContentEntityLocator;
+}): RelationshipService {
+  return new RelationshipService(
+    clock,
+    idGenerator,
+    contentRelationshipRepository,
+    contentEntityLocator,
+  );
+}
