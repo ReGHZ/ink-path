@@ -221,6 +221,16 @@ describe("Project-scoped route protection", () => {
       ["chapterRoutes", "/chapters/:chapterId/status"],
       ["sceneRoutes (nested collection)", "/chapters/:chapterId/scenes"],
       ["sceneRoutes (flat item)", "/scenes/:sceneId"],
+      // Two entries for the one router, for the same reason chapterRoutes needs
+      // a discriminating fragment: the nine nested list paths all end in
+      // "/relationships", so a lone "/relationships" marker stays green with the
+      // entire flat CRUD block unmounted — and a lone flat marker stays green
+      // with all nine nested routes gone.
+      ["relationshipRoutes (flat item)", "/relationships/:relationshipId"],
+      [
+        "relationshipRoutes (nested list)",
+        "/characters/:characterId/relationships",
+      ],
     ];
 
     for (const [router, fragment] of mountedSurfaces) {
@@ -272,6 +282,76 @@ describe("Project-scoped route protection", () => {
         `${route.method} ${route.path} as a non-member`,
       ).toBe(404);
     }
+  });
+
+  it("answers 404, not 500, when an id in the path is not a uuid", async () => {
+    const accessToken = await registerAndLogin("malformed");
+
+    const projectResponse = await fetch(`${baseUrl}/api/v1/projects`, {
+      method: "POST",
+      headers: headers(accessToken),
+      body: JSON.stringify({ name: "Malformed Id Project" }),
+    });
+
+    expect(projectResponse.status).toBe(201);
+    const projectId = (
+      ((await projectResponse.json()) as JsonObject).data as JsonObject
+    ).projectId as string;
+
+    // Every case below answered 500 INTERNAL_ERROR before 2026-08-15: the value
+    // reached Prisma, which raised P2007, which nothing translated. A client
+    // mistake reported as a server fault is not cosmetic — retry-on-5xx callers
+    // repeat a request that can never succeed, and the 5xx rate stops being a
+    // usable alert signal.
+    //
+    // The `:projectId` rows are the load-bearing ones: they are guarded in
+    // ProjectMemberMiddleware, so they hold for EVERY project-scoped route,
+    // including the ~62 inherited from Phase 2-6 whose own entity ids are still
+    // unguarded (deliberate scope split — see notes/tech-debt.md).
+    const malformedPaths: Array<[string, string, string]> = [
+      ["GET", `/api/v1/projects/not-a-uuid`, "projectId, bare"],
+      ["GET", `/api/v1/projects/not-a-uuid/characters`, "projectId, collection"],
+      [
+        "GET",
+        `/api/v1/projects/${projectId}/relationships/not-a-uuid`,
+        "relationshipId",
+      ],
+      [
+        "PATCH",
+        `/api/v1/projects/${projectId}/relationships/not-a-uuid`,
+        "relationshipId, write path",
+      ],
+      [
+        "DELETE",
+        `/api/v1/projects/${projectId}/relationships/not-a-uuid`,
+        "relationshipId, delete path",
+      ],
+      [
+        "GET",
+        `/api/v1/projects/${projectId}/characters/not-a-uuid/relationships`,
+        "nested entity id",
+      ],
+    ];
+
+    for (const [method, path, label] of malformedPaths) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: headers(accessToken),
+        body: method === "PATCH" ? JSON.stringify({ note: null }) : undefined,
+      });
+
+      expect(response.status, `${method} ${path} (${label})`).toBe(404);
+    }
+
+    // Control: a syntactically valid id that simply does not exist must answer
+    // the same 404 through the same route. Without it, a guard that rejected
+    // every id would pass the loop above.
+    const absent = await fetch(
+      `${baseUrl}/api/v1/projects/${projectId}/relationships/${crypto.randomUUID()}`,
+      { method: "GET", headers: headers(accessToken) },
+    );
+
+    expect(absent.status).toBe(404);
   });
 
   it("runs each middleware exactly once per request, at any route depth", async () => {

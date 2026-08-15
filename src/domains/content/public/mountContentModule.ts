@@ -3,6 +3,7 @@ import { createCharacterRoutes } from "../internal/interface/story/characterRout
 import { createFactionRoutes } from "../internal/interface/story/factionRoutes.js";
 import { createPlotRoutes } from "../internal/interface/story/plotRoutes.js";
 import { createSceneRoutes } from "../internal/interface/story/sceneRoutes.js";
+import { createRelationshipRoutes } from "../internal/interface/support/relationshipRoutes.js";
 import { createEventRoutes } from "../internal/interface/world/eventRoutes.js";
 import { createLayerRoutes } from "../internal/interface/world/layerRoutes.js";
 import { createWorldElementRoutes } from "../internal/interface/world/worldElementRoutes.js";
@@ -77,5 +78,17 @@ export function mountContentModule(
   router.route(
     "/",
     createSceneRoutes({ sceneController: container.resolve("sceneController") }),
+  );
+
+  // Last, and it must stay last only in the sense that it reads that way: its
+  // nested paths sit one segment DEEPER than every entity router above
+  // (`/:projectId/characters/:characterId/relationships` vs
+  // `/:projectId/characters/:characterId`), so Hono distinguishes them by shape,
+  // not by registration order. Nothing here shadows anything above it.
+  router.route(
+    "/",
+    createRelationshipRoutes({
+      relationshipController: container.resolve("relationshipController"),
+    }),
   );
 }

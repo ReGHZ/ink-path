@@ -2,16 +2,25 @@ import { normalizeOptionalText } from "../../../../../shared/domain/normalizeOpt
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 
-export type ContentEntityType =
-  | "layer"
-  | "map"
-  | "character"
-  | "faction"
-  | "world_element"
-  | "event"
-  | "plot"
-  | "chapter"
-  | "scene";
+// Derived union, same shape as RELATION_TYPES/RelationType in
+// `relationTypeRegistry.ts:23-43`. The union itself is unchanged — what the
+// array adds is a VALUE to iterate at runtime, so consumers that need "every
+// content entity type" (the POST body enum and the nested relationship route
+// table, 7.3) read one list instead of retyping it and drifting from it. A tenth
+// type is added here, once.
+export const CONTENT_ENTITY_TYPES = [
+  "layer",
+  "map",
+  "character",
+  "faction",
+  "world_element",
+  "event",
+  "plot",
+  "chapter",
+  "scene",
+] as const;
+
+export type ContentEntityType = (typeof CONTENT_ENTITY_TYPES)[number];
 
 export type ContentRevisionChangeType = "create" | "update" | "delete";
 

@@ -21,6 +21,10 @@ import {
   type SceneService,
 } from "./internal/application/story/SceneService.js";
 import {
+  createRelationshipService,
+  type RelationshipService,
+} from "./internal/application/support/RelationshipService.js";
+import {
   createEventService,
   type EventService,
 } from "./internal/application/world/EventService.js";
@@ -36,6 +40,7 @@ import {
   createWorldMapService,
   type WorldMapService,
 } from "./internal/application/world/WorldMapService.js";
+import { createContentEntityLocator } from "./internal/infrastructure/ContentEntityLocator.js";
 import { createContentEntityReader } from "./internal/infrastructure/ContentEntityReader.js";
 import { createChapterRepository } from "./internal/infrastructure/story/PrismaChapterRepository.js";
 import { createChapterUnitOfWork } from "./internal/infrastructure/story/PrismaChapterUnitOfWork.js";
@@ -47,6 +52,7 @@ import { createPlotRepository } from "./internal/infrastructure/story/PrismaPlot
 import { createPlotUnitOfWork } from "./internal/infrastructure/story/PrismaPlotUnitOfWork.js";
 import { createSceneRepository } from "./internal/infrastructure/story/PrismaSceneRepository.js";
 import { createSceneUnitOfWork } from "./internal/infrastructure/story/PrismaSceneUnitOfWork.js";
+import { createContentRelationshipRepository } from "./internal/infrastructure/support/PrismaContentRelationshipRepository.js";
 import { createEventRepository } from "./internal/infrastructure/world/PrismaEventRepository.js";
 import { createEventUnitOfWork } from "./internal/infrastructure/world/PrismaEventUnitOfWork.js";
 import { createLayerRepository } from "./internal/infrastructure/world/PrismaLayerRepository.js";
@@ -76,6 +82,10 @@ import {
   type SceneController,
 } from "./internal/interface/story/SceneController.js";
 import {
+  createRelationshipController,
+  type RelationshipController,
+} from "./internal/interface/support/RelationshipController.js";
+import {
   createEventController,
   type EventController,
 } from "./internal/interface/world/EventController.js";
@@ -92,12 +102,14 @@ import {
   type WorldMapController,
 } from "./internal/interface/world/WorldMapController.js";
 
+import type { ContentEntityLocator } from "./internal/application/ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "./internal/application/ports/ContentUnitOfWork.js";
 import type { ChapterRepository } from "./internal/domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "./internal/domain/story/CharacterRepository.js";
 import type { FactionRepository } from "./internal/domain/story/FactionRepository.js";
 import type { PlotRepository } from "./internal/domain/story/PlotRepository.js";
 import type { SceneRepository } from "./internal/domain/story/SceneRepository.js";
+import type { ContentRelationshipRepository } from "./internal/domain/support/ContentRelationshipRepository.js";
 import type { EventRepository } from "./internal/domain/world/EventRepository.js";
 import type { LayerRepository } from "./internal/domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "./internal/domain/world/WorldElementRepository.js";
@@ -150,6 +162,15 @@ export type ContentDomainCradle = {
   sceneUnitOfWork: ContentUnitOfWork<SceneRepository>;
   sceneService: SceneService;
   sceneController: SceneController;
+  // Phase 7.1-7.3. No `relationshipUnitOfWork`: a relationship write produces no
+  // revision and no outbox event, so there is no multi-write to make atomic
+  // (`RelationshipService.ts:135-139`). `contentEntityLocator` is the second
+  // adapter over the shared descriptor table — registered next to
+  // `contentEntityReader` because they are built from the same descriptors.
+  contentEntityLocator: ContentEntityLocator;
+  contentRelationshipRepository: ContentRelationshipRepository;
+  relationshipService: RelationshipService;
+  relationshipController: RelationshipController;
 };
 
 export function registerContentDomain(
@@ -199,5 +220,11 @@ export function registerContentDomain(
     sceneUnitOfWork: asFunction(createSceneUnitOfWork).singleton(),
     sceneService: asFunction(createSceneService).singleton(),
     sceneController: asFunction(createSceneController).singleton(),
+    contentEntityLocator: asFunction(createContentEntityLocator).singleton(),
+    contentRelationshipRepository: asFunction(
+      createContentRelationshipRepository,
+    ).singleton(),
+    relationshipService: asFunction(createRelationshipService).singleton(),
+    relationshipController: asFunction(createRelationshipController).singleton(),
   });
 }
