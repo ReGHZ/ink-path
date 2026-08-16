@@ -74,7 +74,7 @@ export type DeletePlotInput = {
   requestingMembership: ProjectMembership;
 };
 
-function toRevisionSnapshot(plot: Plot): Record<string, unknown> {
+export function toRevisionSnapshot(plot: Plot): Record<string, unknown> {
   const snapshot = plot.toSnapshot();
 
   return {

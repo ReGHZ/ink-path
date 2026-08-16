@@ -59,7 +59,7 @@ export type WorldMapDetail = {
 // ContentRevision.afterSnapshot — Prisma's Json column needs actual
 // JSON-compatible values, not Date instances, so dates go through
 // toISOString() here rather than being passed as-is from toSnapshot().
-function toRevisionSnapshot(worldMap: WorldMap): Record<string, unknown> {
+export function toRevisionSnapshot(worldMap: WorldMap): Record<string, unknown> {
   const snapshot = worldMap.toSnapshot();
 
   return {

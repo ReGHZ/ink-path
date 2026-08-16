@@ -25,6 +25,10 @@ import {
   type RelationshipService,
 } from "./internal/application/support/RelationshipService.js";
 import {
+  createNarrativeTransitionService,
+  type NarrativeTransitionService,
+} from "./internal/application/transition/NarrativeTransitionService.js";
+import {
   createEventService,
   type EventService,
 } from "./internal/application/world/EventService.js";
@@ -42,6 +46,7 @@ import {
 } from "./internal/application/world/WorldMapService.js";
 import { createContentEntityLocator } from "./internal/infrastructure/ContentEntityLocator.js";
 import { createContentEntityReader } from "./internal/infrastructure/ContentEntityReader.js";
+import { createNarrativeTransitionUnitOfWork } from "./internal/infrastructure/PrismaNarrativeTransitionUnitOfWork.js";
 import { createChapterRepository } from "./internal/infrastructure/story/PrismaChapterRepository.js";
 import { createChapterUnitOfWork } from "./internal/infrastructure/story/PrismaChapterUnitOfWork.js";
 import { createCharacterRepository } from "./internal/infrastructure/story/PrismaCharacterRepository.js";
@@ -53,6 +58,8 @@ import { createPlotUnitOfWork } from "./internal/infrastructure/story/PrismaPlot
 import { createSceneRepository } from "./internal/infrastructure/story/PrismaSceneRepository.js";
 import { createSceneUnitOfWork } from "./internal/infrastructure/story/PrismaSceneUnitOfWork.js";
 import { createContentRelationshipRepository } from "./internal/infrastructure/support/PrismaContentRelationshipRepository.js";
+import { createNarrativeTransitionRepository } from "./internal/infrastructure/transition/PrismaNarrativeTransitionRepository.js";
+import { createTransitionEffectRepository } from "./internal/infrastructure/transition/PrismaTransitionEffectRepository.js";
 import { createEventRepository } from "./internal/infrastructure/world/PrismaEventRepository.js";
 import { createEventUnitOfWork } from "./internal/infrastructure/world/PrismaEventUnitOfWork.js";
 import { createLayerRepository } from "./internal/infrastructure/world/PrismaLayerRepository.js";
@@ -104,12 +111,15 @@ import {
 
 import type { ContentEntityLocator } from "./internal/application/ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "./internal/application/ports/ContentUnitOfWork.js";
+import type { NarrativeTransitionUnitOfWork } from "./internal/application/ports/NarrativeTransitionUnitOfWork.js";
 import type { ChapterRepository } from "./internal/domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "./internal/domain/story/CharacterRepository.js";
 import type { FactionRepository } from "./internal/domain/story/FactionRepository.js";
 import type { PlotRepository } from "./internal/domain/story/PlotRepository.js";
 import type { SceneRepository } from "./internal/domain/story/SceneRepository.js";
 import type { ContentRelationshipRepository } from "./internal/domain/support/ContentRelationshipRepository.js";
+import type { NarrativeTransitionRepository } from "./internal/domain/transition/NarrativeTransitionRepository.js";
+import type { TransitionEffectRepository } from "./internal/domain/transition/TransitionEffectRepository.js";
 import type { EventRepository } from "./internal/domain/world/EventRepository.js";
 import type { LayerRepository } from "./internal/domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "./internal/domain/world/WorldElementRepository.js";
@@ -171,6 +181,18 @@ export type ContentDomainCradle = {
   contentRelationshipRepository: ContentRelationshipRepository;
   relationshipService: RelationshipService;
   relationshipController: RelationshipController;
+  // Phase 7.6-7.7. `narrativeTransitionUnitOfWork` has no
+  // `ContentUnitOfWork<T>` twin above it because it is not generic over one
+  // entity repository: applying an effect touches whichever of the nine the
+  // effect names, plus the effect row, plus revisions or relationships
+  // (`internal/application/ports/NarrativeTransitionUnitOfWork.ts`). The two
+  // repositories beside it are the POOLED instances, used for reads and for the
+  // two single-statement writes (declare, add effect); everything that has to be
+  // atomic goes through the unit of work instead.
+  narrativeTransitionRepository: NarrativeTransitionRepository;
+  transitionEffectRepository: TransitionEffectRepository;
+  narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork;
+  narrativeTransitionService: NarrativeTransitionService;
 };
 
 export function registerContentDomain(
@@ -226,5 +248,17 @@ export function registerContentDomain(
     ).singleton(),
     relationshipService: asFunction(createRelationshipService).singleton(),
     relationshipController: asFunction(createRelationshipController).singleton(),
+    narrativeTransitionRepository: asFunction(
+      createNarrativeTransitionRepository,
+    ).singleton(),
+    transitionEffectRepository: asFunction(
+      createTransitionEffectRepository,
+    ).singleton(),
+    narrativeTransitionUnitOfWork: asFunction(
+      createNarrativeTransitionUnitOfWork,
+    ).singleton(),
+    narrativeTransitionService: asFunction(
+      createNarrativeTransitionService,
+    ).singleton(),
   });
 }

@@ -71,7 +71,7 @@ export type DeleteChapterInput = {
   requestingMembership: ProjectMembership;
 };
 
-function toRevisionSnapshot(chapter: Chapter): Record<string, unknown> {
+export function toRevisionSnapshot(chapter: Chapter): Record<string, unknown> {
   const snapshot = chapter.toSnapshot();
 
   return {

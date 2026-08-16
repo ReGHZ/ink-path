@@ -55,7 +55,7 @@ export type WorldElementDetail = {
 // ContentRevision.afterSnapshot — Prisma's Json column needs actual
 // JSON-compatible values, not Date instances, so dates go through
 // toISOString() here rather than being passed as-is from toSnapshot().
-function toRevisionSnapshot(
+export function toRevisionSnapshot(
   worldElement: WorldElement,
 ): Record<string, unknown> {
   const snapshot = worldElement.toSnapshot();

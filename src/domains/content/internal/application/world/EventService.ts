@@ -80,7 +80,7 @@ export type DeleteEventInput = {
 // Plain, JSON-serializable mirror of EventProperties for
 // ContentRevision.afterSnapshot — Prisma's Json column needs JSON-compatible
 // values, so Dates go through toISOString() rather than being passed as-is.
-function toRevisionSnapshot(event: Event): Record<string, unknown> {
+export function toRevisionSnapshot(event: Event): Record<string, unknown> {
   const snapshot = event.toSnapshot();
 
   return {

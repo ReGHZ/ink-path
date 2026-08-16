@@ -90,7 +90,7 @@ export type DeleteSceneInput = {
 // the public index and introduced the read-only `ContentEntityReader` port.
 export type ChapterOwnershipReader = Pick<ChapterRepository, "findById">;
 
-function toRevisionSnapshot(scene: Scene): Record<string, unknown> {
+export function toRevisionSnapshot(scene: Scene): Record<string, unknown> {
   const snapshot = scene.toSnapshot();
 
   return {

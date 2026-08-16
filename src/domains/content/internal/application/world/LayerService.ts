@@ -57,7 +57,7 @@ export type LayerDetail = {
 // ContentRevision.afterSnapshot — Prisma's Json column needs actual
 // JSON-compatible values, not Date instances, so dates go through
 // toISOString() here rather than being passed as-is from toSnapshot().
-function toRevisionSnapshot(layer: Layer): Record<string, unknown> {
+export function toRevisionSnapshot(layer: Layer): Record<string, unknown> {
   const snapshot = layer.toSnapshot();
 
   return {
