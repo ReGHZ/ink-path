@@ -38,10 +38,43 @@ const ALL_ENTITY_TYPES = Object.keys(
   PROJECT_BY_ENTITY_TYPE,
 ) as ContentEntityType[];
 
-function stubRepository(projectId: string | undefined) {
+// Which column each aggregate's display name actually lives in. Six types call
+// it `name`, three call it `title`, and `locate()` now has to reach the right
+// one per type (7.4b: the delete guard's 409 names the blocking entities). A
+// descriptor reading `.name` off a chapter compiles fine and answers
+// `undefined` — only a stub that carries ONLY the correct column can refuse it.
+const NAME_COLUMN_BY_ENTITY_TYPE: Readonly<
+  Record<ContentEntityType, "name" | "title">
+> = {
+  layer: "name",
+  map: "name",
+  world_element: "name",
+  faction: "name",
+  character: "name",
+  event: "title",
+  plot: "name",
+  chapter: "title",
+  scene: "title",
+};
+
+function nameFor(entityType: ContentEntityType): string {
+  return `${entityType} display name`;
+}
+
+function stubRepository(
+  entityType: ContentEntityType,
+  projectId: string | undefined,
+) {
   return {
     findById: () =>
-      Promise.resolve(projectId === undefined ? null : { projectId }),
+      Promise.resolve(
+        projectId === undefined
+          ? null
+          : {
+            projectId,
+            [NAME_COLUMN_BY_ENTITY_TYPE[entityType]]: nameFor(entityType),
+          },
+      ),
   };
 }
 
@@ -52,15 +85,21 @@ function buildLocator(
   // repository interface, and the stub deliberately implements only the single
   // method the descriptor calls.
   const dependencies = {
-    layerRepository: stubRepository(projectByEntityType.layer),
-    worldMapRepository: stubRepository(projectByEntityType.map),
-    worldElementRepository: stubRepository(projectByEntityType.world_element),
-    factionRepository: stubRepository(projectByEntityType.faction),
-    characterRepository: stubRepository(projectByEntityType.character),
-    eventRepository: stubRepository(projectByEntityType.event),
-    plotRepository: stubRepository(projectByEntityType.plot),
-    chapterRepository: stubRepository(projectByEntityType.chapter),
-    sceneRepository: stubRepository(projectByEntityType.scene),
+    layerRepository: stubRepository("layer", projectByEntityType.layer),
+    worldMapRepository: stubRepository("map", projectByEntityType.map),
+    worldElementRepository: stubRepository(
+      "world_element",
+      projectByEntityType.world_element,
+    ),
+    factionRepository: stubRepository("faction", projectByEntityType.faction),
+    characterRepository: stubRepository(
+      "character",
+      projectByEntityType.character,
+    ),
+    eventRepository: stubRepository("event", projectByEntityType.event),
+    plotRepository: stubRepository("plot", projectByEntityType.plot),
+    chapterRepository: stubRepository("chapter", projectByEntityType.chapter),
+    sceneRepository: stubRepository("scene", projectByEntityType.scene),
   } as unknown as ContentEntityRepositories;
 
   return createContentEntityLocator(dependencies);
@@ -112,10 +151,54 @@ describe("createContentEntityLocator", () => {
     expect(unexpected).toEqual([]);
   });
 
-  // The port promises a project id and nothing else. If the aggregate itself
-  // leaked through, callers would start reading fields off it and the narrow
-  // port would quietly become a second reader.
-  it("exposes the project id alone, not the aggregate", async () => {
+  // The other half of the same dispatch, and the one 7.4b depends on: the 409
+  // that refuses a delete names the blocking entities, so a chapter whose name
+  // is read from the wrong column would answer "undefined" in a user-facing
+  // message. Asserted for all nine at once because the failure is per-type.
+  it("reports each entity type's display name from its own column", async () => {
+    const locator = buildLocator(PROJECT_BY_ENTITY_TYPE);
+    const mismatches: string[] = [];
+
+    for (const entityType of ALL_ENTITY_TYPES) {
+      const location = await locator.locate({
+        entityType,
+        entityId: `${entityType}-1`,
+      });
+
+      if (location?.entityName !== nameFor(entityType)) {
+        mismatches.push(
+          `${entityType}: expected ${nameFor(entityType)}, got ${String(location?.entityName)}`,
+        );
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  // Scene is the only type whose title is nullable
+  // (`prisma/content-story.prisma:169`). The descriptor turns that into "", and
+  // the delete guard must be able to tell "" apart from "could not be resolved"
+  // — the latter is `null`, and only that one means an orphan row.
+  it("reports an untitled scene as an empty name, not as an unresolved entity", async () => {
+    const dependencies = {
+      sceneRepository: {
+        findById: () =>
+          Promise.resolve({ projectId: "project-scene", title: null }),
+      },
+    } as unknown as ContentEntityRepositories;
+
+    const location = await createContentEntityLocator(dependencies).locate({
+      entityType: "scene",
+      entityId: "scene-1",
+    });
+
+    expect(location).toEqual({ projectId: "project-scene", entityName: "" });
+  });
+
+  // The port promises a project id and a display name, and nothing else. If the
+  // aggregate itself leaked through, callers would start reading fields off it
+  // and the narrow port would quietly become a second reader.
+  it("exposes the project id and the name alone, not the aggregate", async () => {
     const locator = buildLocator(PROJECT_BY_ENTITY_TYPE);
 
     const location = await locator.locate({
@@ -123,6 +206,6 @@ describe("createContentEntityLocator", () => {
       entityId: "character-1",
     });
 
-    expect(Object.keys(location ?? {})).toEqual(["projectId"]);
+    expect(Object.keys(location ?? {})).toEqual(["projectId", "entityName"]);
   });
 });

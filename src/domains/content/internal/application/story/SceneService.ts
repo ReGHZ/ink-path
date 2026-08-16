@@ -10,12 +10,17 @@ import {
   SceneRepositoryReferencedError,
 } from "../../domain/story/SceneRepositoryError.js";
 import { ContentRevision } from "../../domain/support/ContentRevision.js";
+import {
+  assertNoBlockingRelationships,
+  mapBlockedByRelationshipsError,
+} from "../support/contentRelationshipDeleteGuard.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ChapterRepository } from "../../domain/story/ChapterRepository.js";
 import type { SceneRepository } from "../../domain/story/SceneRepository.js";
+import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateSceneInput = {
@@ -169,6 +174,9 @@ export class SceneService {
     private readonly sceneRepository: SceneRepository,
     private readonly chapterRepository: ChapterOwnershipReader,
     private readonly sceneUnitOfWork: ContentUnitOfWork<SceneRepository>,
+    // 7.4b: names the entities that block a delete. Only the delete path uses
+    // it, and only after the guard has already refused the delete.
+    private readonly contentEntityLocator: ContentEntityLocator,
   ) {}
 
   async createScene(input: CreateSceneInput): Promise<CreateSceneResult> {
@@ -381,6 +389,14 @@ export class SceneService {
     try {
       await this.sceneUnitOfWork.transaction(
         async (repositories, outboxEvent) => {
+          // Flow 3 §Delete step 5, M:N half (item 7.4b). First statement in the
+          // transaction: it is a read, and everything below it is work a block
+          // would throw away. The FK half stays where it always was — inside
+          // repository.delete(), as SceneRepositoryReferencedError.
+          await assertNoBlockingRelationships(
+            repositories.contentRelationships,
+            { projectId, entityType: "scene", entityId: scene.id },
+          );
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
@@ -405,6 +421,13 @@ export class SceneService {
         },
       );
     } catch (error) {
+      // Before mapSceneError: the blocked-delete error carries rows that
+      // still need names, which is asynchronous work a `never`-returning
+      // mapper cannot do. Returns untouched for every other error.
+      await mapBlockedByRelationshipsError(error, {
+        contentEntityLocator: this.contentEntityLocator,
+        entityLabel: "Scene",
+      });
       mapSceneError(error);
     }
   }
@@ -520,6 +543,7 @@ export function createSceneService({
   sceneRepository,
   chapterRepository,
   sceneUnitOfWork,
+  contentEntityLocator,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
@@ -528,6 +552,7 @@ export function createSceneService({
   // narrowed at this boundary, so the extra methods never enter this service.
   chapterRepository: ChapterOwnershipReader;
   sceneUnitOfWork: ContentUnitOfWork<SceneRepository>;
+  contentEntityLocator: ContentEntityLocator;
 }): SceneService {
   return new SceneService(
     clock,
@@ -535,5 +560,6 @@ export function createSceneService({
     sceneRepository,
     chapterRepository,
     sceneUnitOfWork,
+    contentEntityLocator,
   );
 }

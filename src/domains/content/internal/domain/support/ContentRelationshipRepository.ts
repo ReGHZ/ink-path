@@ -59,9 +59,11 @@ export type ContentRelationshipRepository = {
   // 2. The read belongs INSIDE the delete transaction (Flow 3 step 6 puts
   //    revision + outbox + delete in one). Repositories here are built per
   //    client, so this has to reach the guard through the transaction's client —
-  //    `ContentRepositories` currently exposes only `entity` and
-  //    `contentRevisions`. Read outside it and the guard is not serialized with
-  //    the delete at all.
+  //    `ContentRepositories` was extended for exactly that in 7.4b. Being inside
+  //    buys one consistent snapshot, avoids taking a second pool connection
+  //    while the first is held, and is where a pessimistic lock would go if it
+  //    is ever added — it does NOT make the guard atomic with the delete (see
+  //    point 3, and `../../application/ports/ContentUnitOfWork.ts`).
   // 3. Even then it is best-effort: with no FK, "empty then delete" can still
   //    interleave with a concurrent relationship insert, because
   //    relationship-create reads the entity while entity-delete reads the

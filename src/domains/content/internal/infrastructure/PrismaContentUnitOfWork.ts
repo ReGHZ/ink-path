@@ -1,3 +1,4 @@
+import { PrismaContentRelationshipRepository } from "./support/PrismaContentRelationshipRepository.js";
 import { PrismaContentRevisionRepository } from "./support/PrismaContentRevisionRepository.js";
 import { Prisma, type PrismaClient } from "../../../../generated/prisma/client.js";
 import { PrismaOutboxEventRepository } from "../../../../shared/infrastructure/PrismaOutboxEventRepository.js";
@@ -25,6 +26,12 @@ export class PrismaContentUnitOfWork<TEntityRepo> implements ContentUnitOfWork<T
                 {
                     entity: this.createEntityRepository(tx),
                     contentRevisions: new PrismaContentRevisionRepository(tx),
+                    // Built from `tx`, exactly like the revision repository: the
+                    // 7.4b delete guard must see this transaction's own view.
+                    // The adapter takes `Pick<PrismaClient, "contentRelationship">`,
+                    // which a TransactionClient satisfies structurally — no
+                    // second factory needed.
+                    contentRelationships: new PrismaContentRelationshipRepository(tx),
                 },
                 new PrismaOutboxEventRepository(tx),
             );

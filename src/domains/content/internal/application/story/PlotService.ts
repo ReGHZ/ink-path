@@ -8,11 +8,16 @@ import {
   PlotRepositoryReferencedError,
 } from "../../domain/story/PlotRepositoryError.js";
 import { ContentRevision } from "../../domain/support/ContentRevision.js";
+import {
+  assertNoBlockingRelationships,
+  mapBlockedByRelationshipsError,
+} from "../support/contentRelationshipDeleteGuard.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { PlotRepository } from "../../domain/story/PlotRepository.js";
+import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreatePlotInput = {
@@ -140,6 +145,9 @@ export class PlotService {
     private readonly idGenerator: IdGenerator,
     private readonly plotRepository: PlotRepository,
     private readonly plotUnitOfWork: ContentUnitOfWork<PlotRepository>,
+    // 7.4b: names the entities that block a delete. Only the delete path uses
+    // it, and only after the guard has already refused the delete.
+    private readonly contentEntityLocator: ContentEntityLocator,
   ) {}
 
   async createPlot(input: CreatePlotInput): Promise<CreatePlotResult> {
@@ -315,6 +323,14 @@ export class PlotService {
     try {
       await this.plotUnitOfWork.transaction(
         async (repositories, outboxEvent) => {
+          // Flow 3 §Delete step 5, M:N half (item 7.4b). First statement in the
+          // transaction: it is a read, and everything below it is work a block
+          // would throw away. The FK half stays where it always was — inside
+          // repository.delete(), as PlotRepositoryReferencedError.
+          await assertNoBlockingRelationships(
+            repositories.contentRelationships,
+            { projectId, entityType: "plot", entityId: plot.id },
+          );
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
@@ -339,6 +355,13 @@ export class PlotService {
         },
       );
     } catch (error) {
+      // Before mapPlotError: the blocked-delete error carries rows that
+      // still need names, which is asynchronous work a `never`-returning
+      // mapper cannot do. Returns untouched for every other error.
+      await mapBlockedByRelationshipsError(error, {
+        contentEntityLocator: this.contentEntityLocator,
+        entityLabel: "Plot",
+      });
       mapPlotError(error);
     }
   }
@@ -440,11 +463,19 @@ export function createPlotService({
   idGenerator,
   plotRepository,
   plotUnitOfWork,
+  contentEntityLocator,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   plotRepository: PlotRepository;
   plotUnitOfWork: ContentUnitOfWork<PlotRepository>;
+  contentEntityLocator: ContentEntityLocator;
 }): PlotService {
-  return new PlotService(clock, idGenerator, plotRepository, plotUnitOfWork);
+  return new PlotService(
+    clock,
+    idGenerator,
+    plotRepository,
+    plotUnitOfWork,
+    contentEntityLocator,
+  );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { WorldElementService } from "./WorldElementService.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
+import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import { WorldElement } from "../../domain/world/WorldElement.js";
 import {
   WorldElementRepositoryConflictError,
@@ -15,9 +16,14 @@ import type {
   OutboxEventRepository,
 } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
-import type { ContentRevision } from "../../domain/support/ContentRevision.js";
+import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
+import type { ContentEntityType, ContentRevision } from "../../domain/support/ContentRevision.js";
 import type { ContentRevisionRepository } from "../../domain/support/ContentRevisionRepository.js";
 import type { WorldElementRepository } from "../../domain/world/WorldElementRepository.js";
+import type {
+  ContentEntityLocation,
+  ContentEntityLocator,
+} from "../ports/ContentEntityLocator.js";
 import type { ContentRepositories, ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 const now = new Date("2026-07-20T00:00:00.000Z");
@@ -115,11 +121,80 @@ class FakeOutboxEventRepository implements OutboxEventRepository {
   }
 }
 
+// 7.4b: what the M:N delete guard reads, handed to the service through the unit
+// of work. Only findByEntity() is implemented with behaviour — the other four
+// methods belong to RelationshipService, and answering them here would invent
+// conduct no test asserts. Both orientations are matched, exactly like
+// PrismaContentRelationshipRepository's OR: the entity under test can sit on
+// either end of the row.
+class FakeContentRelationshipRepository implements ContentRelationshipRepository {
+  readonly relationships: ContentRelationship[] = [];
+
+  findById(): Promise<ContentRelationship | null> {
+    return Promise.reject(new Error("findById is not part of the delete guard"));
+  }
+
+  findByEntity(
+    projectId: string,
+    entityType: ContentEntityType,
+    entityId: string,
+  ): Promise<ContentRelationship[]> {
+    return Promise.resolve(
+      this.relationships.filter(
+        (relationship) =>
+          relationship.projectId === projectId &&
+          ((relationship.sourceEntityType === entityType &&
+            relationship.sourceEntityId === entityId) ||
+            (relationship.targetEntityType === entityType &&
+              relationship.targetEntityId === entityId)),
+      ),
+    );
+  }
+
+  insert(): Promise<void> {
+    return Promise.reject(new Error("insert is not part of the delete guard"));
+  }
+
+  update(): Promise<void> {
+    return Promise.reject(new Error("update is not part of the delete guard"));
+  }
+
+  delete(): Promise<void> {
+    return Promise.reject(new Error("delete is not part of the delete guard"));
+  }
+}
+
+class FakeContentEntityLocator implements ContentEntityLocator {
+  private readonly entities = new Map<string, ContentEntityLocation>();
+
+  seed(
+    entityType: ContentEntityType,
+    entityId: string,
+    location: ContentEntityLocation,
+  ): this {
+    this.entities.set(`${entityType}:${entityId}`, location);
+    return this;
+  }
+
+  locate({
+    entityType,
+    entityId,
+  }: {
+    entityType: ContentEntityType;
+    entityId: string;
+  }): Promise<ContentEntityLocation | null> {
+    return Promise.resolve(
+      this.entities.get(`${entityType}:${entityId}`) ?? null,
+    );
+  }
+}
+
 class FakeContentUnitOfWork implements ContentUnitOfWork<WorldElementRepository> {
   constructor(
     private readonly entity: WorldElementRepository,
     private readonly contentRevisions: ContentRevisionRepository,
     private readonly outboxEvents: OutboxEventRepository,
+    private readonly contentRelationships: ContentRelationshipRepository,
   ) {}
 
   async transaction<T>(
@@ -129,7 +204,11 @@ class FakeContentUnitOfWork implements ContentUnitOfWork<WorldElementRepository>
     ) => Promise<T>,
   ): Promise<T> {
     return work(
-      { entity: this.entity, contentRevisions: this.contentRevisions },
+      {
+        entity: this.entity,
+        contentRevisions: this.contentRevisions,
+        contentRelationships: this.contentRelationships,
+      },
       this.outboxEvents,
     );
   }
@@ -152,13 +231,22 @@ function createService() {
   const contentRevisions = new FakeContentRevisionRepository();
   const outboxEvents = new FakeOutboxEventRepository();
   const idGenerator = new FakeIdGenerator();
-  const uow = new FakeContentUnitOfWork(worldElements, contentRevisions, outboxEvents);
+  const relationships = new FakeContentRelationshipRepository();
+  const locator = new FakeContentEntityLocator();
+  const uow = new FakeContentUnitOfWork(
+    worldElements,
+    contentRevisions,
+    outboxEvents,
+    relationships,
+  );
 
   return {
     worldElements,
     contentRevisions,
     outboxEvents,
-    service: new WorldElementService(clock, idGenerator, worldElements, uow),
+    relationships,
+    locator,
+    service: new WorldElementService(clock, idGenerator, worldElements, uow, locator),
   };
 }
 
@@ -751,6 +839,70 @@ describe("WorldElementService", () => {
   });
 
   describe("deleteWorldElement", () => {
+    // Item 7.4b — Flow 3 §Delete step 5, M:N half. This blocker is invisible to
+    // the database: `content_relationships` names its endpoints polymorphically,
+    // with no foreign key, so nothing here can come from a P2003.
+    it("refuses the delete while a content relationship still points at the world element, and names the blocker", async () => {
+      const {
+        worldElements,
+        contentRevisions,
+        outboxEvents,
+        relationships,
+        locator,
+        service,
+      } = createService();
+      await seedWorldElement(worldElements);
+
+      relationships.relationships.push(
+        ContentRelationship.create({
+          id: "rel-1",
+          projectId: "proj-1",
+          relationType: "participates_in",
+          source: { entityType: "world_element", entityId: "we-1" },
+          target: { entityType: "event", entityId: "event-9" },
+          createdByUserId: "user-1",
+          now,
+        }),
+      );
+      locator.seed("event", "event-9", {
+        projectId: "proj-1",
+        entityName: "The Sundering",
+      });
+
+      const revisionsBefore = contentRevisions.revisions.size;
+      const outboxBefore = outboxEvents.events.length;
+
+      await expect(
+        service.deleteWorldElement("proj-1", "we-1", {
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+        }),
+      ).rejects.toMatchObject({
+        code: ErrorCode.CONFLICT,
+        details: {
+          blockingRelationshipCount: 1,
+          truncated: false,
+          blockingRelationships: [
+            {
+              id: "rel-1",
+              relationType: "participates_in",
+              entityType: "event",
+              entityId: "event-9",
+              entityName: "The Sundering",
+            },
+          ],
+        },
+      });
+
+      // The guard runs BEFORE the revision and the outbox insert. A delete
+      // revision written for an entity that still exists would be worse than no
+      // guard at all — the audit trail would claim a deletion that never
+      // happened, and the embedding worker would drop a live entity's vectors.
+      expect(await worldElements.findById("we-1")).not.toBeNull();
+      expect(contentRevisions.revisions.size).toBe(revisionsBefore);
+      expect(outboxEvents.events).toHaveLength(outboxBefore);
+    });
+
     it("deletes the entity", async () => {
       const { worldElements, service } = createService();
       await seedWorldElement(worldElements, { name: "Disposable Element" });

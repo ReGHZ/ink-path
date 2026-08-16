@@ -113,10 +113,18 @@ class FakeContentRelationshipRepository
 // so a test can seed an entity that exists in ANOTHER project, which is the
 // only way to prove the 404-not-403 rule.
 class FakeContentEntityLocator implements ContentEntityLocator {
-  private readonly entities = new Map<string, string>();
+  private readonly entities = new Map<string, ContentEntityLocation>();
 
+  // `entityName` carries a derived default rather than being seeded per call:
+  // RelationshipService reads only `projectId` (registry rules 5-7), and the
+  // field exists for the 7.4b delete guard, which is a different caller. A
+  // hard-coded constant here would make every seeded entity share one name and
+  // hide a dispatch mistake if this fake is ever reused.
   seed(entityType: ContentEntityType, entityId: string, projectId: string) {
-    this.entities.set(`${entityType}:${entityId}`, projectId);
+    this.entities.set(`${entityType}:${entityId}`, {
+      projectId,
+      entityName: `${entityType} ${entityId}`,
+    });
     return this;
   }
 
@@ -127,9 +135,9 @@ class FakeContentEntityLocator implements ContentEntityLocator {
     entityType: ContentEntityType;
     entityId: string;
   }): Promise<ContentEntityLocation | null> {
-    const projectId = this.entities.get(`${entityType}:${entityId}`);
-
-    return Promise.resolve(projectId ? { projectId } : null);
+    return Promise.resolve(
+      this.entities.get(`${entityType}:${entityId}`) ?? null,
+    );
   }
 }
 

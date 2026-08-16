@@ -800,4 +800,136 @@ describe("Content relationship end-to-end", () => {
       ]);
     });
   });
+
+  // Item 7.4b — the M:N half of Flow 3 §Delete step 5, over HTTP against the
+  // real database. This is the only rule in the content domain that no database
+  // constraint can enforce: `content_relationships` names its endpoints
+  // polymorphically, with no foreign key, so before this guard every delete of a
+  // linked entity succeeded and left an orphan row behind.
+  describe("content delete blocked by an M:N relationship", () => {
+    it("refuses from either endpoint, names the blocker, writes nothing, and lets the delete through once the relationship is gone", async () => {
+      const session = await registerAndLogin("rel-guard");
+      const projectId = await createProject(session.accessToken, "Delete Guard");
+      const basePath = `/api/v1/projects/${projectId}`;
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Kael of Vael",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "The Silver Hand",
+      );
+
+      const created = await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+
+      expect(created.status).toBe(201);
+      const relationshipId = (await readData(created)).id as string;
+
+      const blockedCharacter = await request(
+        `${basePath}/characters/${characterId}`,
+        { method: "DELETE", accessToken: session.accessToken },
+      );
+
+      expect(blockedCharacter.status).toBe(409);
+      // The names come from the descriptor table, resolved AFTER the transaction
+      // rolled back — the whole reason 7.4b took a locator rather than answering
+      // with bare ids.
+      expect(await readError(blockedCharacter)).toMatchObject({
+        code: "CONFLICT",
+        message:
+          "Character is still linked to 1 content relationship and cannot be deleted",
+        details: {
+          blockingRelationshipCount: 1,
+          truncated: false,
+          blockingRelationships: [
+            {
+              id: relationshipId,
+              relationType: "member_of",
+              entityType: "faction",
+              entityId: factionId,
+              entityName: "The Silver Hand",
+            },
+          ],
+        },
+      });
+
+      // The same row blocks from the other end, and the payload flips with it:
+      // the character is the counterpart when the faction is the one deleted.
+      // A guard written only for the source side would let this delete through.
+      const blockedFaction = await request(`${basePath}/factions/${factionId}`, {
+        method: "DELETE",
+        accessToken: session.accessToken,
+      });
+
+      expect(blockedFaction.status).toBe(409);
+      expect(await readError(blockedFaction)).toMatchObject({
+        message:
+          "Faction is still linked to 1 content relationship and cannot be deleted",
+        details: {
+          blockingRelationships: [
+            {
+              entityType: "character",
+              entityId: characterId,
+              entityName: "Kael of Vael",
+            },
+          ],
+        },
+      });
+
+      // Neither refusal wrote anything. Read from the database rather than
+      // inferred from the 409: the guard shares a transaction with the revision
+      // insert, the outbox insert and the hard delete, and a guard that fired
+      // after them would leave an audit trail claiming a deletion that never
+      // happened plus an outbox event telling the worker to drop live vectors.
+      expect(
+        await prisma.contentRevision.count({
+          where: { projectId, changeType: "delete" },
+        }),
+      ).toBe(0);
+      expect(
+        await prisma.outboxEvent.count({
+          where: {
+            eventType: "content.deleted",
+            aggregateId: { in: [characterId, factionId] },
+          },
+        }),
+      ).toBe(0);
+
+      const stillThere = await request(
+        `${basePath}/characters/${characterId}`,
+        { accessToken: session.accessToken },
+      );
+
+      expect(stillThere.status).toBe(200);
+
+      // And the positive half: unlink, and the same delete goes through. Without
+      // this, a guard that refused every delete would pass just as happily.
+      const unlinked = await request(
+        `${basePath}/relationships/${relationshipId}`,
+        { method: "DELETE", accessToken: session.accessToken },
+      );
+
+      expect(unlinked.status).toBe(200);
+
+      const deletedCharacter = await request(
+        `${basePath}/characters/${characterId}`,
+        { method: "DELETE", accessToken: session.accessToken },
+      );
+
+      expect(deletedCharacter.status).toBe(200);
+      expect(
+        await prisma.contentRevision.count({
+          where: { projectId, changeType: "delete" },
+        }),
+      ).toBe(1);
+    });
+  });
 });

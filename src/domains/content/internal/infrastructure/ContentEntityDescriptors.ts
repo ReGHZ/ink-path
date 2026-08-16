@@ -47,9 +47,15 @@ export type ContentEntityDescriptor = {
 // selecting `project_id` alone. Accepted cost, not an oversight: the narrow
 // query would mean a tenth method (`existsInProject`) on all nine repository
 // ports plus their adapters — eighteen files edited to save one column read on
-// a path that runs twice per POST /relationships. The aggregate is also what
-// item 7.4b will need when the delete-guard has to name the blocking entities
-// rather than list bare ids (notes §9).
+// a path that runs twice per POST /relationships. That the aggregate is already
+// loaded is what made item 7.4b's decision cheap: naming the entities that block
+// a delete needs no new query shape at all.
+//
+// `entityName` is derived from `toIndexable`, NOT from a third per-type
+// function. That keeps the property this table was built for: there is nowhere
+// to add a new entity type's repo dispatch without also writing where its name
+// comes from. The cost is building the field record on a path that only reads
+// two of its members — pure in-memory mapping, no extra query.
 function describeEntity<TEntity extends { projectId: string }>(
   load: (entityId: string) => Promise<TEntity | null>,
   toIndexable: (entity: TEntity) => IndexableContentEntity,
@@ -64,7 +70,14 @@ function describeEntity<TEntity extends { projectId: string }>(
     async locate(entityId) {
       const entity = await load(entityId);
 
-      return entity ? { projectId: entity.projectId } : null;
+      if (!entity) {
+        return null;
+      }
+
+      return {
+        projectId: entity.projectId,
+        entityName: toIndexable(entity).entityName,
+      };
     },
   };
 }

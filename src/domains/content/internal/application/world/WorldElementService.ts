@@ -11,11 +11,16 @@ import {
   WorldElementRepositoryNotFoundError,
   WorldElementRepositoryReferencedError,
 } from "../../domain/world/WorldElementRepositoryError.js";
+import {
+  assertNoBlockingRelationships,
+  mapBlockedByRelationshipsError,
+} from "../support/contentRelationshipDeleteGuard.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { WorldElementRepository } from "../../domain/world/WorldElementRepository.js";
+import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateWorldElementInput = {
@@ -158,6 +163,9 @@ export class WorldElementService {
     private readonly idGenerator: IdGenerator,
     private readonly worldElementRepository: WorldElementRepository,
     private readonly worldElementUnitOfWork: ContentUnitOfWork<WorldElementRepository>,
+    // 7.4b: names the entities that block a delete. Only the delete path uses
+    // it, and only after the guard has already refused the delete.
+    private readonly contentEntityLocator: ContentEntityLocator,
   ) { }
 
   async createWorldElement(
@@ -363,13 +371,6 @@ export class WorldElementService {
     );
     const now = this.clock.now();
 
-    // Constraint validation (Flow 3 Delete step 5 — active M:N relationship
-    // check via ContentRelationship) is NOT done here: ContentRelationship
-    // has no domain/repository yet in this codebase (checked — only a
-    // frozen table design exists). The only guard currently enforced is the
-    // DB-level FK check already inside repository.delete() (comments still
-    // targeting this world element -> WorldElementRepositoryReferencedError).
-    // Revisit once ContentRelationship exists.
     const revisionId = this.idGenerator.generate();
     const revision = ContentRevision.create({
       id: revisionId,
@@ -389,6 +390,18 @@ export class WorldElementService {
     try {
       await this.worldElementUnitOfWork.transaction(
         async (repositories, outboxEvents) => {
+          // Flow 3 §Delete step 5, M:N half (item 7.4b). First statement in the
+          // transaction: it is a read, and everything below it is work a block
+          // would throw away. The FK half stays where it always was — inside
+          // repository.delete(), as WorldElementRepositoryReferencedError.
+          await assertNoBlockingRelationships(
+            repositories.contentRelationships,
+            {
+              projectId,
+              entityType: "world_element",
+              entityId: worldElement.id,
+            },
+          );
           // Persist revision and outbox event before the hard delete.
           // The snapshot was already captured before entering this transaction;
           // all writes are committed atomically together.
@@ -419,6 +432,13 @@ export class WorldElementService {
         },
       );
     } catch (error) {
+      // Before mapWorldElementError: the blocked-delete error carries rows that
+      // still need names, which is asynchronous work a `never`-returning
+      // mapper cannot do. Returns untouched for every other error.
+      await mapBlockedByRelationshipsError(error, {
+        contentEntityLocator: this.contentEntityLocator,
+        entityLabel: "World element",
+      });
       mapWorldElementError(error);
     }
   }
@@ -543,16 +563,19 @@ export function createWorldElementService({
   idGenerator,
   worldElementRepository,
   worldElementUnitOfWork,
+  contentEntityLocator,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   worldElementRepository: WorldElementRepository;
   worldElementUnitOfWork: ContentUnitOfWork<WorldElementRepository>;
+  contentEntityLocator: ContentEntityLocator;
 }): WorldElementService {
   return new WorldElementService(
     clock,
     idGenerator,
     worldElementRepository,
     worldElementUnitOfWork,
+    contentEntityLocator,
   );
 }

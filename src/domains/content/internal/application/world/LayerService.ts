@@ -9,11 +9,16 @@ import {
   LayerRepositoryParentNotFoundError,
   LayerRepositoryReferencedError,
 } from "../../domain/world/LayerRepositoryError.js";
+import {
+  assertNoBlockingRelationships,
+  mapBlockedByRelationshipsError,
+} from "../support/contentRelationshipDeleteGuard.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { LayerRepository } from "../../domain/world/LayerRepository.js";
+import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateLayerInput = {
@@ -159,6 +164,9 @@ export class LayerService {
     private readonly idGenerator: IdGenerator,
     private readonly layerRepository: LayerRepository,
     private readonly layerUnitOfWork: ContentUnitOfWork<LayerRepository>,
+    // 7.4b: names the entities that block a delete. Only the delete path uses
+    // it, and only after the guard has already refused the delete.
+    private readonly contentEntityLocator: ContentEntityLocator,
   ) {}
 
   async createLayer(input: CreateLayerInput): Promise<CreateLayerResult> {
@@ -409,6 +417,14 @@ export class LayerService {
     try {
       await this.layerUnitOfWork.transaction(
         async (repositories, outboxEvent) => {
+          // Flow 3 §Delete step 5, M:N half (item 7.4b). First statement in the
+          // transaction: it is a read, and everything below it is work a block
+          // would throw away. The FK half stays where it always was — inside
+          // repository.delete(), as LayerRepositoryReferencedError.
+          await assertNoBlockingRelationships(
+            repositories.contentRelationships,
+            { projectId, entityType: "layer", entityId: layer.id },
+          );
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
@@ -433,6 +449,13 @@ export class LayerService {
         },
       );
     } catch (error) {
+      // Before mapLayerError: the blocked-delete error carries rows that
+      // still need names, which is asynchronous work a `never`-returning
+      // mapper cannot do. Returns untouched for every other error.
+      await mapBlockedByRelationshipsError(error, {
+        contentEntityLocator: this.contentEntityLocator,
+        entityLabel: "Layer",
+      });
       mapLayerError(error);
     }
   }
@@ -534,11 +557,19 @@ export function createLayerService({
   idGenerator,
   layerRepository,
   layerUnitOfWork,
+  contentEntityLocator,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   layerRepository: LayerRepository;
   layerUnitOfWork: ContentUnitOfWork<LayerRepository>;
+  contentEntityLocator: ContentEntityLocator;
 }): LayerService {
-  return new LayerService(clock, idGenerator, layerRepository, layerUnitOfWork);
+  return new LayerService(
+    clock,
+    idGenerator,
+    layerRepository,
+    layerUnitOfWork,
+    contentEntityLocator,
+  );
 }

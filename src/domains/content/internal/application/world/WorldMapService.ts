@@ -9,11 +9,16 @@ import {
   WorldMapRepositoryParentNotFoundError,
   WorldMapRepositoryReferencedError,
 } from "../../domain/world/WorldMapRepositoryError.js";
+import {
+  assertNoBlockingRelationships,
+  mapBlockedByRelationshipsError,
+} from "../support/contentRelationshipDeleteGuard.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { WorldMapRepository } from "../../domain/world/WorldMapRepository.js";
+import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateWorldMapInput = {
@@ -166,6 +171,9 @@ export class WorldMapService {
     private readonly idGenerator: IdGenerator,
     private readonly worldMapRepository: WorldMapRepository,
     private readonly worldMapUnitOfWork: ContentUnitOfWork<WorldMapRepository>,
+    // 7.4b: names the entities that block a delete. Only the delete path uses
+    // it, and only after the guard has already refused the delete.
+    private readonly contentEntityLocator: ContentEntityLocator,
   ) {}
 
   async createWorldMap(
@@ -367,6 +375,14 @@ export class WorldMapService {
     try {
       await this.worldMapUnitOfWork.transaction(
         async (repositories, outboxEvent) => {
+          // Flow 3 §Delete step 5, M:N half (item 7.4b). First statement in the
+          // transaction: it is a read, and everything below it is work a block
+          // would throw away. The FK half stays where it always was — inside
+          // repository.delete(), as WorldMapRepositoryReferencedError.
+          await assertNoBlockingRelationships(
+            repositories.contentRelationships,
+            { projectId, entityType: "map", entityId: worldMap.id },
+          );
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
@@ -391,6 +407,13 @@ export class WorldMapService {
         },
       );
     } catch (error) {
+      // Before mapWorldMapError: the blocked-delete error carries rows that
+      // still need names, which is asynchronous work a `never`-returning
+      // mapper cannot do. Returns untouched for every other error.
+      await mapBlockedByRelationshipsError(error, {
+        contentEntityLocator: this.contentEntityLocator,
+        entityLabel: "World map",
+      });
       mapWorldMapError(error);
     }
   }
@@ -493,16 +516,19 @@ export function createWorldMapService({
   idGenerator,
   worldMapRepository,
   worldMapUnitOfWork,
+  contentEntityLocator,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   worldMapRepository: WorldMapRepository;
   worldMapUnitOfWork: ContentUnitOfWork<WorldMapRepository>;
+  contentEntityLocator: ContentEntityLocator;
 }): WorldMapService {
   return new WorldMapService(
     clock,
     idGenerator,
     worldMapRepository,
     worldMapUnitOfWork,
+    contentEntityLocator,
   );
 }

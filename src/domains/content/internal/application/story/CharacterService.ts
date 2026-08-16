@@ -11,11 +11,16 @@ import {
   CharacterRepositoryReferencedError,
 } from "../../domain/story/CharacterRepositoryError.js";
 import { ContentRevision } from "../../domain/support/ContentRevision.js";
+import {
+  assertNoBlockingRelationships,
+  mapBlockedByRelationshipsError,
+} from "../support/contentRelationshipDeleteGuard.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { CharacterRepository } from "../../domain/story/CharacterRepository.js";
+import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "../ports/ContentUnitOfWork.js";
 
 export type CreateCharacterInput = {
@@ -168,6 +173,9 @@ export class CharacterService {
     private readonly idGenerator: IdGenerator,
     private readonly characterRepository: CharacterRepository,
     private readonly characterUnitOfWork: ContentUnitOfWork<CharacterRepository>,
+    // 7.4b: names the entities that block a delete. Only the delete path uses
+    // it, and only after the guard has already refused the delete.
+    private readonly contentEntityLocator: ContentEntityLocator,
   ) { }
 
   async createCharacter(
@@ -352,12 +360,6 @@ export class CharacterService {
     const character = await this.loadExistingCharacter(projectId, characterId);
     const now = this.clock.now()
 
-    // Constraint validation (Flow 3 Delete step 5 — active M:N relationship
-    // check via ContentRelationship) is NOT done here, same gap as
-    // WorldElementService.deleteWorldElement(): ContentRelationship has no
-    // domain/repository yet in this codebase. The only guard currently
-    // enforced is the DB-level FK check already inside repository.delete()
-    // (comments still targeting this character -> CharacterRepositoryReferencedError).
     const revisionId = this.idGenerator.generate()
     const revision = ContentRevision.create({
       id: revisionId,
@@ -374,6 +376,14 @@ export class CharacterService {
     try {
       await this.characterUnitOfWork.transaction(
         async (repositories, outboxEvent) => {
+          // Flow 3 §Delete step 5, M:N half (item 7.4b). First statement in the
+          // transaction: it is a read, and everything below it is work a block
+          // would throw away. The FK half stays where it always was — inside
+          // repository.delete(), as CharacterRepositoryReferencedError.
+          await assertNoBlockingRelationships(
+            repositories.contentRelationships,
+            { projectId, entityType: "character", entityId: character.id },
+          );
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
@@ -401,6 +411,13 @@ export class CharacterService {
         },
       )
     } catch (error) {
+      // Before mapCharacterError: the blocked-delete error carries rows that
+      // still need names, which is asynchronous work a `never`-returning mapper
+      // cannot do. Returns untouched for every other error.
+      await mapBlockedByRelationshipsError(error, {
+        contentEntityLocator: this.contentEntityLocator,
+        entityLabel: "Character",
+      })
       mapCharacterError(error)
     }
   }
@@ -503,16 +520,19 @@ export function createCharacterService({
   idGenerator,
   characterRepository,
   characterUnitOfWork,
+  contentEntityLocator,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   characterRepository: CharacterRepository;
   characterUnitOfWork: ContentUnitOfWork<CharacterRepository>;
+  contentEntityLocator: ContentEntityLocator;
 }): CharacterService {
   return new CharacterService(
     clock,
     idGenerator,
     characterRepository,
     characterUnitOfWork,
+    contentEntityLocator,
   );
 }
