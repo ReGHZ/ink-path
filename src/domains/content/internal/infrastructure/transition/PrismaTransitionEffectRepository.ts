@@ -111,11 +111,18 @@ export class PrismaTransitionEffectRepository
   }
 }
 
-// The POOLED instance, for the service's reads and its single-statement insert.
-// It is deliberately the same class: `findByIdForUpdate` is meaningless outside
-// a transaction, and a separate read-only class would have to duplicate every
-// other method to keep it out of reach. The port documents the constraint and
-// the unit of work is what satisfies it.
+// The POOLED instance, and the service uses it for READS ONLY. Every write to
+// `transition_effects` — insert included — goes through the unit of work: the
+// insert runs under the aggregate-root lock so a child cannot be born inside
+// `deleteTransition`'s guard window, and the rest run under this row's own
+// `FOR UPDATE`.
+//
+// It is deliberately still the same class rather than a narrow read-only one.
+// Half of this surface is meaningless on a pooled client — `findByIdForUpdate`
+// most obviously — but a second class would have to duplicate every read method
+// to keep the writes out of reach, and two classes over one table is how the two
+// drift apart. The port documents the constraint and the unit of work is what
+// satisfies it.
 export function createTransitionEffectRepository({
   prisma,
 }: {

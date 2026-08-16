@@ -185,10 +185,22 @@ export type ContentDomainCradle = {
   // `ContentUnitOfWork<T>` twin above it because it is not generic over one
   // entity repository: applying an effect touches whichever of the nine the
   // effect names, plus the effect row, plus revisions or relationships
-  // (`internal/application/ports/NarrativeTransitionUnitOfWork.ts`). The two
-  // repositories beside it are the POOLED instances, used for reads and for the
-  // two single-statement writes (declare, add effect); everything that has to be
-  // atomic goes through the unit of work instead.
+  // (`internal/application/ports/NarrativeTransitionUnitOfWork.ts`).
+  //
+  // The two repositories beside it are the POOLED instances, and the split
+  // between them is not symmetrical:
+  //
+  //   `narrativeTransitionRepository` — reads, plus the two writes that need no
+  //   transaction because each is one row and nothing has to agree with it:
+  //   declare (`insert`) and relabel (`update`, last-write-wins, this table has
+  //   no `version` column on purpose).
+  //
+  //   `transitionEffectRepository` — READS ONLY from the service. Every write to
+  //   `transition_effects` goes through the unit of work, including the plain
+  //   insert of `addEffect`, which looks like it could be a single statement and
+  //   deliberately is not: it runs under the aggregate-root lock so that
+  //   `deleteTransition` can trust that the set of children it inspected is the
+  //   set its blanket delete removes (7.7 gate, notes §10).
   narrativeTransitionRepository: NarrativeTransitionRepository;
   transitionEffectRepository: TransitionEffectRepository;
   narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork;
