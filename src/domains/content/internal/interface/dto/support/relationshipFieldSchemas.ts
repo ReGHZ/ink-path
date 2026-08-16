@@ -31,9 +31,10 @@ export const relationshipNoteSchema = z.string().trim().min(1).max(2000);
 // what is plainly a bad request.
 //
 // 400 rather than the 404 its path-parameter counterpart answers
-// (`requireUuidRouteParameter`, `shared/http/context.ts`): these ids arrive in a
-// BODY, where they are data fields to validate, not the identity of the resource
-// being addressed. The difference is deliberate, not an oversight to harmonise.
+// (`uuidRouteParameterMiddleware`, `shared/http/projectScopedRouter.ts`): these
+// ids arrive in a BODY, where they are data fields to validate, not the identity
+// of the resource being addressed. The difference is deliberate, not an
+// oversight to harmonise.
 export const contentEntityIdSchema = z.uuid();
 
 // Perspective of a listed relationship relative to the entity that was queried.

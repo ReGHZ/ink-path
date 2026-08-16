@@ -354,6 +354,61 @@ describe("Project-scoped route protection", () => {
     expect(absent.status).toBe(404);
   });
 
+  // The sweep the case above could not be: it walks the SAME registration table
+  // the auth and membership sweeps walk, so every project-scoped route carrying
+  // an id answers here — including the 39 inherited from Phase 2-6 that the
+  // per-controller guard of 7.3 never reached, and any route added later.
+  //
+  // Only possible because the rule moved into `uuidRouteParameterMiddleware`:
+  // it runs before the handler, therefore before `parseJsonBody`, so one empty
+  // request body is enough for GET, DELETE, PATCH and POST alike. With the guard
+  // still inside each handler, the 20 write routes would have answered 400 for
+  // the missing body and proved nothing about the id.
+  it("answers 404, never 500, for a malformed id on EVERY project-scoped route that takes one", async () => {
+    const accessToken = await registerAndLogin("sweep");
+
+    const projectResponse = await fetch(`${baseUrl}/api/v1/projects`, {
+      method: "POST",
+      headers: headers(accessToken),
+      body: JSON.stringify({ name: "Malformed Sweep Project" }),
+    });
+
+    expect(projectResponse.status).toBe(201);
+    const projectId = (
+      ((await projectResponse.json()) as JsonObject).data as JsonObject
+    ).projectId as string;
+
+    const targets = projectScopedRoutes().filter(
+      (route) => (route.path.match(/:/g) ?? []).length > 1,
+    );
+
+    // 51 = the 39 inherited routes closed here + the 12 relationship routes
+    // 7.3 already covered. A floor, not an equality: routes added later must
+    // join the sweep, not silently shrink it.
+    expect(targets.length).toBeGreaterThanOrEqual(51);
+
+    for (const route of targets) {
+      const path = route.path
+        .split("/")
+        .map((segment) => {
+          if (!segment.startsWith(":")) return segment;
+
+          return segment === ":projectId" ? projectId : "not-a-uuid";
+        })
+        .join("/");
+
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: route.method,
+        headers: headers(accessToken),
+      });
+
+      expect(
+        response.status,
+        `${route.method} ${path} with a malformed id`,
+      ).toBe(404);
+    }
+  });
+
   it("runs each middleware exactly once per request, at any route depth", async () => {
     const accessToken = await registerAndLogin("member");
 

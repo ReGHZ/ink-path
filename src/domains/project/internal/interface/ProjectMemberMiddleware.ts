@@ -20,13 +20,17 @@ export function createProjectMemberMiddleware(
     const userId = requireUserId(c);
     const projectId = c.req.param("projectId");
 
-    // The uuid check belongs HERE, not in each handler: this middleware runs for
-    // every `/projects/:projectId/*` route (`projectScopedRouter.ts:46`), so one
-    // guard covers all of them at once — and it is the only place that can,
-    // because a malformed `:projectId` fails inside `getActiveMember` before any
-    // handler is reached. Same 404 as an absent or foreign project id: the
-    // membership boundary must not answer differently depending on the SHAPE of
-    // the id either.
+    // Not a second copy of the routing rule: `uuidRouteParameterMiddleware`
+    // (`shared/http/projectScopedRouter.ts`) enforces the shape of every path id
+    // on this surface, but it is registered AFTER this middleware, and this one
+    // hands `projectId` straight to `getActiveMember` — a Prisma query on a
+    // `@db.Uuid` column, which answers a malformed value with P2007 and a 500.
+    // So this guard defends the input of the query below, which is also what
+    // keeps this middleware correct if it is ever mounted on a router that has
+    // not installed the other one.
+    //
+    // Same 404 as an absent or foreign project id: the membership boundary must
+    // not answer differently depending on the SHAPE of the id either.
     if (!projectId || !isCanonicalUuid(projectId)) {
       throw new AppError(ErrorCode.NOT_FOUND, "Project not found");
     }

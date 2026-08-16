@@ -2,7 +2,7 @@ import { NESTED_RELATIONSHIP_ROUTES } from "./nestedRelationshipRoutes.js";
 import {
   requireProjectId,
   requireProjectMember,
-  requireUuidRouteParameter,
+  requireRouteParameter,
   requireUserId,
   type AppEnvironment,
 } from "../../../../../shared/http/context.js";
@@ -50,7 +50,7 @@ export class RelationshipController {
 
   async getRelationship(c: Context<AppEnvironment>) {
     const projectId = requireProjectId(c);
-    const relationshipId = requireUuidRouteParameter(
+    const relationshipId = requireRouteParameter(
       c,
       "relationshipId",
       RELATIONSHIP_NOT_FOUND,
@@ -76,7 +76,7 @@ export class RelationshipController {
   ) {
     const route = NESTED_RELATIONSHIP_ROUTES[entityType];
     const projectId = requireProjectId(c);
-    const entityId = requireUuidRouteParameter(
+    const entityId = requireRouteParameter(
       c,
       route.parameterName,
       route.notFoundMessage,
@@ -103,7 +103,7 @@ export class RelationshipController {
     const dto = await parseJsonBody(c, updateRelationshipSchema);
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
-    const relationshipId = requireUuidRouteParameter(
+    const relationshipId = requireRouteParameter(
       c,
       "relationshipId",
       RELATIONSHIP_NOT_FOUND,
@@ -137,7 +137,7 @@ export class RelationshipController {
   async deleteRelationship(c: Context<AppEnvironment>) {
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
-    const relationshipId = requireUuidRouteParameter(
+    const relationshipId = requireRouteParameter(
       c,
       "relationshipId",
       RELATIONSHIP_NOT_FOUND,
