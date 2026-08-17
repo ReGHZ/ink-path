@@ -4,6 +4,7 @@ import { createFactionRoutes } from "../internal/interface/story/factionRoutes.j
 import { createPlotRoutes } from "../internal/interface/story/plotRoutes.js";
 import { createSceneRoutes } from "../internal/interface/story/sceneRoutes.js";
 import { createRelationshipRoutes } from "../internal/interface/support/relationshipRoutes.js";
+import { createNarrativeTransitionRoutes } from "../internal/interface/transition/narrativeTransitionRoutes.js";
 import { createEventRoutes } from "../internal/interface/world/eventRoutes.js";
 import { createLayerRoutes } from "../internal/interface/world/layerRoutes.js";
 import { createWorldElementRoutes } from "../internal/interface/world/worldElementRoutes.js";
@@ -89,6 +90,20 @@ export function mountContentModule(
     "/",
     createRelationshipRoutes({
       relationshipController: container.resolve("relationshipController"),
+    }),
+  );
+
+  // Phase 7.8, mounted beside the relationship router for the same reason it can
+  // be: its own nested lists are one segment deeper than the entity routers
+  // (`/:projectId/scenes/:sceneId/narrative-transitions`), and its two flat
+  // collections (`/narrative-transitions`, `/transition-effects`) are segments
+  // no other content router claims. Order is irrelevant here; shape decides.
+  router.route(
+    "/",
+    createNarrativeTransitionRoutes({
+      narrativeTransitionController: container.resolve(
+        "narrativeTransitionController",
+      ),
     }),
   );
 }

@@ -93,6 +93,10 @@ import {
   type RelationshipController,
 } from "./internal/interface/support/RelationshipController.js";
 import {
+  createNarrativeTransitionController,
+  type NarrativeTransitionController,
+} from "./internal/interface/transition/NarrativeTransitionController.js";
+import {
   createEventController,
   type EventController,
 } from "./internal/interface/world/EventController.js";
@@ -205,6 +209,11 @@ export type ContentDomainCradle = {
   transitionEffectRepository: TransitionEffectRepository;
   narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork;
   narrativeTransitionService: NarrativeTransitionService;
+  // Phase 7.8. One controller for all twelve routes, including the two that hang
+  // off `/transition-effects` rather than off a transition: they are operations
+  // of the same aggregate, and splitting them into a second controller would
+  // only hide that `deleteEffect` and `deleteTransition` guard each other (D10).
+  narrativeTransitionController: NarrativeTransitionController;
 };
 
 export function registerContentDomain(
@@ -271,6 +280,9 @@ export function registerContentDomain(
     ).singleton(),
     narrativeTransitionService: asFunction(
       createNarrativeTransitionService,
+    ).singleton(),
+    narrativeTransitionController: asFunction(
+      createNarrativeTransitionController,
     ).singleton(),
   });
 }

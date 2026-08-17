@@ -168,6 +168,18 @@ beforeEach(async () => {
       await prisma.character.deleteMany({
         where: { projectId: { in: projectIds } },
       });
+      // Effects before transitions: `transition_effects.narrative_transition_id`
+      // is onDelete: Restrict, and a surviving transition would in turn block
+      // the project delete below for the same reason. Added with 7.8, which put
+      // twelve narrative-transition routes into this file's sweeps — none of
+      // them writes a row today, and that is exactly the state in which a
+      // cleanup silently stops covering the surface it is asked about.
+      await prisma.transitionEffect.deleteMany({
+        where: { projectId: { in: projectIds } },
+      });
+      await prisma.narrativeTransition.deleteMany({
+        where: { projectId: { in: projectIds } },
+      });
       await prisma.contentRevision.deleteMany({
         where: { projectId: { in: projectIds } },
       });
@@ -230,6 +242,25 @@ describe("Project-scoped route protection", () => {
       [
         "relationshipRoutes (nested list)",
         "/characters/:characterId/relationships",
+      ],
+      // Three entries for narrativeTransitionRoutes, one per SURFACE it owns,
+      // for the reason the relationship pair already documents: its three nested
+      // lists all end in "/narrative-transitions", so a lone fragment stays green
+      // with either the flat CRUD block or the whole nested loop gone. The
+      // effects surface is listed separately because it is a different
+      // collection, not a different verb of the same one — deleting or applying
+      // an effect is addressed by the effect's own id (D10).
+      [
+        "narrativeTransitionRoutes (flat item)",
+        "/narrative-transitions/:narrativeTransitionId",
+      ],
+      [
+        "narrativeTransitionRoutes (effect item)",
+        "/transition-effects/:transitionEffectId",
+      ],
+      [
+        "narrativeTransitionRoutes (nested list)",
+        "/scenes/:sceneId/narrative-transitions",
       ],
     ];
 
@@ -382,10 +413,13 @@ describe("Project-scoped route protection", () => {
       (route) => (route.path.match(/:/g) ?? []).length > 1,
     );
 
-    // 51 = the 39 inherited routes closed here + the 12 relationship routes
-    // 7.3 already covered. A floor, not an equality: routes added later must
-    // join the sweep, not silently shrink it.
-    expect(targets.length).toBeGreaterThanOrEqual(51);
+    // 61 = the 39 inherited routes closed here + the 12 relationship routes 7.3
+    // already covered + the 10 of 7.8's 12 that carry a second id (the two
+    // `/narrative-transitions` collection routes carry only `:projectId`).
+    // A floor, not an equality: routes added later must join the sweep, not
+    // silently shrink it. Raised with each phase precisely so that a phase which
+    // adds routes but forgets to mount them cannot leave the number untouched.
+    expect(targets.length).toBeGreaterThanOrEqual(61);
 
     for (const route of targets) {
       const path = route.path

@@ -39,10 +39,20 @@ export type NarrativeTransitionSourceType =
 // rejected explicitly (keputusan #7, `DRAFT:112-123`): a stored status has to be
 // kept in sync with every child on every apply, and an enum with a lifecycle is
 // how a tracking mechanism turns into a workflow engine.
+//
+// Kept as a const tuple with the type derived from it, like every other closed
+// vocabulary in this domain (`TRANSITION_EFFECT_TYPES`, `CONTENT_ENTITY_TYPES`,
+// `NARRATIVE_TRANSITION_SOURCE_TYPES`): the response DTO needs the three values
+// at RUNTIME to build its Zod enum, and a type alone would have forced them to
+// be retyped there — a second list to forget, which is the drift D1 refuses.
+export const NARRATIVE_TRANSITION_STATUSES = [
+  "declared",
+  "partially_applied",
+  "fully_applied",
+] as const;
+
 export type NarrativeTransitionStatus =
-  | "declared"
-  | "partially_applied"
-  | "fully_applied";
+  (typeof NARRATIVE_TRANSITION_STATUSES)[number];
 
 // A transition with no effects at all is `declared`, not `fully_applied`: the
 // "every effect is applied" reading of an empty set is vacuously true and
