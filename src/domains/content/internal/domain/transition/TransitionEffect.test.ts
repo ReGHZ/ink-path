@@ -84,6 +84,7 @@ const attributeSnapshot: TransitionEffectProperties = {
   fieldPath: "description",
   newValue: "Tewas di tangga istana",
   relationshipType: null,
+  relationshipDefinitionId: null,
   relatedEntityType: null,
   relatedEntityId: null,
   appliedAt: null,
@@ -97,6 +98,7 @@ const relationshipSnapshot: TransitionEffectProperties = {
   fieldPath: null,
   newValue: null,
   relationshipType: "member_of",
+  relationshipDefinitionId: "def-member_of",
   relatedEntityType: "faction",
   relatedEntityId: "faction-1",
 };
@@ -106,6 +108,33 @@ function reconstitute(overrides: Partial<TransitionEffectProperties> = {}) {
 }
 
 describe("TransitionEffect.create — attribute_change", () => {
+  // The counterpart of "born pending", and the reason the persistence mapper is
+  // allowed to write `applied_at` at all since step 4b: a fact asserted straight
+  // through relationship CRUD has no apply step that could ever set it.
+  it("assertFact produces an APPLIED, parentless fact carrying its predicate", () => {
+    const effect = TransitionEffect.assertFact({
+      id: "assertion-1",
+      narrativeTransitionId: null,
+      projectId,
+      effectType: "relationship_add",
+      targetEntityType: "character",
+      targetEntityId: "character-1",
+      relationshipType: "member_of",
+      definition: seededDefinition("member_of"),
+      relatedEntityType: "faction",
+      relatedEntityId: "faction-1",
+      now,
+    });
+
+    expect(effect.isApplied).toBe(true);
+    expect(effect.narrativeTransitionId).toBeNull();
+    expect(effect.toSnapshot().relationshipDefinitionId).toBe(
+      seededDefinition("member_of").id,
+    );
+    // Still no revision pointer: an asserted fact produces none.
+    expect(effect.toSnapshot().contentRevisionId).toBeNull();
+  });
+
   it("is born pending, with no relationship fields and no revision pointer", () => {
     const effect = createAttributeChange();
 
@@ -355,6 +384,7 @@ describe("TransitionEffect.reconstitute", () => {
     expect(() =>
       reconstitute({
         relationshipType: "member_of",
+        relationshipDefinitionId: "def-member_of",
         relatedEntityType: "faction",
         relatedEntityId: "faction-1",
       }),
@@ -385,6 +415,7 @@ describe("TransitionEffect.reconstitute", () => {
       TransitionEffect.reconstitute({
         ...relationshipSnapshot,
         relationshipType: null,
+        relationshipDefinitionId: null,
       }),
     ).toThrow(/requires a relationship type/);
 

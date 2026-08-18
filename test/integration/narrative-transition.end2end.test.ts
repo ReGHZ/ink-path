@@ -410,12 +410,19 @@ beforeEach(async () => {
   }
 
   await prisma.userProject.deleteMany({ where: { userId: { in: userIds } } });
+  // Assertions before the vocabulary they reference: `transition_effects`
+  // points at `relationship_definitions` with onDelete: Restrict since step 4b,
+  // so the log has to go first. Three levels now — assertions, then vocabulary,
+  // then the project.
+  await prisma.transitionEffect.deleteMany({
+    where: { projectId: { in: projectIds } },
+  });
   // Predicate vocabulary before the project: `relationship_definitions` is
   // onDelete: Restrict, so a project still holding its vocabulary refuses to be
   // deleted. Consequence of step 4, and the reason this belongs in a cleanup
   // helper rather than in each test.
   await prisma.relationshipDefinition.deleteMany({
-    where: { project: { ownerUserId: { in: userIds } } },
+    where: { projectId: { in: projectIds } },
   });
   await prisma.project.deleteMany({ where: { ownerUserId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });

@@ -122,6 +122,7 @@ function buildAppliedEffect(): TransitionEffect {
     fieldPath: "archetype",
     newValue: "mentor",
     relationshipType: null,
+    relationshipDefinitionId: null,
     relatedEntityType: null,
     relatedEntityId: null,
     appliedAt: null,
@@ -191,17 +192,34 @@ describe("PrismaTransitionEffectRepository", () => {
     });
   });
 
-  it("never writes applied state on insert", async () => {
+  // The invariant this once guarded MOVED in step 4b; it was not dropped.
+  //
+  // Before: `insert` discarded `applied_at`, so "an effect cannot be declared as
+  // already applied" was enforced here, by the column default. That worked while
+  // a transition was the only writer. Relationship CRUD asserts facts that hold
+  // the moment they are written and have no apply step that could set the column
+  // later, so discarding it would store every asserted fact as permanently
+  // pending.
+  //
+  // After: `insert` writes what the aggregate carries, and the DOMAIN is what
+  // refuses the abuse — `TransitionEffect.create()` hardcodes `appliedAt: null`,
+  // and only `assertFact()` (parentless, relationship shapes only) can produce a
+  // snapshot with a value. That domain half is asserted in
+  // `../../domain/transition/TransitionEffect.test.ts` ("is born pending…",
+  // `:111`) — passing the column through here is only safe because that holds.
+  it("passes applied state through on insert, but only the domain can produce it", async () => {
     const { repository, calls } = buildRepository();
 
     await repository.insert(buildAppliedEffect());
 
     const data = (calls.create[0] as { data: Record<string, unknown> }).data;
 
-    // Even handed an applied aggregate, the create path must not carry
-    // `applied_at`: declaring an effect as already applied is a state the domain
-    // forbids on construction, and the column default is what enforces it here.
-    expect(data.appliedAt).toBeUndefined();
+    // `later`, not `now`: the fixture applies the effect after creating it, so
+    // this also shows the column is carried from the AGGREGATE rather than
+    // stamped by the mapper.
+    expect(data.appliedAt).toBe(later);
+    // Still never written: `content_revision_id` points at a revision that apply
+    // produces, and an asserted fact produces none.
     expect(data.contentRevisionId).toBeUndefined();
     expect(data.createdAt).toBe(now);
   });

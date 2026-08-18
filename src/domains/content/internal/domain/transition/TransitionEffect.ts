@@ -52,7 +52,17 @@ export type TransitionEffectType = (typeof TRANSITION_EFFECT_TYPES)[number];
 
 export type TransitionEffectProperties = {
   id: string;
-  narrativeTransitionId: string;
+  // NULL since step 4b: an assertion written straight through relationship CRUD
+  // belongs to no transition. The column has been nullable since the 2026-08-18
+  // migration (blocker 1) — the aggregate is only catching up, which langkah 2
+  // recorded as deliberately deferred
+  // (`notes/phase-11-validation.md` §Yang BELUM dikerjakan di langkah 2).
+  //
+  // One aggregate over the whole log rather than two over one table: a
+  // `terminate` may target an assertion written by the OTHER path
+  // (`target_assertion_id`, C-1), so that invariant crosses any boundary drawn
+  // between the two writers — which is the signal the boundary would be wrong.
+  narrativeTransitionId: string | null;
   // Denormalised from the parent transition, with no FK of its own — the parent
   // already points at `projects` (`16:95,127`, same shape as `issue_targets` in
   // the Validation domain). Whoever inserts sets it from the parent; this entity
@@ -64,6 +74,11 @@ export type TransitionEffectProperties = {
   fieldPath: string | null;
   newValue: string | null;
   relationshipType: string | null;
+  // Blocker 4 of the frozen addendum, and the other half of `has_provenance`:
+  // an assertion with no parent transition must say WHICH PREDICATE it asserts.
+  // Null for `attribute_change`, which names a field rather than a predicate —
+  // and which is why such an effect always needs a transition.
+  relationshipDefinitionId: string | null;
   relatedEntityType: ContentEntityType | null;
   relatedEntityId: string | null;
   appliedAt: Date | null;
@@ -73,7 +88,7 @@ export type TransitionEffectProperties = {
 
 type BaseCreateTransitionEffectProperties = {
   id: string;
-  narrativeTransitionId: string;
+  narrativeTransitionId: string | null;
   projectId: string;
   targetEntityType: ContentEntityType;
   targetEntityId: string;
@@ -229,6 +244,8 @@ export class TransitionEffect {
       newValue: props.effectType === "attribute_change" ? props.newValue : null,
       relationshipType:
         props.effectType === "attribute_change" ? null : props.relationshipType,
+      relationshipDefinitionId:
+        props.effectType === "attribute_change" ? null : props.definition.id,
       relatedEntityType:
         props.effectType === "attribute_change" ? null : props.relatedEntityType,
       relatedEntityId:
@@ -242,6 +259,36 @@ export class TransitionEffect {
     });
   }
 
+  // A fact stated OUTRIGHT, with no declare/apply cycle — what relationship CRUD
+  // writes since step 4b. Separate named constructor rather than a flag on
+  // create(), because the two differ in more than one field and the difference
+  // is the point: `create()` produces an INTENT that apply later fulfils, this
+  // produces a fact that already holds.
+  //
+  // `appliedAt` is set at creation for that reason. There is no second step that
+  // could set it, and a permanently pending row would read as "someone declared
+  // this and never applied it" to every query written for the other path.
+  //
+  // Relationship shapes only: an `attribute_change` cannot be stated this way
+  // because it names no predicate, so a parentless one could not say where it
+  // came from (validate() refuses it, mirroring the `has_provenance` CHECK).
+  static assertFact(
+    props: Extract<
+      CreateTransitionEffectProperties,
+      { effectType: "relationship_add" | "relationship_remove" }
+    > & { narrativeTransitionId: null },
+  ): TransitionEffect {
+    const effect = TransitionEffect.create(props);
+
+    // Through the same factory first, so every rule create() enforces — arity,
+    // the pair matrix, hierarchy, self-relationship — is enforced here too and
+    // cannot drift apart from it.
+    return TransitionEffect.reconstitute({
+      ...effect.toSnapshot(),
+      appliedAt: props.now,
+    });
+  }
+
   static reconstitute(props: TransitionEffectProperties): TransitionEffect {
     return new TransitionEffect(props);
   }
@@ -250,7 +297,7 @@ export class TransitionEffect {
     return this.props.id;
   }
 
-  get narrativeTransitionId(): string {
+  get narrativeTransitionId(): string | null {
     return this.props.narrativeTransitionId;
   }
 
@@ -347,10 +394,30 @@ export class TransitionEffect {
       );
     }
 
-    if (props.narrativeTransitionId.trim() === "") {
+    // Blank is still refused, null is not: blank means a caller had a parent and
+    // lost it, null means there never was one. Only the first is corruption.
+    if (
+      props.narrativeTransitionId !== null &&
+      props.narrativeTransitionId.trim() === ""
+    ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Narrative transition id is required",
+        "Narrative transition id must not be blank",
+      );
+    }
+
+    // Twin of the `transition_effects_has_provenance` CHECK: every row must be
+    // able to answer "where did this fact come from", and there are exactly two
+    // valid answers — a transition, or the predicate it asserts. An
+    // `attribute_change` names no predicate (it carries `field_path` + value),
+    // so a parentless one could answer neither.
+    if (
+      props.narrativeTransitionId === null &&
+      props.effectType === "attribute_change"
+    ) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "An attribute change must belong to a narrative transition",
       );
     }
 

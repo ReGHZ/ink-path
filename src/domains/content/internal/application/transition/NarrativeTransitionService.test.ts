@@ -378,6 +378,7 @@ function seedEffect(
     fieldPath: "archetype",
     newValue: "mentor",
     relationshipType: null,
+    relationshipDefinitionId: null,
     relatedEntityType: null,
     relatedEntityId: null,
     appliedAt: null,
@@ -396,6 +397,7 @@ const relationshipEffectFields = {
   fieldPath: null,
   newValue: null,
   relationshipType: "member_of",
+  relationshipDefinitionId: "def-member_of",
   relatedEntityType: "faction" as ContentEntityType,
   relatedEntityId: "faction-1",
 };
@@ -997,6 +999,7 @@ describe("applyEffect — relationship effects", () => {
     seedEffect({
       ...relationshipEffectFields,
       relationshipType: "ally_of",
+      relationshipDefinitionId: "def-ally_of",
       targetEntityType: "faction",
       targetEntityId: "faction-1",
       relatedEntityType: "character",

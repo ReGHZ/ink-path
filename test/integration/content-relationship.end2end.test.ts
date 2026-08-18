@@ -235,16 +235,20 @@ beforeEach(async () => {
     await prisma.contentRevision.deleteMany({
       where: { projectId: { in: projectIds } },
     });
+
+    // Assertions before the vocabulary they reference: `transition_effects`
+    // points at `relationship_definitions` with onDelete: Restrict since step
+    // 4b, so the log goes first. Filtered by `projectId` and not by a relation:
+    // that column is denormalised with no FK of its own (`16:95,127`).
+    await prisma.transitionEffect.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
+    await prisma.relationshipDefinition.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
   }
 
   await prisma.userProject.deleteMany({ where: { userId: { in: userIds } } });
-  // Predicate vocabulary before the project: `relationship_definitions` is
-  // onDelete: Restrict, so a project still holding its vocabulary refuses to be
-  // deleted. Consequence of step 4, and the reason this belongs in a cleanup
-  // helper rather than in each test.
-  await prisma.relationshipDefinition.deleteMany({
-    where: { project: { ownerUserId: { in: userIds } } },
-  });
   await prisma.project.deleteMany({ where: { ownerUserId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
 });
@@ -265,6 +269,152 @@ afterAll(async () => {
 });
 
 describe("Content relationship end-to-end", () => {
+  // Step 4b. `content_relationships` is a PROJECTION now — the fact lives in the
+  // assertion log, and the row the API reads is folded from it inside the same
+  // transaction. Without these three, the suite would stay green while the log
+  // was never written at all: every existing assertion reads the projection,
+  // which is exactly what a broken fold would still produce correctly on the
+  // create path.
+  describe("assertion log (step 4b)", () => {
+    it("writes the fact and its projection together, linked by predicate", async () => {
+      const session = await registerAndLogin("rel-assert");
+      const projectId = await createProject(session.accessToken, "Assertion log");
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+
+      const created = await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+
+      expect(created.status).toBe(201);
+
+      const assertions = await prisma.transitionEffect.findMany({
+        where: { projectId },
+      });
+
+      expect(assertions).toHaveLength(1);
+
+      const [assertion] = assertions;
+
+      // Parentless — no transition declared this — and carrying the predicate
+      // instead, which is the other half of the `has_provenance` CHECK.
+      expect(assertion?.narrativeTransitionId).toBeNull();
+      expect(assertion?.effectType).toBe("relationship_add");
+      expect(assertion?.relationshipType).toBe("member_of");
+
+      // Endpoints as DECLARED, not canonicalised: the log keeps the writer's
+      // orientation, the projection owns canonical identity.
+      expect(assertion?.targetEntityId).toBe(characterId);
+      expect(assertion?.relatedEntityId).toBe(factionId);
+
+      // Applied at creation. There is no second step that could set it, and a
+      // permanently pending row would read as an unfinished declaration.
+      expect(assertion?.appliedAt).not.toBeNull();
+
+      // The predicate reference resolves to this project's own row — the FK
+      // proves it exists, this proves it is the RIGHT one.
+      const definition = await prisma.relationshipDefinition.findUnique({
+        where: { projectId_predicate: { projectId, predicate: "member_of" } },
+        select: { id: true },
+      });
+
+      expect(assertion?.relationshipDefinitionId).toBe(definition?.id);
+
+      // And the projection the API actually reads.
+      expect(
+        await prisma.contentRelationship.count({
+          where: { projectId, relationType: "member_of" },
+        }),
+      ).toBe(1);
+    });
+
+    it("leaves no orphan fact when the projection rejects a duplicate", async () => {
+      const session = await registerAndLogin("rel-assert-dup");
+      const projectId = await createProject(session.accessToken, "Assertion dup");
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+      const body = {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      };
+
+      expect(
+        (await createRelationship(session.accessToken, projectId, body)).status,
+      ).toBe(201);
+
+      // The duplicate is caught by the six-column unique index on the
+      // PROJECTION, which is written second. The assertion was already inserted
+      // when it fires, so this is the test that the two share one transaction:
+      // without it the log would keep a fact the API denies exists.
+      expect(
+        (await createRelationship(session.accessToken, projectId, body)).status,
+      ).toBe(409);
+
+      expect(
+        await prisma.transitionEffect.count({ where: { projectId } }),
+      ).toBe(1);
+      expect(
+        await prisma.contentRelationship.count({ where: { projectId } }),
+      ).toBe(1);
+    });
+
+    it("records the event the graph projector will consume", async () => {
+      const session = await registerAndLogin("rel-assert-outbox");
+      const projectId = await createProject(session.accessToken, "Assertion event");
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+
+      await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+
+      const events = await prisma.outboxEvent.findMany({
+        where: { projectId, eventType: "content.relationship.asserted" },
+      });
+
+      expect(events).toHaveLength(1);
+      // Written with no consumer on purpose, same as `narrative.effect.applied`
+      // since 7.7: what is not recorded today cannot be reconstructed when item
+      // 11.4 builds the evaluation graph.
+      expect(events[0]?.routingKey).toBe("content.relationship.asserted");
+    });
+  });
+
   it("round-trips create, read, list from both sides, patch and delete", async () => {
     const session = await registerAndLogin("rel-crud");
     const projectId = await createProject(session.accessToken, "Relationship CRUD");

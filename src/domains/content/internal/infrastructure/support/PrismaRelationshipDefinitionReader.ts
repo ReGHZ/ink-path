@@ -13,6 +13,7 @@ export type RelationshipDefinitionDatabase = Pick<
 >;
 
 type DefinitionRow = {
+  id: string;
   predicate: string;
   directionality: "directional" | "non_directional";
   objectRequired: boolean;
@@ -23,11 +24,13 @@ type DefinitionRow = {
   }>;
 };
 
-// `select` rather than the whole row, and not for bytes: `id`, `transitive` and
+// `select` rather than the whole row, and not for bytes: `transitive` and
 // `subclassOfId` are the rule engine's, and a reader that never fetches them
 // cannot hand the content domain a field it has no business acting on
-// (`relationshipDefinition.ts` — the domain type deliberately omits them).
+// (`relationshipDefinition.ts` — the domain type deliberately omits them). `id`
+// is fetched because an assertion references the predicate BY id.
 const DEFINITION_SELECT = {
+  id: true,
   predicate: true,
   directionality: true,
   objectRequired: true,
@@ -39,6 +42,7 @@ const DEFINITION_SELECT = {
 
 function toDefinition(row: DefinitionRow): RelationshipDefinition {
   return {
+    id: row.id,
     predicate: row.predicate,
     directionality: row.directionality,
     objectRequired: row.objectRequired,

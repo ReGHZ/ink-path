@@ -459,6 +459,11 @@ export function seedAsDefinition(
   seed: RelationshipDefinitionSeed,
 ): RelationshipDefinition {
   return {
+    // A stable placeholder, NOT a real row id: the seeder generates ids when it
+    // writes (`PrismaRelationshipDefinitionSeeder` — the id is its ownership
+    // token). Anything reaching a database through this value is a bug, and it
+    // is shaped to say so rather than to look plausible.
+    id: `seed:${seed.predicate}`,
     predicate: seed.predicate,
     directionality: seed.directionality,
     objectRequired: seed.objectRequired,

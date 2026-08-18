@@ -38,6 +38,13 @@ export type RelationshipSignature = {
 // they belong to the rule engine and to persistence, and an entity that never
 // receives them cannot quietly start depending on them.
 export type RelationshipDefinition = {
+  // The row's id, and it is DOMAIN data rather than a persistence detail:
+  // premis §6.2 turns a predicate into a first-order constant precisely by
+  // making it a row with an id, and an assertion references it by that id
+  // (`transition_effects.relationship_definition_id`). An earlier draft left it
+  // out as "the rule engine's business"; the `has_provenance` CHECK rejected the
+  // first parentless assertion written without it.
+  id: string;
   predicate: string;
   directionality: RelationDirectionality;
   objectRequired: boolean;

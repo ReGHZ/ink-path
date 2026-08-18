@@ -36,6 +36,7 @@ export const TransitionEffectMapper = {
       fieldPath: row.fieldPath,
       newValue: row.newValue,
       relationshipType: row.relationshipType,
+      relationshipDefinitionId: row.relationshipDefinitionId,
       relatedEntityType: row.relatedEntityType,
       relatedEntityId: row.relatedEntityId,
       appliedAt: row.appliedAt,
@@ -51,10 +52,20 @@ export const TransitionEffectMapper = {
   // an effect's intent never changes, so there is no "last modified" to record.
   // Only `applied_at` moves, once.
   //
-  // `appliedAt` and `contentRevisionId` are not written here either. Every
-  // effect is created pending, and the column defaults to null; a create path
-  // able to set them would be a way to declare an effect as already applied,
-  // which is exactly the state the domain forbids on construction.
+  // `appliedAt` IS written, `contentRevisionId` is not — and the asymmetry is
+  // the step 4b change. The old rule ("every effect is created pending, so a
+  // create path able to set applied_at would let a caller declare an effect as
+  // already applied") held while a transition was the only writer. Relationship
+  // CRUD asserts facts that hold the moment they are written, with no apply step
+  // that could ever set the column later.
+  //
+  // What still forbids the abuse the old rule guarded against is the DOMAIN, not
+  // this mapper: `create()` hardcodes `appliedAt: null`, and only
+  // `TransitionEffect.assertFact()` — parentless, relationship shapes only — can
+  // produce a snapshot carrying a value. This just stops discarding it.
+  //
+  // `contentRevisionId` stays out: it is a pointer to a revision that apply
+  // produces, and an asserted fact produces none.
   toPersistence(
     transitionEffect: TransitionEffect,
   ): Prisma.TransitionEffectUncheckedCreateInput {
@@ -69,8 +80,10 @@ export const TransitionEffectMapper = {
       fieldPath: snapshot.fieldPath,
       newValue: snapshot.newValue,
       relationshipType: snapshot.relationshipType,
+      relationshipDefinitionId: snapshot.relationshipDefinitionId,
       relatedEntityType: snapshot.relatedEntityType,
       relatedEntityId: snapshot.relatedEntityId,
+      appliedAt: snapshot.appliedAt,
       createdAt: snapshot.createdAt,
     };
   },

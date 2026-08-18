@@ -117,6 +117,7 @@ function expectDomainError(act: () => unknown): DomainError {
 // precisely because the seed is all binary: the arity rule has to be provable
 // against a predicate the codebase never shipped.
 const UNARY_DEAD: RelationshipDefinition = {
+  id: "def-dead",
   predicate: "dead",
   directionality: "directional",
   objectRequired: false,

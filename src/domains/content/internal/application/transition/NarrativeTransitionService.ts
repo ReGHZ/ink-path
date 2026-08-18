@@ -815,11 +815,13 @@ export class NarrativeTransitionService {
     now: Date,
     definitions: ReadonlyMap<string, RelationshipDefinition>,
   ): Promise<void> {
+    const narrativeTransitionId = effect.narrativeTransitionId;
     const relationshipType = effect.relationshipType;
     const relatedEntityType = effect.relatedEntityType;
     const relatedEntityId = effect.relatedEntityId;
 
     if (
+      narrativeTransitionId === null ||
       relationshipType === null ||
       relatedEntityType === null ||
       relatedEntityId === null
@@ -829,7 +831,7 @@ export class NarrativeTransitionService {
       // a stored row that somehow drifted deserves a 500 that says so rather
       // than a TypeError deeper in.
       throw new Error(
-        `Relationship effect ${effect.id} is missing its relationship fields`,
+        `Relationship effect ${effect.id} is missing its relationship fields or its parent transition`,
       );
     }
 
@@ -956,7 +958,7 @@ export class NarrativeTransitionService {
       eventType: "narrative.effect.applied",
       eventVersion: 1,
       aggregateType: "narrative_transition",
-      aggregateId: effect.narrativeTransitionId,
+      aggregateId: narrativeTransitionId,
       projectId: effect.projectId,
       triggeredByUserId: requestingUserId,
       payload: {
@@ -1105,10 +1107,30 @@ export class NarrativeTransitionService {
   }
 }
 
+// Same class of guard as the one in applyRelationshipChange, and here for the
+// same reason: `PrismaTransitionEffectRepository.findById` scopes its query to
+// rows that HAVE a parent, so every effect this service returns has one. The
+// type cannot express a repository's scope, and the alternatives are worse — a
+// non-null assertion hides the assumption from the compiler, `?? ""` puts a lie
+// on the wire, and widening `TransitionEffectDetail` would ask every client to
+// handle a case these routes cannot produce. A row that somehow drifted deserves
+// a 500 that names it.
+//
+// Deliberately NOT in the DTO mapper: translation must not have a branch that
+// can fail. That mistake was made once already and cut before it ran
+// (`notes/phase-11-validation.md` §Domain baru validation).
 function toEffectDetail(effect: TransitionEffect): TransitionEffectDetail {
+  const narrativeTransitionId = effect.narrativeTransitionId;
+
+  if (narrativeTransitionId === null) {
+    throw new Error(
+      `Transition effect ${effect.id} has no parent transition; it is an assertion, not an effect of this aggregate`,
+    );
+  }
+
   return {
     id: effect.id,
-    narrativeTransitionId: effect.narrativeTransitionId,
+    narrativeTransitionId,
     projectId: effect.projectId,
     effectType: effect.effectType,
     targetEntityType: effect.targetEntityType,

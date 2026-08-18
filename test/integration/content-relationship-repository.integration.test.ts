@@ -88,6 +88,10 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   await client.contentRelationship.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });
+  // Assertions before the vocabulary they reference (onDelete: Restrict).
+  await client.transitionEffect.deleteMany({
+    where: { projectId: { in: [projectId, otherProjectId] } },
+  });
   // Vocabulary before the project: `relationship_definitions` is onDelete:
   // Restrict, so a project still holding its predicates refuses to be deleted.
   await client.relationshipDefinition.deleteMany({

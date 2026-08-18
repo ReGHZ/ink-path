@@ -7,6 +7,7 @@ import {
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
+import { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -22,6 +23,7 @@ import type {
   ContentEntityLocator,
 } from "../ports/ContentEntityLocator.js";
 import type { RelationshipDefinitionReader } from "../ports/RelationshipDefinitionReader.js";
+import type { RelationshipUnitOfWork } from "../ports/RelationshipUnitOfWork.js";
 
 export type CreateRelationshipInput = {
   requestingUserId: string;
@@ -181,6 +183,7 @@ export class RelationshipService {
     private readonly contentRelationshipRepository: ContentRelationshipRepository,
     private readonly contentEntityLocator: ContentEntityLocator,
     private readonly relationshipDefinitionReader: RelationshipDefinitionReader,
+    private readonly relationshipUnitOfWork: RelationshipUnitOfWork,
   ) { }
 
   async createRelationship(
@@ -225,10 +228,36 @@ export class RelationshipService {
     }
 
     // Wrapped construction, the Phase 6 invariant "`X.create()` wajib di dalam
-    // try/catch": create() carries rules 1, 3, 4, 9, 10 and 11, all of which are
-    // caller-fixable 400s rather than bugs.
+    // try/catch": create() carries rules 1, 3, 4, 9, 10, 11 and arity, all of
+    // which are caller-fixable 400s rather than bugs.
+    //
+    // TWO aggregates are built before anything is written, and the order is not
+    // arbitrary: the assertion is the FACT and the relationship row is a FOLD of
+    // it, so the fold must not be able to succeed against an assertion the
+    // domain would have refused.
+    let assertion: TransitionEffect;
     let relationship: ContentRelationship;
     try {
+      // Endpoints as DECLARED, not canonicalised — the log's existing
+      // convention, set by the narrative writer and argued in
+      // `TransitionEffect.validateRelationshipChange()`: `target_entity_*` is
+      // indexed as "which entity does this effect touch". Canonical order
+      // belongs to the row's IDENTITY, which is the projection's business, and
+      // `ContentRelationship.create()` applies it there.
+      assertion = TransitionEffect.assertFact({
+        id: this.idGenerator.generate(),
+        narrativeTransitionId: null,
+        projectId: input.projectId,
+        effectType: "relationship_add",
+        targetEntityType: input.sourceEntityType,
+        targetEntityId: input.sourceEntityId,
+        relationshipType: input.relationType,
+        definition,
+        relatedEntityType: input.targetEntityType,
+        relatedEntityId: input.targetEntityId,
+        now: this.clock.now(),
+      });
+
       relationship = ContentRelationship.create({
         id: this.idGenerator.generate(),
         projectId: input.projectId,
@@ -250,12 +279,45 @@ export class RelationshipService {
       mapRelationshipError(error);
     }
 
-    // No duplicate lookup before this line, and none may be added: the domain
-    // canonicalised the endpoints, so the 6-column unique index catches `A↔B`
-    // and `B↔A` alike and surfaces as a Duplicate error (Flow 4 step 8,
-    // superseded 2026-08-14). A read-before-write would only add a race window.
+    // One transaction, and it replaces the "no unit of work here" note this
+    // service used to carry: the write is two statements now, and an assertion
+    // whose projection never landed would be a fact the API cannot see.
+    //
+    // Still no duplicate lookup before the insert, and none may be added: the
+    // domain canonicalised the endpoints, so the six-column unique index catches
+    // `A↔B` and `B↔A` alike and surfaces as a Duplicate error (Flow 4 step 8,
+    // superseded 2026-08-14). The rollback takes the assertion with it, so a
+    // rejected duplicate leaves no orphan fact.
     try {
-      await this.contentRelationshipRepository.insert(relationship);
+      await this.relationshipUnitOfWork.transaction(
+        async (repositories, outboxEvents) => {
+          await repositories.assertions.insert(assertion);
+          await repositories.contentRelationships.insert(relationship);
+
+          // Written now, consumed by `GraphProjector` later (item 11.4). The
+          // precedent is `narrative.effect.applied`, produced since 7.7 with no
+          // consumer on purpose: what is not recorded today cannot be
+          // reconstructed later. `content.` prefix matches the binding the one
+          // existing consumer already uses.
+          await outboxEvents.insert({
+            id: this.idGenerator.generate(),
+            eventType: "content.relationship.asserted",
+            eventVersion: 1,
+            aggregateType: "content_relationship",
+            aggregateId: relationship.id,
+            projectId: input.projectId,
+            triggeredByUserId: input.requestingUserId,
+            payload: {
+              projectId: input.projectId,
+              assertionId: assertion.id,
+              relationshipId: relationship.id,
+              predicate: input.relationType,
+            },
+            routingKey: "content.relationship.asserted",
+            exchange: "saas.events",
+          });
+        },
+      );
     } catch (error) {
       mapRelationshipError(error);
     }
@@ -442,12 +504,14 @@ export function createRelationshipService({
   contentRelationshipRepository,
   contentEntityLocator,
   relationshipDefinitionReader,
+  relationshipUnitOfWork,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   contentRelationshipRepository: ContentRelationshipRepository;
   contentEntityLocator: ContentEntityLocator;
   relationshipDefinitionReader: RelationshipDefinitionReader;
+  relationshipUnitOfWork: RelationshipUnitOfWork;
 }): RelationshipService {
   return new RelationshipService(
     clock,
@@ -455,5 +519,6 @@ export function createRelationshipService({
     contentRelationshipRepository,
     contentEntityLocator,
     relationshipDefinitionReader,
+    relationshipUnitOfWork,
   );
 }

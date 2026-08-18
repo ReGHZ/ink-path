@@ -47,6 +47,7 @@ import {
 import { createContentEntityLocator } from "./internal/infrastructure/ContentEntityLocator.js";
 import { createContentEntityReader } from "./internal/infrastructure/ContentEntityReader.js";
 import { createNarrativeTransitionUnitOfWork } from "./internal/infrastructure/PrismaNarrativeTransitionUnitOfWork.js";
+import { createRelationshipUnitOfWork } from "./internal/infrastructure/PrismaRelationshipUnitOfWork.js";
 import { createChapterRepository } from "./internal/infrastructure/story/PrismaChapterRepository.js";
 import { createChapterUnitOfWork } from "./internal/infrastructure/story/PrismaChapterUnitOfWork.js";
 import { createCharacterRepository } from "./internal/infrastructure/story/PrismaCharacterRepository.js";
@@ -118,6 +119,7 @@ import type { ContentEntityLocator } from "./internal/application/ports/ContentE
 import type { ContentUnitOfWork } from "./internal/application/ports/ContentUnitOfWork.js";
 import type { NarrativeTransitionUnitOfWork } from "./internal/application/ports/NarrativeTransitionUnitOfWork.js";
 import type { RelationshipDefinitionReader } from "./internal/application/ports/RelationshipDefinitionReader.js";
+import type { RelationshipUnitOfWork } from "./internal/application/ports/RelationshipUnitOfWork.js";
 import type { ChapterRepository } from "./internal/domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "./internal/domain/story/CharacterRepository.js";
 import type { FactionRepository } from "./internal/domain/story/FactionRepository.js";
@@ -188,6 +190,9 @@ export type ContentDomainCradle = {
   // The project's predicate vocabulary, read by both write paths into
   // `content_relationships` (step 4 retired the constant they used to share).
   relationshipDefinitionReader: RelationshipDefinitionReader;
+  // Step 4b: a relationship write is an assertion plus its projection, so it
+  // needs a transaction where it previously needed none.
+  relationshipUnitOfWork: RelationshipUnitOfWork;
   relationshipService: RelationshipService;
   relationshipController: RelationshipController;
   // Phase 7.6-7.7. `narrativeTransitionUnitOfWork` has no
@@ -272,6 +277,7 @@ export function registerContentDomain(
     relationshipDefinitionReader: asFunction(
       createRelationshipDefinitionReader,
     ).singleton(),
+    relationshipUnitOfWork: asFunction(createRelationshipUnitOfWork).singleton(),
     contentRelationshipRepository: asFunction(
       createContentRelationshipRepository,
     ).singleton(),

@@ -12,14 +12,17 @@ import { SEEDED_DEFINITIONS } from "../../domain/support/relationshipDefinitionS
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
+import type { OutboxEvent } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
+import type { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
 import type {
   ContentEntityLocation,
   ContentEntityLocator,
 } from "../ports/ContentEntityLocator.js";
 import type { RelationshipDefinitionReader } from "../ports/RelationshipDefinitionReader.js";
+import type { RelationshipUnitOfWork } from "../ports/RelationshipUnitOfWork.js";
 
 
 // The seeded vocabulary, which is what a project has from the moment it is
@@ -182,6 +185,55 @@ async function captureFailure(
   throw new Error("expected the call to fail, but it resolved");
 }
 
+// Runs the work inline against the SAME fakes the assertions below read, so a
+// test can still see what the transaction wrote. No rollback simulation: what
+// this fake proves is that both writes are attempted through one boundary, and
+// the real rollback is exercised against Postgres in
+// `test/integration/content-relationship-repository.integration.test.ts`.
+function createUnitOfWork(
+  relationships: ContentRelationshipRepository,
+): {
+  unitOfWork: RelationshipUnitOfWork;
+  assertions: TransitionEffect[];
+  outbox: OutboxEvent[];
+} {
+  const assertions: TransitionEffect[] = [];
+  const outbox: OutboxEvent[] = [];
+
+  return {
+    assertions,
+    outbox,
+    unitOfWork: {
+      transaction: (work) =>
+        work(
+          {
+            assertions: {
+              insert: (assertion) => {
+                assertions.push(assertion);
+
+                return Promise.resolve();
+              },
+              findById: () => Promise.resolve(null),
+              findByIdForUpdate: () => Promise.resolve(null),
+              findByTransitionId: () => Promise.resolve([]),
+              update: () => Promise.resolve(),
+              delete: () => Promise.resolve(),
+              deleteByTransitionId: () => Promise.resolve(),
+            },
+            contentRelationships: relationships,
+          },
+          {
+            insert: (event) => {
+              outbox.push(event);
+
+              return Promise.resolve();
+            },
+          },
+        ),
+    },
+  };
+}
+
 function createService() {
   const relationships = new FakeContentRelationshipRepository();
   const locator = new FakeContentEntityLocator()
@@ -190,15 +242,20 @@ function createService() {
     .seed("event", "event-1", "proj-1")
     .seed("faction", "faction-outsider", "proj-2");
 
+  const { unitOfWork, assertions, outbox } = createUnitOfWork(relationships);
+
   return {
     relationships,
     locator,
+    assertions,
+    outbox,
     service: new RelationshipService(
       clock,
       new FakeIdGenerator(),
       relationships,
       locator,
       seededDefinitionReader,
+      unitOfWork,
     ),
   };
 }
