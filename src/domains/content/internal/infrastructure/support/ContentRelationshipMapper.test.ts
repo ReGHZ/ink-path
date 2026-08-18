@@ -36,6 +36,7 @@ function buildRelationship(): ContentRelationship {
     source: { entityType: "character", entityId: "character-1" },
     target: { entityType: "faction", entityId: "faction-1" },
     note: "the sect elder leans on him",
+    sourceAssertionId: "assertion-1",
     createdByUserId: "user-1",
     now: NOW,
   });
@@ -55,6 +56,7 @@ function asStoredRow(
     projectId: persisted.projectId,
     sourceEntityType: persisted.sourceEntityType,
     sourceEntityId: persisted.sourceEntityId,
+    sourceAssertionId: persisted.sourceAssertionId,
     targetEntityType: persisted.targetEntityType,
     targetEntityId: persisted.targetEntityId,
     relationType: persisted.relationType,

@@ -851,6 +851,7 @@ describe("CharacterService", () => {
           definition: seededDefinition("member_of"),
           source: { entityType: "character", entityId: "char-1" },
           target: { entityType: "faction", entityId: "faction-9" },
+          sourceAssertionId: "assertion-1",
           createdByUserId: "user-1",
           now,
         }),

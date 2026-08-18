@@ -37,6 +37,7 @@ function relationship(
     definition: seededDefinition(relationType),
     source,
     target,
+    sourceAssertionId: "assertion-1",
     createdByUserId: "user-1",
     now,
   });

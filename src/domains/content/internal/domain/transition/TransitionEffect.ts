@@ -2,6 +2,10 @@ import {
   isWritableAttributeField,
   writableAttributeFieldsOf,
 } from "./attributeFieldRegistry.js";
+import {
+  NARRATIVE_TRANSITION_SOURCE_TYPES,
+  type NarrativeTransitionSourceType,
+} from "./NarrativeTransition.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 import {
@@ -48,7 +52,51 @@ export const TRANSITION_EFFECT_TYPES = [
   "relationship_remove",
 ] as const;
 
-export type TransitionEffectType = (typeof TRANSITION_EFFECT_TYPES)[number];
+// The three above state a FACT of their own; the two here act ON one that is
+// already in the log (premis §8.3). Kept as two lists rather than one widened
+// list, and the split is load-bearing in both directions:
+//
+//   The narrative transition API may only DECLARE the first three — that is what
+//   an author schedules and apply later fulfils. `addEffectSchema` and
+//   `transitionResponseSchema` both read `TRANSITION_EFFECT_TYPES`, so keeping
+//   it at three is what stops step 4b-2 from silently widening a frozen API.
+//
+//   The database enum carries all five, so the AGGREGATE has to as well or a
+//   row written by one path becomes unreadable by another — which is the shape
+//   of bug the mapper's cast used to paper over.
+export const ASSERTION_OPERATION_TYPES = ["terminate", "retract"] as const;
+
+export const ASSERTION_LOG_EFFECT_TYPES = [
+  ...TRANSITION_EFFECT_TYPES,
+  ...ASSERTION_OPERATION_TYPES,
+] as const;
+
+export type DeclarableEffectType = (typeof TRANSITION_EFFECT_TYPES)[number];
+
+
+export type AssertionOperationType = (typeof ASSERTION_OPERATION_TYPES)[number];
+
+// What a row in `transition_effects` may be. `DeclarableEffectType` is the
+// narrower name to reach for when the subject really is a Phase 7 effect.
+export type TransitionEffectType =
+  | DeclarableEffectType
+  | AssertionOperationType;
+
+// Which kinds each operation is defined over — the mirror of the CHECK
+// constraints `transition_effects_terminate_targets_assertion` and
+// `..._retract_targets_assertion_or_terminate`, and mirrored on purpose: the
+// database refuses the row, this refuses to BUILD it, and a caller gets a domain
+// error naming the rule instead of a constraint-violation stack trace.
+//
+// Listed positively, exactly as the DDL is, so a future member of the enum is
+// refused until someone decides where it belongs rather than admitted by silence.
+const TERMINATE_TARGET_TYPES: readonly TransitionEffectType[] =
+  TRANSITION_EFFECT_TYPES;
+
+const RETRACT_TARGET_TYPES: readonly TransitionEffectType[] = [
+  ...TRANSITION_EFFECT_TYPES,
+  "terminate",
+];
 
 export type TransitionEffectProperties = {
   id: string;
@@ -81,6 +129,27 @@ export type TransitionEffectProperties = {
   relationshipDefinitionId: string | null;
   relatedEntityType: ContentEntityType | null;
   relatedEntityId: string | null;
+
+  // VALID TIME — the story moment the fact starts holding at, or (on a
+  // `terminate`) stops. Null is a real answer and not a missing one: "holds with
+  // no time information", which premis §8.3 distinguishes from "holds at every
+  // cut". The pair is all-or-nothing, mirroring the `anchor_complete` CHECK —
+  // half an anchor claims a story time it cannot name, and it would fold into
+  // the wrong answer silently rather than fail.
+  anchorEntityType: NarrativeTransitionSourceType | null;
+  anchorEntityId: string | null;
+
+  // Which assertion an operation row acts on, and WHAT KIND that row is. Both
+  // present exactly when the row is a `terminate`/`retract`, both absent
+  // otherwise — the `target_matches_operation` and `target_kind_complete`
+  // CHECKs, restated where a caller gets a sentence instead of a constraint name.
+  //
+  // The kind is carried rather than looked up for the reason C-1 settled: it is
+  // what lets the composite foreign key hold the claim to account, and it cannot
+  // drift because `effect_type` is never updated.
+  targetAssertionId: string | null;
+  targetEffectType: TransitionEffectType | null;
+
   appliedAt: Date | null;
   contentRevisionId: string | null;
   createdAt: Date;
@@ -250,6 +319,13 @@ export class TransitionEffect {
         props.effectType === "attribute_change" ? null : props.relatedEntityType,
       relatedEntityId:
         props.effectType === "attribute_change" ? null : props.relatedEntityId,
+      // A declared effect carries no anchor of its own — its story time is its
+      // parent transition's — and acts on no other row. Both are what the two
+      // named constructors below add, each for its own reason.
+      anchorEntityType: null,
+      anchorEntityId: null,
+      targetAssertionId: null,
+      targetEffectType: null,
       // Every effect is born pending. There is no "declare it already applied"
       // path: apply is what writes this column, inside the transaction that
       // performs the mutation (`16:152-182`).
@@ -286,6 +362,120 @@ export class TransitionEffect {
     return TransitionEffect.reconstitute({
       ...effect.toSnapshot(),
       appliedAt: props.now,
+    });
+  }
+
+  // A CLAIM WITHDRAWN — "this was never true, at any cut" (premis §8.3,
+  // transaction time). Step 4b-2: what `DELETE /relationships/:id` writes instead
+  // of destroying the row.
+  //
+  // WHY `retract` AND NOT `terminate`, since the two are easy to swap by
+  // accident: the CRUD button is destructive today and says nothing about story
+  // time, which is exactly `retract`'s meaning. Mapping it to `terminate` would
+  // change what the button MEANS while claiming to preserve it, and would produce
+  // a valid-time row with a NULL anchor — a termination whose "when" no reader
+  // can ever answer. Termination belongs to an action that can name a story
+  // moment (7.7's `relationship_remove` has one through its parent), which is why
+  // no `terminateFact()` is added here: there is no caller for it yet, and premis
+  // §8.3 asks the UI to offer the two as SEPARATE actions rather than guessing.
+  //
+  // TAKES THE TARGET AGGREGATE, not its id. The kind of the target is the whole
+  // question C-1 was about, and reading it off the row removes the one way this
+  // could go wrong — a caller passing a kind it merely believes. Same-project is
+  // checked here for the same reason: the composite FK would refuse it anyway,
+  // and a domain error naming the tenancy beats a constraint violation.
+  static retractFact(props: {
+    id: string;
+    projectId: string;
+    // The row being withdrawn. `relationship_add` in every current caller, but
+    // deliberately not narrowed to it: `retract` is defined over any FACT and
+    // over `terminate` too, and narrowing here would put the enum's future in
+    // this signature instead of in RETRACT_TARGET_TYPES.
+    target: TransitionEffect;
+    // Provenance, and it must be present: this row has no parent transition, so
+    // `has_provenance` is satisfied only by naming the predicate whose claim is
+    // being withdrawn. Handed in rather than read off the target so the caller
+    // has to have resolved it — the same rule the declare path follows.
+    definition: RelationshipDefinition;
+    now: Date;
+  }): TransitionEffect {
+    if (props.target.projectId !== props.projectId) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Cannot retract an assertion belonging to another project",
+      );
+    }
+
+    // The predicate must be THE target's, and the target names it in one of two
+    // ways depending on how it was written. Comparing only the definition id
+    // silently refuses every row whose provenance is its parent transition
+    // instead of a definition — a whole legitimate class, and the one 7.7 writes.
+    if (props.target.relationshipDefinitionId !== null) {
+      if (props.definition.id !== props.target.relationshipDefinitionId) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          "Retraction names a different predicate than the assertion it withdraws",
+        );
+      }
+    } else if (props.target.relationshipType !== null) {
+      // Provenance came from the parent transition, so the predicate is a NAME
+      // here rather than a row pointer. Matching on the name is weaker than
+      // matching on the id — the definition could have been renamed since — and
+      // that is the honest limit rather than a check to skip.
+      if (props.definition.predicate !== props.target.relationshipType) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          "Retraction names a different predicate than the assertion it withdraws",
+        );
+      }
+    } else {
+      // Reachable only for a target that names no predicate at all: an
+      // `attribute_change`, or an operation row whose provenance is entirely its
+      // parent transition. Such a retraction cannot state provenance of its own,
+      // and `has_provenance` needs one, so it must be declared INSIDE a
+      // transition instead. Refused here with the reason, because the shape that
+      // would serve it — a retraction that inherits its target's parent — is a
+      // decision for 4b-3, when `relationship_remove` starts terminating.
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Cannot retract a row that names no predicate: such a retraction has no provenance of its own and must belong to a narrative transition",
+      );
+    }
+
+    // The subject travels with the retraction rather than being left to a join.
+    // `target_entity_*` is NOT NULL in the table, and the honest value is the
+    // subject of the claim being withdrawn — the same entity the assertion is
+    // indexed under, so "every row touching this entity" keeps returning the
+    // withdrawal alongside the claim.
+    return TransitionEffect.reconstitute({
+      id: props.id,
+      narrativeTransitionId: null,
+      projectId: props.projectId,
+      effectType: "retract",
+      targetEntityType: props.target.targetEntityType,
+      targetEntityId: props.target.targetEntityId,
+      fieldPath: null,
+      newValue: null,
+      // The operation does not RESTATE the fact — it points at it. Repeating the
+      // endpoints here would create a second copy of the claim that could
+      // disagree with the row it withdraws.
+      relationshipType: null,
+      relationshipDefinitionId: props.definition.id,
+      relatedEntityType: null,
+      relatedEntityId: null,
+      // No anchor, and this is the line that separates the two operations: a
+      // retraction is not placed in story time at all. `terminate` is where an
+      // anchor belongs.
+      anchorEntityType: null,
+      anchorEntityId: null,
+      targetAssertionId: props.target.id,
+      targetEffectType: props.target.effectType,
+      // In force the moment it is written, like `assertFact()`: there is no
+      // second step that could set this, and a pending row would read as
+      // "someone declared this and never applied it".
+      appliedAt: props.now,
+      contentRevisionId: null,
+      createdAt: props.now,
     });
   }
 
@@ -329,12 +519,35 @@ export class TransitionEffect {
     return this.props.relationshipType;
   }
 
+  // Exposed since step 4b-2: an operation row must be able to check that the
+  // predicate it names is the one the target actually asserts, and the target is
+  // handed in as an aggregate rather than as a row.
+  get relationshipDefinitionId(): string | null {
+    return this.props.relationshipDefinitionId;
+  }
+
   get relatedEntityType(): ContentEntityType | null {
     return this.props.relatedEntityType;
   }
 
   get relatedEntityId(): string | null {
     return this.props.relatedEntityId;
+  }
+
+  get anchorEntityType(): NarrativeTransitionSourceType | null {
+    return this.props.anchorEntityType;
+  }
+
+  get anchorEntityId(): string | null {
+    return this.props.anchorEntityId;
+  }
+
+  get targetAssertionId(): string | null {
+    return this.props.targetAssertionId;
+  }
+
+  get targetEffectType(): TransitionEffectType | null {
+    return this.props.targetEffectType;
   }
 
   get appliedAt(): Date | null {
@@ -421,6 +634,20 @@ export class TransitionEffect {
       );
     }
 
+    // The general form of the same CHECK, which the branch above is only one
+    // corner of. Since step 4b-2 a row can be parentless AND carry no predicate
+    // — an operation row built without its definition — and that row answers
+    // neither "who claimed it" nor "what does it claim".
+    if (
+      props.narrativeTransitionId === null &&
+      props.relationshipDefinitionId === null
+    ) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "An effect must belong to a narrative transition or name a relationship definition",
+      );
+    }
+
     if (props.projectId.trim() === "") {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
@@ -461,6 +688,11 @@ export class TransitionEffect {
         TransitionEffect.validateRelationshipChange(props);
         break;
 
+      case "terminate":
+      case "retract":
+        TransitionEffect.validateAssertionOperation(props);
+        break;
+
       default: {
         const exhaustiveCheck: never = props.effectType;
         throw new DomainError(
@@ -470,7 +702,131 @@ export class TransitionEffect {
       }
     }
 
+    TransitionEffect.validateAnchor(props);
+    TransitionEffect.validateTargeting(props);
     TransitionEffect.validateAppliedState(props);
+  }
+
+  // `anchor_complete`, and it applies to every row rather than to one variant:
+  // an assertion may carry a story anchor, an operation may carry its own, and a
+  // declared effect carries none. What none of them may be is HALF anchored.
+  private static validateAnchor(props: TransitionEffectProperties): void {
+    if ((props.anchorEntityType === null) !== (props.anchorEntityId === null)) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "An anchor must be a complete (type, id) pair or absent entirely",
+      );
+    }
+
+    if (props.anchorEntityId !== null && props.anchorEntityId.trim() === "") {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Anchor entity id must not be blank",
+      );
+    }
+
+    if (
+      props.anchorEntityType !== null &&
+      !NARRATIVE_TRANSITION_SOURCE_TYPES.includes(props.anchorEntityType)
+    ) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Invalid anchor entity type",
+      );
+    }
+  }
+
+  // The three targeting CHECKs, in the order they answer three different
+  // questions: does this row point at another one, WHAT KIND is that row, and is
+  // that kind one this operation is defined over.
+  private static validateTargeting(props: TransitionEffectProperties): void {
+    const isOperation =
+      props.effectType === "terminate" || props.effectType === "retract";
+
+    // `target_matches_operation`, written as the same equivalence the DDL uses so
+    // neither direction can be relaxed without the other: an operation with no
+    // target is meaningless, and a FACT that points at another row is claiming a
+    // relationship between claims that this table does not model.
+    if (isOperation !== (props.targetAssertionId !== null)) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        isOperation
+          ? `A ${props.effectType} must name the assertion it acts on`
+          : `A ${props.effectType} must not point at another assertion`,
+      );
+    }
+
+    // `target_kind_complete`. Without it the allowlist below would be vacuously
+    // true for a row whose target kind went unstated — the exact way C-1 hid.
+    if ((props.targetAssertionId === null) !== (props.targetEffectType === null)) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "A target assertion and its effect type must be present together",
+      );
+    }
+
+    if (props.targetAssertionId === null || props.targetEffectType === null) {
+      return;
+    }
+
+    if (props.targetAssertionId.trim() === "") {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Target assertion id must not be blank",
+      );
+    }
+
+    // `target_not_self`. Longer cycles are neither checkable here nor
+    // expressible: both operations point BACKWARD at a row that already existed.
+    if (props.targetAssertionId === props.id) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "An effect cannot terminate or retract itself",
+      );
+    }
+
+    // The two kind allowlists (premis §8.3 AMENDMENT). `terminate` ends the valid
+    // range of a FACT, and an operation has no range to end; `retract` may
+    // withdraw a fact OR a `terminate` — the only escape from a mistyped
+    // termination in an append-only log — but never another `retract`, which
+    // would be double negation and would force retractions to be resolved
+    // transitively.
+    const allowed =
+      props.effectType === "terminate"
+        ? TERMINATE_TARGET_TYPES
+        : RETRACT_TARGET_TYPES;
+
+    if (!allowed.includes(props.targetEffectType)) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        `A ${props.effectType} is not defined over a ${props.targetEffectType} row`,
+      );
+    }
+  }
+
+  // An operation row points at a fact; it does not restate one. Carrying either
+  // variant's payload would put a second copy of the claim in the log, free to
+  // disagree with the row it acts on.
+  private static validateAssertionOperation(
+    props: TransitionEffectProperties,
+  ): void {
+    if (props.fieldPath !== null || props.newValue !== null) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        `A ${props.effectType} must not carry attribute change fields`,
+      );
+    }
+
+    if (
+      props.relationshipType !== null ||
+      props.relatedEntityType !== null ||
+      props.relatedEntityId !== null
+    ) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        `A ${props.effectType} must not restate the fact it acts on`,
+      );
+    }
   }
 
   private static validateAttributeChange(

@@ -6,6 +6,24 @@ export type TransitionEffectRepository = {
   // (denormalised from the parent, `16:95`), so the comparison needs no join.
   findById(id: string): Promise<TransitionEffect | null>;
 
+  // The SAME read WITHOUT the parent-transition narrowing, added in step 4b-2.
+  //
+  // `findById` above is deliberately narrowed to rows that have a parent, which
+  // is what makes it a read of the Phase 7 AGGREGATE rather than of the table.
+  // An assertion written straight through relationship CRUD has no parent, so
+  // that read cannot see it — and an operation (`retract`/`terminate`) has to,
+  // because it must point at the row's real `effect_type` rather than at a kind
+  // its caller merely believes (C-1).
+  //
+  // Project-scoped in the signature rather than compared afterwards, because
+  // every caller is already inside a transaction acting on one project's log, and
+  // an unscoped read here would be one `if` away from a tenancy leak in a path
+  // whose whole job is to write a row the composite FK would then refuse.
+  findAssertionById(
+    projectId: string,
+    id: string,
+  ): Promise<TransitionEffect | null>;
+
   // The apply path's first statement, and the only pessimistic lock in Phase 7.
   // `SELECT ... FOR UPDATE` on the effect row, then re-read `applied_at` inside
   // the same transaction (`flow_10:101,115`, `16:154`). Without it two

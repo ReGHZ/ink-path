@@ -584,6 +584,7 @@ describe("SceneService", () => {
           definition: seededDefinition("depicts"),
           source: { entityType: "scene", entityId: "scene-1" },
           target: { entityType: "event", entityId: "event-9" },
+          sourceAssertionId: "assertion-1",
           createdByUserId: "user-1",
           now,
         }),

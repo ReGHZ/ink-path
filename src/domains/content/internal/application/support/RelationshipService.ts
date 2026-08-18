@@ -271,6 +271,10 @@ export class RelationshipService {
           entityType: input.targetEntityType,
           entityId: input.targetEntityId,
         },
+        // The fold names the fact it was folded from. Available because the
+        // assertion is built first — the order two lines above is what makes this
+        // pointer possible without a second round trip.
+        sourceAssertionId: assertion.id,
         note: input.note,
         createdByUserId: input.requestingUserId,
         now: this.clock.now(),
@@ -428,6 +432,21 @@ export class RelationshipService {
     return toRelationshipDetail(relationship, definition ?? undefined);
   }
 
+  // DELETE IS A RETRACTION SINCE STEP 4b-2, and the row it destroys is only the
+  // PROJECTION. The fact itself stays in the log with a `retract` row pointing at
+  // it, so "who claimed this and when was it withdrawn" is answerable afterwards
+  // — which it was not while the delete was the whole of the operation.
+  //
+  // `retract` and not `terminate`, which is the decision this method turns on
+  // (premis §8.3): retraction is transaction-time — the claim is treated as never
+  // having been made, at every cut — and that is what this endpoint already
+  // meant. Termination is valid-time and needs a story anchor the endpoint has no
+  // way to supply; giving it a NULL anchor would store a cessation whose "when"
+  // no reader can answer. Premis §8.3 asks the UI to offer the two as separate
+  // actions, so the terminate half waits for an action that can name a moment.
+  //
+  // The API contract does NOT change: still 204, and a subsequent GET still
+  // answers 404, because the projection is what the relationship API reads.
   async deleteRelationship(
     projectId: string,
     relationshipId: string,
@@ -440,15 +459,107 @@ export class RelationshipService {
     // between this read and the delete below, inside this one request — not
     // client staleness, which is why nothing about the version is asked of the
     // caller.
+    //
+    // It is also where the origin assertion comes from. The projection row
+    // carries the pointer, so the retraction names an ID rather than a fact
+    // pattern — which is what makes it idempotent under a double click and what
+    // keeps it from withdrawing a DIFFERENT author's assertion of the same fact
+    // (premis §8.3 explicitly allows two such assertions to coexist).
     const relationship = await this.loadExistingRelationship(
       projectId,
       relationshipId,
     );
 
+    // Guaranteed present by the composite foreign key `(project_id,
+    // relation_type)` with `onDelete: Restrict` — the predicate cannot be deleted
+    // while this row references it. Checked anyway because the retraction needs
+    // the definition's ID for provenance: this row has no parent transition, so
+    // naming the predicate is the only way it can satisfy `has_provenance`, and a
+    // non-null assertion here would be an unfalsifiable line.
+    const definition = await this.relationshipDefinitionReader.findByPredicate(
+      projectId,
+      relationship.relationType,
+    );
+
+    if (definition === null) {
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        `Unknown relation type: ${relationship.relationType}`,
+      );
+    }
+
     try {
-      await this.contentRelationshipRepository.delete(
-        relationship.id,
-        relationship.version,
+      await this.relationshipUnitOfWork.transaction(
+        async (repositories, outboxEvents) => {
+          // Read INSIDE the transaction, and unnarrowed: the retraction must
+          // carry the target's real `effect_type` (C-1 — a kind that can lie is
+          // the bug that shape closes), and `findById` cannot see a parentless
+          // assertion by design.
+          const assertion = await repositories.assertions.findAssertionById(
+            projectId,
+            relationship.sourceAssertionId,
+          );
+
+          // Unreachable through the foreign key, which refuses a projection row
+          // whose origin is absent. Kept because the alternative is a non-null
+          // assertion, and a row that somehow drifted deserves an error that
+          // says which invariant broke.
+          if (assertion === null) {
+            throw new Error(
+              `Relationship ${relationship.id} points at assertion ${relationship.sourceAssertionId}, which does not exist in project ${projectId}`,
+            );
+          }
+
+          let retraction: TransitionEffect;
+          try {
+            retraction = TransitionEffect.retractFact({
+              id: this.idGenerator.generate(),
+              projectId,
+              target: assertion,
+              definition,
+              now: this.clock.now(),
+            });
+          } catch (error) {
+            mapRelationshipError(error);
+          }
+
+          await repositories.assertions.insert(retraction);
+
+          // The FOLD, undone. Removing the projection row rather than flagging it
+          // is what keeps read-your-writes intact for the CRUD surface: a
+          // retracted claim was never true, so the row that projected it must not
+          // survive the transaction that withdrew it. The version guard stays —
+          // §8.3 dissolves the motive for a version on the LOG operation, which
+          // names an id, but this statement is still a read-then-write on the
+          // projection inside one request.
+          await repositories.contentRelationships.delete(
+            relationship.id,
+            relationship.version,
+          );
+
+          // Same precedent as `content.relationship.asserted`: written now,
+          // consumed by `GraphProjector` at 11.4. A projector that saw the
+          // assertion appear and never saw it withdrawn would rebuild the fact
+          // back into `evaluation_edges`.
+          await outboxEvents.insert({
+            id: this.idGenerator.generate(),
+            eventType: "content.relationship.retracted",
+            eventVersion: 1,
+            aggregateType: "content_relationship",
+            aggregateId: relationship.id,
+            projectId,
+            triggeredByUserId: input.requestingUserId,
+            payload: {
+              projectId,
+              retractionId: retraction.id,
+              assertionId: assertion.id,
+              relationshipId: relationship.id,
+              predicate: relationship.relationType,
+            },
+            routingKey: "content.relationship.retracted",
+            exchange: "saas.events",
+          });
+        },
       );
     } catch (error) {
       mapRelationshipError(error);

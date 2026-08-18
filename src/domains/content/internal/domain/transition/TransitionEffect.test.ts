@@ -87,6 +87,10 @@ const attributeSnapshot: TransitionEffectProperties = {
   relationshipDefinitionId: null,
   relatedEntityType: null,
   relatedEntityId: null,
+  anchorEntityType: null,
+  anchorEntityId: null,
+  targetAssertionId: null,
+  targetEffectType: null,
   appliedAt: null,
   contentRevisionId: null,
   createdAt: now,
@@ -482,6 +486,301 @@ describe("TransitionEffect.reconstitute", () => {
 
     expect(effect.isApplied).toBe(true);
     expect(effect.contentRevisionId).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 4b-2 — operation rows (`terminate`/`retract`).
+//
+// Every case below has a twin CHECK in
+// `20260818030100_generalise_transition_effects_into_assertion_log`. The
+// duplication is deliberate and it is not defence in depth for its own sake: the
+// database refuses the ROW, this refuses to BUILD it, and only the second can
+// tell a caller which rule it broke. What would be untrustworthy is a test that
+// only proved the database's copy — an integration test cannot show that the
+// aggregate refuses, and `assertFact`/`retractFact` are what the services call.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The claim a retraction acts on: an assertion made outright through CRUD, with
+// no parent transition. Built through assertFact() rather than hand-written so it
+// cannot drift from what RelationshipService actually stores.
+function assertedFact(
+  overrides: Partial<{ id: string; projectId: string }> = {},
+) {
+  return TransitionEffect.assertFact({
+    id: overrides.id ?? "assertion-1",
+    narrativeTransitionId: null,
+    projectId: overrides.projectId ?? projectId,
+    effectType: "relationship_add",
+    targetEntityType: "character",
+    targetEntityId: "character-1",
+    relationshipType: "member_of",
+    definition: seededDefinition("member_of"),
+    relatedEntityType: "faction",
+    relatedEntityId: "faction-1",
+    now,
+  });
+}
+
+// A stored operation row, for the cases that need one as a TARGET. Hand-written
+// on purpose: there is no `terminateFact()` yet, and inventing one just to write
+// these tests would add a production path with no caller.
+const operationSnapshot: TransitionEffectProperties = {
+  ...relationshipSnapshot,
+  id: "operation-1",
+  narrativeTransitionId: null,
+  effectType: "terminate",
+  relationshipType: null,
+  relatedEntityType: null,
+  relatedEntityId: null,
+  relationshipDefinitionId: seededDefinition("member_of").id,
+  targetAssertionId: "assertion-1",
+  targetEffectType: "relationship_add",
+  appliedAt: now,
+};
+
+describe("TransitionEffect.retractFact", () => {
+  it("withdraws a claim by pointing at it, with no story time of its own", () => {
+    const target = assertedFact();
+
+    const retraction = TransitionEffect.retractFact({
+      id: "retraction-1",
+      projectId,
+      target,
+      definition: seededDefinition("member_of"),
+      now: later,
+    });
+
+    expect(retraction.effectType).toBe("retract");
+    expect(retraction.targetAssertionId).toBe("assertion-1");
+    // Read off the target, which is what makes the kind unable to lie (C-1).
+    expect(retraction.targetEffectType).toBe("relationship_add");
+    // Transaction time, not valid time: a retraction is not placed in the story
+    // at all. This is the single assertion that separates it from a termination.
+    expect(retraction.anchorEntityType).toBeNull();
+    expect(retraction.anchorEntityId).toBeNull();
+    // In force the moment it is written — there is no apply step that could set
+    // this later.
+    expect(retraction.appliedAt).toEqual(later);
+    expect(retraction.narrativeTransitionId).toBeNull();
+    expect(retraction.relationshipDefinitionId).toBe(
+      seededDefinition("member_of").id,
+    );
+  });
+
+  it("points at the fact instead of restating it", () => {
+    const retraction = TransitionEffect.retractFact({
+      id: "retraction-1",
+      projectId,
+      target: assertedFact(),
+      definition: seededDefinition("member_of"),
+      now,
+    });
+
+    // A second copy of the endpoints would be free to disagree with the row being
+    // withdrawn.
+    expect(retraction.relationshipType).toBeNull();
+    expect(retraction.relatedEntityType).toBeNull();
+    expect(retraction.relatedEntityId).toBeNull();
+    // The subject still travels: the column is NOT NULL, and the subject of the
+    // withdrawn claim is the honest value.
+    expect(retraction.targetEntityType).toBe("character");
+    expect(retraction.targetEntityId).toBe("character-1");
+  });
+
+  it("refuses a target in another project", () => {
+    expect(() =>
+      TransitionEffect.retractFact({
+        id: "retraction-1",
+        projectId,
+        target: assertedFact({ projectId: "project-2" }),
+        definition: seededDefinition("member_of"),
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  // Not a tidiness check: the provenance column is what a parentless row answers
+  // "what does this claim" with, so a retraction naming a DIFFERENT predicate
+  // than the row it withdraws would make the log say two things at once.
+  it("refuses a definition that is not the one the target asserts", () => {
+    expect(() =>
+      TransitionEffect.retractFact({
+        id: "retraction-1",
+        projectId,
+        target: assertedFact(),
+        definition: seededDefinition("ally_of"),
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses to retract another retraction", () => {
+    const storedRetraction = TransitionEffect.reconstitute({
+      ...operationSnapshot,
+      id: "retraction-1",
+      effectType: "retract",
+    });
+
+    expect(() =>
+      TransitionEffect.retractFact({
+        id: "retraction-2",
+        projectId,
+        target: storedRetraction,
+        definition: seededDefinition("member_of"),
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  // The other side of the amendment, and the reason `retract` over `terminate` is
+  // allowed at all: in an append-only log it is the only way out of a mistyped
+  // termination.
+  it("allows retracting a termination", () => {
+    const termination = TransitionEffect.reconstitute(operationSnapshot);
+
+    const retraction = TransitionEffect.retractFact({
+      id: "retraction-1",
+      projectId,
+      target: termination,
+      definition: seededDefinition("member_of"),
+      now,
+    });
+
+    expect(retraction.targetEffectType).toBe("terminate");
+  });
+
+
+  // The limit stated rather than left to be discovered: a row whose provenance is
+  // entirely its parent transition names no predicate this retraction could
+  // inherit, and a parentless retraction must name one. 4b-3 decides the shape
+  // that serves this case; until then the refusal says so.
+  it("refuses a target whose provenance is only its parent transition", () => {
+    const parentedTermination = TransitionEffect.reconstitute({
+      ...operationSnapshot,
+      narrativeTransitionId,
+      relationshipDefinitionId: null,
+    });
+
+    expect(() =>
+      TransitionEffect.retractFact({
+        id: "retraction-1",
+        projectId,
+        target: parentedTermination,
+        definition: seededDefinition("member_of"),
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+});
+
+describe("TransitionEffect.reconstitute — operation rows", () => {
+  it("accepts a stored termination", () => {
+    expect(() =>
+      TransitionEffect.reconstitute(operationSnapshot),
+    ).not.toThrow();
+  });
+
+  it("refuses a termination over an operation row", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        effectType: "terminate",
+        targetEffectType: "retract",
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses an operation with no target", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        targetAssertionId: null,
+        targetEffectType: null,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses a fact that points at another assertion", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...relationshipSnapshot,
+        targetAssertionId: "assertion-2",
+        targetEffectType: "relationship_add",
+      }),
+    ).toThrow(DomainError);
+  });
+
+  // `target_kind_complete`. Without it the two allowlists above are vacuously
+  // true — exactly how C-1 stayed invisible.
+  it("refuses a target whose kind went unstated", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        targetEffectType: null,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses a row that targets itself", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        targetAssertionId: operationSnapshot.id,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses an operation that restates the fact it acts on", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        relationshipType: "member_of",
+        relatedEntityType: "faction",
+        relatedEntityId: "faction-1",
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses half an anchor", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        anchorEntityType: "scene",
+        anchorEntityId: null,
+      }),
+    ).toThrow(DomainError);
+
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        anchorEntityType: null,
+        anchorEntityId: "scene-1",
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("accepts a complete anchor", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        anchorEntityType: "scene",
+        anchorEntityId: "scene-1",
+      }),
+    ).not.toThrow();
+  });
+
+  // `has_provenance` in its general form. The existing test covers the
+  // `attribute_change` corner; this is the one step 4b-2 opened — a parentless
+  // operation row built without its definition answers neither "who claimed it"
+  // nor "what does it claim".
+  it("refuses a parentless row that names no predicate", () => {
+    expect(() =>
+      TransitionEffect.reconstitute({
+        ...operationSnapshot,
+        relationshipDefinitionId: null,
+      }),
+    ).toThrow(DomainError);
   });
 });
 

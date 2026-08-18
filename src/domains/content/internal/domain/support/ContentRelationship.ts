@@ -44,6 +44,20 @@ export type ContentRelationshipProperties = {
   // what keeps this column from being free text. A union here would be a second
   // vocabulary, which is the exact condition step 4 removed.
   relationType: string;
+
+  // Step 4b-2. This row is a FOLD of the assertion named here, and the pointer is
+  // what makes the fold reversible: `retract`/`terminate` act on an assertion ID
+  // (premis §8.3), which is what makes them idempotent under retries. Finding the
+  // origin by (predicate, endpoints) instead would be ambiguous by design — two
+  // authors are explicitly allowed to assert the same fact, and the pattern
+  // cannot tell those two assertions apart.
+  //
+  // An opaque token here, exactly like both endpoints: whether the row exists, is
+  // an assertion rather than an operation, and belongs to this project is
+  // answered by the log's own row and by the composite foreign key, never by this
+  // aggregate.
+  sourceAssertionId: string;
+
   note: string | null;
   createdByUserId: string | null;
   createdAt: Date;
@@ -65,6 +79,11 @@ export type CreateContentRelationshipProperties = {
   definition: RelationshipDefinition;
   source: RelationEndpoint;
   target: RelationEndpoint;
+  // Required, not optional. Both write paths hold it already — one builds the
+  // assertion in the same transaction, the other IS applying the effect that
+  // serves as one — and making it optional would let a third path create a
+  // projection row that cannot be unfolded, which is the state step 4b-2 ends.
+  sourceAssertionId: string;
   note?: string | null;
   createdByUserId: string;
   now: Date;
@@ -156,6 +175,7 @@ export class ContentRelationship {
       targetEntityType: target.entityType,
       targetEntityId: target.entityId,
       relationType: props.relationType,
+      sourceAssertionId: props.sourceAssertionId,
       note: normalizeOptionalText(props.note ?? null),
       createdByUserId: props.createdByUserId,
       createdAt: props.now,
@@ -195,6 +215,10 @@ export class ContentRelationship {
 
   get targetEntityId(): string {
     return this.props.targetEntityId;
+  }
+
+  get sourceAssertionId(): string {
+    return this.props.sourceAssertionId;
   }
 
   get relationType(): string {
@@ -301,6 +325,19 @@ export class ContentRelationship {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         "Target entity id is required",
+      );
+    }
+
+    // Same treatment as the endpoints, and for the same reason: an opaque token
+    // whose referent only the log's own row can vouch for. Blank is refused
+    // because it means a caller had the assertion in hand and lost it — a
+    // projection row that cannot name the fact it folds is precisely what step
+    // 4b-2 exists to make impossible, and the composite foreign key refuses it a
+    // layer lower for every writer.
+    if (props.sourceAssertionId.trim() === "") {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Source assertion id is required",
       );
     }
 

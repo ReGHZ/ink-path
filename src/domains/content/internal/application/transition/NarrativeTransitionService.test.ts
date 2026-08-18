@@ -147,6 +147,21 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
     );
   }
 
+  // Unnarrowed twin of findById, and project-scoped like the adapter: a row from
+  // another project must answer null rather than being compared afterwards.
+  findAssertionById(
+    projectId: string,
+    id: string,
+  ): Promise<TransitionEffect | null> {
+    const row = this.rows.get(id);
+
+    return Promise.resolve(
+      row?.projectId === projectId
+        ? TransitionEffect.reconstitute({ ...row })
+        : null,
+    );
+  }
+
   findByIdForUpdate(id: string): Promise<TransitionEffect | null> {
     this.locked.push(id);
 
@@ -381,6 +396,10 @@ function seedEffect(
     relationshipDefinitionId: null,
     relatedEntityType: null,
     relatedEntityId: null,
+    anchorEntityType: null,
+    anchorEntityId: null,
+    targetAssertionId: null,
+    targetEffectType: null,
     appliedAt: null,
     contentRevisionId: null,
     createdAt: now,
@@ -1076,6 +1095,7 @@ describe("applyEffect — relationship effects", () => {
       definition: seededDefinition("member_of"),
       source: { entityType: "character", entityId: "character-1" },
       target: { entityType: "faction", entityId: "faction-1" },
+      sourceAssertionId: "assertion-1",
       createdByUserId: userId,
       now,
     });
@@ -1112,6 +1132,7 @@ describe("applyEffect — relationship effects", () => {
         definition: seededDefinition("member_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
+        sourceAssertionId: "assertion-1",
         createdByUserId: userId,
         now,
       }),
@@ -1160,6 +1181,7 @@ describe("applyEffect — relationship effects", () => {
         definition: seededDefinition("ally_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
+        sourceAssertionId: "assertion-1",
         createdByUserId: userId,
         now,
       }),

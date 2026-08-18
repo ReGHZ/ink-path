@@ -27,3 +27,62 @@ export async function seedProjectVocabulary(
 ): Promise<void> {
   await seedRelationshipDefinitions(prisma, projectId);
 }
+
+// Gives a test project an ASSERTION for a relationship row to be a fold of.
+//
+// Needed since step 4b-2 attached
+// `content_relationships(source_assertion_id, project_id)` to
+// `transition_effects(id, project_id)`: the projection names the fact it came
+// from, so a relationship row can no longer be inserted on its own. Same reason
+// this file exists at all — the next integration test to insert one would
+// otherwise rediscover it as a foreign-key violation.
+//
+// Written with the Prisma client rather than through `TransitionEffect`: callers
+// need a row that SATISFIES THE KEY, and going through the aggregate would drag
+// the whole declare-path signature into every fixture. The semantic pairing of a
+// projection with its assertion is proven where it belongs — `retractFact` in the
+// domain suite, and the CRUD path end to end.
+export async function seedOriginAssertion(
+  prisma: PrismaClient,
+  input: {
+    id: string;
+    projectId: string;
+    predicate: string;
+    subjectEntityId: string;
+    objectEntityId: string;
+    now: Date;
+  },
+): Promise<string> {
+  const definition = await prisma.relationshipDefinition.findFirst({
+    where: { projectId: input.projectId, predicate: input.predicate },
+    select: { id: true },
+  });
+
+  if (definition === null) {
+    throw new Error(
+      `Project ${input.projectId} has no predicate "${input.predicate}" — seed the vocabulary first`,
+    );
+  }
+
+  await prisma.transitionEffect.create({
+    data: {
+      id: input.id,
+      // Parentless, like every assertion made through CRUD. `has_provenance` is
+      // satisfied by the definition below.
+      narrativeTransitionId: null,
+      projectId: input.projectId,
+      effectType: "relationship_add",
+      targetEntityType: "character",
+      targetEntityId: input.subjectEntityId,
+      relationshipType: input.predicate,
+      relationshipDefinitionId: definition.id,
+      relatedEntityType: "character",
+      relatedEntityId: input.objectEntityId,
+      // A fact that holds the moment it is written — there is no apply step here.
+      appliedAt: input.now,
+      createdAt: input.now,
+    },
+  });
+
+  return input.id;
+}

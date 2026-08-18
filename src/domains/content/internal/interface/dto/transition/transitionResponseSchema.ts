@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { narrativeTransitionSourceTypeSchema } from "./transitionFieldSchemas.js";
 import { NARRATIVE_TRANSITION_STATUSES } from "../../../domain/transition/NarrativeTransition.js";
-import { TRANSITION_EFFECT_TYPES } from "../../../domain/transition/TransitionEffect.js";
+import { ASSERTION_LOG_EFFECT_TYPES } from "../../../domain/transition/TransitionEffect.js";
 import { contentEntityTypeSchema } from "../support/relationshipFieldSchemas.js";
 
 // One row of `transition_effects` as the API shows it. Every nullable column is
@@ -23,7 +23,14 @@ export const transitionEffectResponseSchema = z
     id: z.string(),
     narrativeTransitionId: z.string(),
     projectId: z.string(),
-    effectType: z.enum(TRANSITION_EFFECT_TYPES),
+    // ALL FIVE since step 4b-2, and the asymmetry with the REQUEST schema is the
+    // point: `addEffectSchema` still accepts only the three an author can
+    // DECLARE, because declaring is the thing being constrained. A response
+    // describes what a stored row IS, and `transition_effects` holds five
+    // operations now (premis §8.3). Narrowing here would make the DTO layer the
+    // place a legitimate row goes to die — a read path that rejects data the
+    // write path was allowed to store.
+    effectType: z.enum(ASSERTION_LOG_EFFECT_TYPES),
     targetEntityType: contentEntityTypeSchema,
     targetEntityId: z.string(),
     fieldPath: z.string().nullable(),

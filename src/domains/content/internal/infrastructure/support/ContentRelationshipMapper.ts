@@ -28,6 +28,7 @@ export const ContentRelationshipMapper = {
       // relationship_definitions(project_id, predicate)`, which binds every
       // writer rather than only callers who go through the entity.
       relationType: row.relationType,
+      sourceAssertionId: row.sourceAssertionId,
       note: row.note,
       createdByUserId: row.createdByUserId,
       createdAt: row.createdAt,
@@ -79,6 +80,7 @@ export const ContentRelationshipMapper = {
       targetEntityType: snapshot.targetEntityType,
       targetEntityId: snapshot.targetEntityId,
       relationType: snapshot.relationType,
+      sourceAssertionId: snapshot.sourceAssertionId,
       note: snapshot.note,
       createdByUserId: snapshot.createdByUserId,
     };

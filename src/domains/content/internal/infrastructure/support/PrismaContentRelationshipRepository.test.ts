@@ -40,6 +40,7 @@ function storedRow(
     targetEntityType: "faction",
     targetEntityId: "faction-1",
     relationType: "member_of",
+    sourceAssertionId: "assertion-1",
     note: null,
     createdByUserId: "user-1",
     createdAt: NOW,

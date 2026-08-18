@@ -413,6 +413,261 @@ describe("Content relationship end-to-end", () => {
       // 11.4 builds the evaluation graph.
       expect(events[0]?.routingKey).toBe("content.relationship.asserted");
     });
+
+    // ── STEP 4b-2 ────────────────────────────────────────────────────────────
+    // Delete stops destroying the fact. What it destroys is the PROJECTION; the
+    // claim stays in the log with a `retract` row pointing at it. Every existing
+    // delete assertion reads the projection or the HTTP status, so all of them
+    // would stay green while the log lost the evidence — which is the whole point
+    // of the step.
+    it("withdraws the claim instead of destroying it", async () => {
+      const session = await registerAndLogin("rel-retract");
+      const projectId = await createProject(session.accessToken, "Retraction");
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+
+      const created = await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+
+      const relationship = await readData(created);
+      const relationshipId = relationship.id as string;
+
+      const stored = await prisma.contentRelationship.findUnique({
+        where: { id: relationshipId },
+        select: { sourceAssertionId: true },
+      });
+      const assertionId = stored?.sourceAssertionId;
+
+      // The projection names the fact it was folded from — the pointer that lets
+      // the retraction name an ID rather than a fact pattern.
+      expect(assertionId).toBeTruthy();
+
+      const deleted = await request(
+        `/api/v1/projects/${projectId}/relationships/${relationshipId}`,
+        { method: "DELETE", accessToken: session.accessToken },
+      );
+
+      // The API contract is unchanged — 200, the status this endpoint has always
+      // answered — and the row is gone as far as every reader of this endpoint is
+      // concerned.
+      expect(deleted.status).toBe(200);
+      expect(
+        await prisma.contentRelationship.count({ where: { id: relationshipId } }),
+      ).toBe(0);
+
+      const rows = await prisma.transitionEffect.findMany({
+        where: { projectId },
+        orderBy: { createdAt: "asc" },
+      });
+
+      // TWO rows: the claim and its withdrawal. The claim SURVIVING is the
+      // substance of 4b-2 — before it, the delete left nothing behind at all.
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.id).toBe(assertionId);
+      expect(rows[0]?.effectType).toBe("relationship_add");
+
+      const retraction = rows[1];
+
+      expect(retraction?.effectType).toBe("retract");
+      expect(retraction?.targetAssertionId).toBe(assertionId);
+      // Carried, and the composite foreign key is what makes it unable to lie
+      // (C-1). A row disagreeing with the target's real kind has nothing to
+      // reference.
+      expect(retraction?.targetEffectType).toBe("relationship_add");
+      // NOT a termination: no anchor, because a retraction is transaction-time.
+      // The rule engine treats the two differently, so this is the assertion that
+      // keeps `DELETE` from silently becoming a valid-time cessation.
+      expect(retraction?.anchorEntityType).toBeNull();
+      expect(retraction?.anchorEntityId).toBeNull();
+      // It points at the fact rather than restating it.
+      expect(retraction?.relationshipType).toBeNull();
+      expect(retraction?.relatedEntityId).toBeNull();
+    });
+
+    it("publishes the withdrawal for the graph projector", async () => {
+      const session = await registerAndLogin("rel-retract-outbox");
+      const projectId = await createProject(
+        session.accessToken,
+        "Retraction event",
+      );
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+
+      const created = await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+      const relationshipId = (await readData(created)).id as string;
+
+      await request(
+        `/api/v1/projects/${projectId}/relationships/${relationshipId}`,
+        { method: "DELETE", accessToken: session.accessToken },
+      );
+
+      const events = await prisma.outboxEvent.findMany({
+        where: { projectId, eventType: "content.relationship.retracted" },
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]?.routingKey).toBe("content.relationship.retracted");
+      // A projector that saw the assertion appear and never saw it withdrawn
+      // would rebuild the fact back into `evaluation_edges` at 11.4.
+      expect(events[0]?.payload).toMatchObject({ relationshipId });
+    });
+
+    // The projection's OWN foreign key, and it needs its own case: the test below
+    // it looks like it covers this and does not. There, the assertion is already
+    // retracted, so what refuses the delete is the RETRACTION's
+    // `target_assertion_id` — a constraint C-1 added, not 4b-2. Turning 4b-2's key
+    // to ON DELETE CASCADE left that test green, which is how this gap was found.
+    //
+    // Here there is no retraction: a LIVE relationship, whose assertion someone
+    // tries to erase. Under CASCADE the erase would succeed and take the
+    // relationship row with it — a fact and its projection gone with no trace,
+    // which is precisely what append-only forbids.
+    it("refuses to erase an assertion a live projection still folds", async () => {
+      const session = await registerAndLogin("rel-assert-fk");
+      const projectId = await createProject(
+        session.accessToken,
+        "Assertion referenced",
+      );
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+
+      const created = await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+      const relationshipId = (await readData(created)).id as string;
+
+      const projection = await prisma.contentRelationship.findUnique({
+        where: { id: relationshipId },
+        select: { sourceAssertionId: true },
+      });
+
+      if (projection === null) {
+        throw new Error(
+          `Fixture relationship ${relationshipId} has no projection row`,
+        );
+      }
+
+      await expect(
+        prisma.transitionEffect.delete({
+          where: { id: projection.sourceAssertionId },
+        }),
+      ).rejects.toThrow();
+
+      // Both rows still there. Asserting the PROJECTION too is the half that
+      // catches a cascade: the delete itself would succeed under one, and only the
+      // vanished relationship would say so.
+      expect(
+        await prisma.transitionEffect.count({
+          where: { id: projection.sourceAssertionId },
+        }),
+      ).toBe(1);
+      expect(
+        await prisma.contentRelationship.count({ where: { id: relationshipId } }),
+      ).toBe(1);
+    });
+
+    // The claim outliving the projection is only useful if the log can still be
+    // read afterwards. A retracted fact must be DROPPED by the rule engine's
+    // reader — not folded as a valid-time end, which is what a `terminate` would
+    // have produced.
+    it("keeps the withdrawn claim readable and refuses to delete it", async () => {
+      const session = await registerAndLogin("rel-retract-append");
+      const projectId = await createProject(
+        session.accessToken,
+        "Retraction append-only",
+      );
+      const characterId = await createCharacter(
+        session.accessToken,
+        projectId,
+        "Aria",
+      );
+      const factionId = await createFaction(
+        session.accessToken,
+        projectId,
+        "Silver Hand",
+      );
+
+      const created = await createRelationship(session.accessToken, projectId, {
+        sourceEntityType: "character",
+        sourceEntityId: characterId,
+        targetEntityType: "faction",
+        targetEntityId: factionId,
+        relationType: "member_of",
+      });
+      const relationship = await readData(created);
+      const relationshipId = relationship.id as string;
+      const projectionRow = await prisma.contentRelationship.findUnique({
+        where: { id: relationshipId },
+        select: { sourceAssertionId: true },
+      });
+
+      // A fixture guard, not an assertion: a missing row here is a broken setup,
+      // and letting `undefined` travel would make every check below pass
+      // vacuously — `count({ where: { id: undefined } })` counts the whole table.
+      if (projectionRow === null) {
+        throw new Error(
+          `Fixture relationship ${relationshipId} has no projection row`,
+        );
+      }
+
+      const assertionId = projectionRow.sourceAssertionId;
+
+      await request(
+        `/api/v1/projects/${projectId}/relationships/${relationshipId}`,
+        { method: "DELETE", accessToken: session.accessToken },
+      );
+
+      // The retraction references the claim with `onDelete: Restrict`, so the
+      // database itself refuses to let the withdrawn fact be erased — the
+      // append-only rule enforced against hand-run SQL, not only against the
+      // application.
+      await expect(
+        prisma.transitionEffect.delete({ where: { id: assertionId } }),
+      ).rejects.toThrow();
+
+      expect(
+        await prisma.transitionEffect.count({ where: { id: assertionId } }),
+      ).toBe(1);
+    });
   });
 
   it("round-trips create, read, list from both sides, patch and delete", async () => {

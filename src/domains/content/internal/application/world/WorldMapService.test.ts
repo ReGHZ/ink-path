@@ -956,6 +956,7 @@ describe("WorldMapService", () => {
           definition: seededDefinition("located_in"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "map", entityId: "map-1" },
+          sourceAssertionId: "assertion-1",
           createdByUserId: "user-1",
           now,
         }),

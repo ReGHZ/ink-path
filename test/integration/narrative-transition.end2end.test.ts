@@ -378,17 +378,24 @@ beforeEach(async () => {
   const projectIds = projects.map((p) => p.id);
 
   if (projectIds.length > 0) {
-    // Children before parents throughout: `transition_effects` ->
-    // `narrative_transitions` -> `projects` is a chain of onDelete: Restrict, so
-    // one surviving row at any level fails the project delete rather than
-    // cascading, and the failure would surface inside an unrelated test.
+    // Children before parents throughout: `content_relationships` ->
+    // `transition_effects` -> `narrative_transitions` -> `projects` is a chain of
+    // onDelete: Restrict, so one surviving row at any level fails the project
+    // delete rather than cascading, and the failure would surface inside an
+    // unrelated test.
+    //
+    // FOUR levels since step 4b-2, and the projection moved to the FRONT: it
+    // references the assertion it was folded from
+    // (`content_relationships.source_assertion_id`), so deleting assertions first
+    // now fails. That ordering was correct for three years' worth of reasons and
+    // is simply wrong now — the kind of breakage no compiler sees.
+    await prisma.contentRelationship.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
     await prisma.transitionEffect.deleteMany({
       where: { projectId: { in: projectIds } },
     });
     await prisma.narrativeTransition.deleteMany({
-      where: { projectId: { in: projectIds } },
-    });
-    await prisma.contentRelationship.deleteMany({
       where: { projectId: { in: projectIds } },
     });
     await prisma.scene.deleteMany({ where: { projectId: { in: projectIds } } });
@@ -410,10 +417,15 @@ beforeEach(async () => {
   }
 
   await prisma.userProject.deleteMany({ where: { userId: { in: userIds } } });
-  // Assertions before the vocabulary they reference: `transition_effects`
-  // points at `relationship_definitions` with onDelete: Restrict since step 4b,
-  // so the log has to go first. Three levels now — assertions, then vocabulary,
-  // then the project.
+  // FOUR levels since step 4b-2, in this order: the projection points at the
+  // assertion it was folded from, the assertion points at the predicate
+  // definition, the definition belongs to the project — every link
+  // onDelete: Restrict. The block above already cleared the first two for the
+  // projects it found; these repeat it so this teardown stands on its own rather
+  // than depending on which branch ran.
+  await prisma.contentRelationship.deleteMany({
+    where: { projectId: { in: projectIds } },
+  });
   await prisma.transitionEffect.deleteMany({
     where: { projectId: { in: projectIds } },
   });

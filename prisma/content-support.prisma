@@ -63,6 +63,26 @@ model ContentRelationship {
   targetEntityType ContentEntityType @map("target_entity_type")
   targetEntityId   String            @map("target_entity_id") @db.Uuid
   relationType     String            @map("relation_type")
+
+  // Step 4b-2. This table is a PROJECTION now — a fold of the assertion log —
+  // and this column is the only thing that lets the fold be undone by pointing
+  // at the fact rather than by describing it.
+  //
+  // Why an id and not a lookup by (predicate, endpoints): retraction and
+  // termination are idempotent precisely because they name an assertion ID
+  // (premis §8.3, "Operasi diulang (retry, dobel klik)"). Finding the origin by
+  // fact pattern would reintroduce the ambiguity the id exists to remove — two
+  // authors may assert the same fact, which premis §8.3 explicitly allows, and
+  // the pattern cannot tell those two assertions apart.
+  //
+  // NOT NULL, with no backfill and no nullable interim step: this project is
+  // pre-deploy (preseden D-3, `06-migration-planning/01:7`), and both writers
+  // already have the value at hand — RelationshipService builds the assertion in
+  // the same transaction, and the 7.7 apply path IS holding the effect row that
+  // serves as one. A nullable column would mean "some projection rows cannot be
+  // unfolded", which is the state 4b-2 exists to end.
+  sourceAssertionId String @map("source_assertion_id") @db.Uuid
+
   note             String?           @db.Text
   createdByUserId  String?           @map("created_by_user_id") @db.Uuid
   createdAt        DateTime          @default(now()) @map("created_at")
@@ -88,11 +108,21 @@ model ContentRelationship {
   // reference it is the honest answer.
   definition RelationshipDefinition @relation(fields: [projectId, relationType], references: [projectId, predicate], onDelete: Restrict, onUpdate: Restrict)
 
+  // `onDelete: Restrict` is load-bearing twice over. An applied effect cannot be
+  // deleted through the application (append-only), so this refuses the one route
+  // left — hand-run SQL — and it refuses it for the right reason: deleting the
+  // assertion would leave a projection row that can no longer say what fact it
+  // is a fold of.
+  sourceAssertion TransitionEffect @relation(fields: [sourceAssertionId, projectId], references: [id, projectId], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([projectId, relationType, sourceEntityType, sourceEntityId, targetEntityType, targetEntityId])
   @@index([projectId])
   @@index([projectId, sourceEntityType, sourceEntityId])
   @@index([projectId, targetEntityType, targetEntityId])
   @@index([projectId, relationType])
+  // Unfolding goes the other way too: given an assertion, which projection row
+  // did it produce. The projector (11.4) rebuilds by assertion, not by endpoint.
+  @@index([sourceAssertionId])
   @@index([createdByUserId])
   @@map("content_relationships")
 }

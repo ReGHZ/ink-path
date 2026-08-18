@@ -138,11 +138,24 @@ model TransitionEffect {
 
   targetedBy TransitionEffect[] @relation("AssertionTarget")
 
+  // The CRUD projection rows folded FROM this assertion (step 4b-2). Restrict on
+  // that side, so an assertion cannot be deleted out from under the row that
+  // says it is where it came from — a second enforcer for the append-only rule,
+  // and one the database applies to hand-run SQL too.
+  relationshipProjections ContentRelationship[]
+
   // Exists only as the target of the self-referencing foreign key above. It
   // carries `effect_type` so a referencing row can name its target's KIND and be
   // held to it by the key itself — the one thing a CHECK cannot do, since a
   // CHECK only ever sees its own row.
   @@unique([id, projectId, effectType])
+  // Re-added in step 4b-2, and NOT the orphan that C-1 removed: it is the key
+  // `content_relationships.source_assertion_id` references, and it carries
+  // `project_id` for the reason every composite key in this schema does — a
+  // projection row folded from ANOTHER project's assertion is a tenancy leak the
+  // database can refuse outright rather than one that survives until a service
+  // forgets to check.
+  @@unique([id, projectId])
   @@index([narrativeTransitionId])
   @@index([projectId, targetEntityType, targetEntityId])
   @@index([narrativeTransitionId, appliedAt])

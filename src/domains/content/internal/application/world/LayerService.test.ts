@@ -1004,6 +1004,7 @@ describe("LayerService", () => {
           definition: seededDefinition("located_in"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "layer", entityId: "layer-1" },
+          sourceAssertionId: "assertion-1",
           createdByUserId: "user-1",
           now,
         }),

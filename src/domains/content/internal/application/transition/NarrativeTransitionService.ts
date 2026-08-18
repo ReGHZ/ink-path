@@ -869,6 +869,13 @@ export class NarrativeTransitionService {
             entityId: effect.targetEntityId,
           },
           target: { entityType: relatedEntityType, entityId: relatedEntityId },
+          // The effect row IS the assertion on this path (step 4b-2): it is the
+          // log entry stating the fact, and applying it is what makes the fact
+          // hold. No separate assertion is written, which is why this is
+          // `effect.id` rather than a generated one — a generated id would point
+          // at a row that does not exist and the composite foreign key would
+          // refuse it.
+          sourceAssertionId: effect.id,
           createdByUserId: requestingUserId,
           now,
         });

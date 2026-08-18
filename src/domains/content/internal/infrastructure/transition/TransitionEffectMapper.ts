@@ -1,7 +1,6 @@
 import {
   TransitionEffect,
   type TransitionEffectProperties,
-  type TransitionEffectType,
 } from "../../domain/transition/TransitionEffect.js";
 
 import type {
@@ -15,22 +14,26 @@ export const TransitionEffectMapper = {
   // `reconstitute()` → `validate()`, which is where a value outside the registry
   // must be rejected rather than screened out silently at this boundary.
   //
-  // Two columns DO need a cast since the 2026-08-18 migration, and for the same
-  // reason: the TABLE is now wider than this AGGREGATE. `transition_effects` is
-  // also the assertion log, so `narrative_transition_id` is nullable and
-  // `effect_type` carries `terminate`/`retract`. Both casts land on checks
-  // `validate()` already had — an empty transition id is "Narrative transition
-  // id is required", and an operation outside the union falls to the switch
-  // `default:` as "Invalid transition effect type". This is exactly the "value
-  // cast past the union" that the domain's own defence-in-depth comment
-  // anticipates, so the rejection stays where the aggregate can state its reason
-  // rather than being screened out silently here.
+  // THE TABLE IS NO LONGER WIDER THAN THE AGGREGATE, and this mapper is where
+  // that used to be papered over. Two coercions stood here until step 4b-2:
+  // `narrative_transition_id ?? ""` and a cast of `effect_type` past a
+  // three-member union. Both were written while the aggregate still modelled only
+  // Phase 7's three declarable effects, and both turned a legitimate row into a
+  // domain error — a parentless assertion (which step 4b-1 began writing) read
+  // back as "Narrative transition id must not be blank", and a `terminate`/
+  // `retract` row as "Invalid transition effect type".
+  //
+  // Nothing had caught it because no read path could reach such a row:
+  // `findById` narrows the table to the aggregate with
+  // `narrativeTransitionId: { not: null }`. Step 4b-2 adds a read that must NOT
+  // narrow — an operation has to be able to load the fact it acts on — so the
+  // coercions are gone and the columns are passed through as they are.
   toDomain(row: PrismaTransitionEffect): TransitionEffect {
     const props: TransitionEffectProperties = {
       id: row.id,
-      narrativeTransitionId: row.narrativeTransitionId ?? "",
+      narrativeTransitionId: row.narrativeTransitionId,
       projectId: row.projectId,
-      effectType: row.effectType as TransitionEffectType,
+      effectType: row.effectType,
       targetEntityType: row.targetEntityType,
       targetEntityId: row.targetEntityId,
       fieldPath: row.fieldPath,
@@ -39,6 +42,10 @@ export const TransitionEffectMapper = {
       relationshipDefinitionId: row.relationshipDefinitionId,
       relatedEntityType: row.relatedEntityType,
       relatedEntityId: row.relatedEntityId,
+      anchorEntityType: row.anchorEntityType,
+      anchorEntityId: row.anchorEntityId,
+      targetAssertionId: row.targetAssertionId,
+      targetEffectType: row.targetEffectType,
       appliedAt: row.appliedAt,
       contentRevisionId: row.contentRevisionId,
       createdAt: row.createdAt,
@@ -83,6 +90,15 @@ export const TransitionEffectMapper = {
       relationshipDefinitionId: snapshot.relationshipDefinitionId,
       relatedEntityType: snapshot.relatedEntityType,
       relatedEntityId: snapshot.relatedEntityId,
+      // Written since step 4b-2. Leaving them out was harmless while every row
+      // was a declared effect (all four are null on that path) and is not
+      // harmless now: an operation row whose target went unwritten violates
+      // `target_matches_operation` at the database, and one whose anchor went
+      // unwritten would silently lose its story time.
+      anchorEntityType: snapshot.anchorEntityType,
+      anchorEntityId: snapshot.anchorEntityId,
+      targetAssertionId: snapshot.targetAssertionId,
+      targetEffectType: snapshot.targetEffectType,
       appliedAt: snapshot.appliedAt,
       createdAt: snapshot.createdAt,
     };

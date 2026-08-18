@@ -12,6 +12,7 @@ import {
   ContentRelationshipRepositoryNotFoundError,
 } from "../../src/domains/content/internal/domain/support/ContentRelationshipRepositoryError.js";
 import { seededDefinition } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
+import { createRelationshipUnitOfWork } from "../../src/domains/content/internal/infrastructure/PrismaRelationshipUnitOfWork.js";
 import { PrismaContentRelationshipRepository } from "../../src/domains/content/internal/infrastructure/support/PrismaContentRelationshipRepository.js";
 import { PrismaRelationshipDefinitionReader } from "../../src/domains/content/internal/infrastructure/support/PrismaRelationshipDefinitionReader.js";
 import { Project } from "../../src/domains/project/internal/domain/Project.js";
@@ -21,7 +22,10 @@ import { PrismaUserRepository } from "../../src/domains/user/internal/infrastruc
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
 import { AppError } from "../../src/shared/errors/AppError.js";
 import { ErrorCode } from "../../src/shared/errors/ErrorCode.js";
-import { seedProjectVocabulary } from "../helpers/relationshipVocabulary.js";
+import {
+  seedOriginAssertion,
+  seedProjectVocabulary,
+} from "../helpers/relationshipVocabulary.js";
 
 
 import type { ContentRelationshipRepository } from "../../src/domains/content/internal/domain/support/ContentRelationshipRepository.js";
@@ -71,6 +75,48 @@ const relationshipIds = [
   "65656565-0000-4000-8000-000000000002",
   "65656565-0000-4000-8000-000000000003",
 ];
+
+// The assertion each relationship row is a fold of, since step 4b-2. Ids stay
+// inside this file's own `65656565` prefix — a derived prefix would claim id space
+// the block does not own, which is the collision the header warns about.
+//
+// One per (project, predicate, slot), and every axis is load-bearing:
+//
+//   PROJECT — the same relationship slot is used in BOTH fixture projects, and the
+//   composite key refuses a projection pointing at another project's assertion.
+//   That refusal is the guarantee, so a shared row would test around it.
+//
+//   PREDICATE — a retraction must name the predicate its target asserts, and the
+//   delete path enforces it (`TransitionEffect.retractFact`). Seeding every slot
+//   as `related_to` made the stale-guard case answer 400 instead of the 409 it is
+//   about, which is how this axis was found rather than assumed.
+const FIXTURE_PREDICATES = [
+  "ally_of",
+  "enemy_of",
+  "related_to",
+  "influences",
+] as const;
+
+function assertionIdFor(
+  relationshipId: string,
+  ownerProjectId: string,
+  predicate: string,
+): string {
+  const slot = relationshipIds.indexOf(relationshipId) + 1;
+  const predicateSlot = FIXTURE_PREDICATES.indexOf(
+    predicate as (typeof FIXTURE_PREDICATES)[number],
+  );
+
+  if (slot === 0 || predicateSlot === -1) {
+    throw new Error(
+      `No fixture assertion for relationship ${relationshipId} with predicate "${predicate}" — add it to FIXTURE_PREDICATES`,
+    );
+  }
+
+  const tenant = ownerProjectId === projectId ? "a" : "b";
+
+  return `65656565-0000-4000-8000-0000000${tenant}${predicateSlot + 1}00${slot}`;
+}
 
 const prisma = createPrismaClient();
 const users = new PrismaUserRepository(prisma);
@@ -142,6 +188,25 @@ async function seedOwnerAndProjects(): Promise<void> {
   // references it by composite foreign key.
   await seedProjectVocabulary(prisma, projectId);
   await seedProjectVocabulary(prisma, otherProjectId);
+
+  // Every combination up front: which project and predicate a slot ends up with
+  // varies per case, and seeding lazily is not available to a synchronous fixture
+  // builder — a missing row would surface as a foreign-key error three layers from
+  // the test that caused it.
+  for (const ownerProjectId of [projectId, otherProjectId]) {
+    for (const relationshipId of relationshipIds) {
+      for (const predicate of FIXTURE_PREDICATES) {
+        await seedOriginAssertion(prisma, {
+          id: assertionIdFor(relationshipId, ownerProjectId, predicate),
+          projectId: ownerProjectId,
+          predicate,
+          subjectEntityId: characterA,
+          objectEntityId: characterB,
+          now,
+        });
+      }
+    }
+  }
 }
 
 // No content entities are seeded anywhere in this file, and that is not an
@@ -161,10 +226,11 @@ function relationship(
   } = {},
 ): ContentRelationship {
   const relationType = overrides.relationType ?? "ally_of";
+  const ownerProjectId = overrides.projectId ?? projectId;
 
   return ContentRelationship.create({
     id,
-    projectId: overrides.projectId ?? projectId,
+    projectId: ownerProjectId,
     relationType,
     // The seeded row for this predicate — the same one the seeder wrote into
     // both fixture projects. Derived from `relationType` so a case that changes
@@ -172,6 +238,7 @@ function relationship(
     definition: seededDefinition(relationType),
     source: overrides.source ?? { entityType: "character", entityId: characterA },
     target: overrides.target ?? { entityType: "character", entityId: characterB },
+    sourceAssertionId: assertionIdFor(id, ownerProjectId, relationType),
     note: overrides.note,
     createdByUserId: ownerUserId,
     now: overrides.now ?? now,
@@ -506,6 +573,12 @@ describe("PrismaContentRelationshipRepository", () => {
         contentRelationshipRepository: staleReading,
         contentEntityLocator: locator,
         relationshipDefinitionReader: definitionReader,
+        // The REAL unit of work, over the real client. The staleness under test
+        // comes from the read above, not from a faked transaction: the retraction
+        // and the guarded delete both run inside one Postgres transaction, and the
+        // guard is what has to refuse. A fake here would prove nothing about the
+        // interleaving this case exists for.
+        relationshipUnitOfWork: createRelationshipUnitOfWork({ prisma }),
       });
     }
 
@@ -554,6 +627,7 @@ describe("PrismaContentRelationshipRepository", () => {
         contentRelationshipRepository: repository,
         contentEntityLocator: locator,
         relationshipDefinitionReader: definitionReader,
+        relationshipUnitOfWork: createRelationshipUnitOfWork({ prisma }),
       });
 
       const error = await service

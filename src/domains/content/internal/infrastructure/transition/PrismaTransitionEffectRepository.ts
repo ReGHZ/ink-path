@@ -35,6 +35,21 @@ export class PrismaTransitionEffectRepository
     return row ? TransitionEffectMapper.toDomain(row) : null;
   }
 
+  // The unnarrowed twin, step 4b-2. `findUnique` on the primary key with
+  // `projectId` in the filter: the id alone is unique, so adding the project can
+  // only ever turn a foreign row into null — which is the point, and it is the
+  // same 404-not-403 answer the rest of this domain gives.
+  async findAssertionById(
+    projectId: string,
+    id: string,
+  ): Promise<TransitionEffect | null> {
+    const row = await this.client.transitionEffect.findFirst({
+      where: { id, projectId },
+    });
+
+    return row ? TransitionEffectMapper.toDomain(row) : null;
+  }
+
   async findByIdForUpdate(id: string): Promise<TransitionEffect | null> {
     // Two statements rather than one raw SELECT of every column: the raw query
     // takes the lock, the typed read maps the row. Mapping snake_case raw

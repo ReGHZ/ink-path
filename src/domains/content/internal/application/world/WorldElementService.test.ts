@@ -862,6 +862,7 @@ describe("WorldElementService", () => {
           definition: seededDefinition("participates_in"),
           source: { entityType: "world_element", entityId: "we-1" },
           target: { entityType: "event", entityId: "event-9" },
+          sourceAssertionId: "assertion-1",
           createdByUserId: "user-1",
           now,
         }),

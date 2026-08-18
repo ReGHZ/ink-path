@@ -8,7 +8,11 @@ import {
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
-import { SEEDED_DEFINITIONS } from "../../domain/support/relationshipDefinitionSeed.js";
+import {
+  SEEDED_DEFINITIONS,
+  seededDefinition,
+} from "../../domain/support/relationshipDefinitionSeed.js";
+import { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -16,7 +20,6 @@ import type { OutboxEvent } from "../../../../../shared/application/ports/Outbox
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
-import type { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
 import type {
   ContentEntityLocation,
   ContentEntityLocator,
@@ -214,6 +217,17 @@ function createUnitOfWork(
                 return Promise.resolve();
               },
               findById: () => Promise.resolve(null),
+              // Answers from the same array `insert` fills, so a test can seed
+              // the assertion a retraction must point at by pushing it. Returning
+              // null unconditionally would make the delete path throw its drift
+              // error and hide whatever the test was actually asserting.
+              findAssertionById: (projectId, id) =>
+                Promise.resolve(
+                  assertions.find(
+                    (assertion) =>
+                      assertion.id === id && assertion.projectId === projectId,
+                  ) ?? null,
+                ),
               findByIdForUpdate: () => Promise.resolve(null),
               findByTransitionId: () => Promise.resolve([]),
               update: () => Promise.resolve(),
@@ -284,9 +298,42 @@ function createInput(
   };
 }
 
+// The log entry the projection row is a fold OF. Since step 4b-2 a delete is a
+// retraction, so it reads this row to learn the target's real `effect_type` — a
+// test that seeds only the projection is testing a state the database refuses
+// (the composite foreign key would have no row to reference).
+function seedOriginAssertion(
+  assertions: TransitionEffect[],
+  overrides: Partial<{ id: string; projectId: string; predicate: string }> = {},
+): TransitionEffect {
+  const predicate = overrides.predicate ?? "member_of";
+  const assertion = TransitionEffect.assertFact({
+    id: overrides.id ?? "assertion-1",
+    narrativeTransitionId: null,
+    projectId: overrides.projectId ?? "proj-1",
+    effectType: "relationship_add",
+    targetEntityType: "character",
+    targetEntityId: "character-1",
+    relationshipType: predicate,
+    definition: seededDefinition(predicate),
+    relatedEntityType: "faction",
+    relatedEntityId: "faction-1",
+    now,
+  });
+
+  assertions.push(assertion);
+
+  return assertion;
+}
+
 function seedRelationship(
   relationships: FakeContentRelationshipRepository,
-  overrides: Partial<{ id: string; projectId: string; version: number }> = {},
+  overrides: Partial<{
+    id: string;
+    projectId: string;
+    version: number;
+    sourceAssertionId: string;
+  }> = {},
 ): ContentRelationship {
   const relationship = ContentRelationship.reconstitute({
     id: overrides.id ?? "relationship-1",
@@ -297,6 +344,7 @@ function seedRelationship(
     targetEntityType: "faction",
     targetEntityId: "faction-1",
     relationType: "member_of",
+    sourceAssertionId: overrides.sourceAssertionId ?? "assertion-1",
     note: "outer disciple",
     createdByUserId: "user-1",
     createdAt: now,
@@ -603,7 +651,8 @@ describe("RelationshipService", () => {
     // a `delete(id)` that ignored the version would still make every other
     // delete test pass.
     it("passes the version it just read as the guard", async () => {
-      const { relationships, service } = createService();
+      const { relationships, assertions, service } = createService();
+      seedOriginAssertion(assertions);
       seedRelationship(relationships, { version: 3 });
 
       await service.deleteRelationship("proj-1", "relationship-1", {
@@ -622,7 +671,8 @@ describe("RelationshipService", () => {
     // a link destroys no content. Reusing assertCanDelete here would have been
     // the natural copy-paste and would have been wrong.
     it("lets an editor without can_delete remove a relationship", async () => {
-      const { relationships, service } = createService();
+      const { relationships, assertions, service } = createService();
+      seedOriginAssertion(assertions);
       seedRelationship(relationships);
 
       await service.deleteRelationship("proj-1", "relationship-1", {
@@ -662,8 +712,130 @@ describe("RelationshipService", () => {
       expect(relationships.relationships.size).toBe(1);
     });
 
+    // STEP 4b-2. Everything above this point was already true when the delete was
+    // a plain row destruction; these are the claims that separate the two.
+    it("withdraws the claim by writing a retract that names the origin assertion", async () => {
+      const { relationships, assertions, service } = createService();
+      const origin = seedOriginAssertion(assertions);
+      seedRelationship(relationships);
+
+      await service.deleteRelationship("proj-1", "relationship-1", {
+        requestingUserId: "user-1",
+        requestingMembership: writer,
+      });
+
+      // Two rows in the log: the claim, and its withdrawal. The claim SURVIVES —
+      // that is the whole point of the step, and asserting the count is what
+      // catches a future edit that "cleans up" the assertion as well.
+      expect(assertions).toHaveLength(2);
+
+      const retraction = assertions[1];
+
+      expect(retraction?.effectType).toBe("retract");
+      expect(retraction?.targetAssertionId).toBe(origin.id);
+      // The KIND read off the target row, not asserted by the caller (C-1): a
+      // hardcoded literal here would be exactly the value that can lie.
+      expect(retraction?.targetEffectType).toBe("relationship_add");
+      expect(retraction?.narrativeTransitionId).toBeNull();
+      // Provenance, and it is not optional: with no parent transition, naming the
+      // predicate is the only way this row satisfies `has_provenance`.
+      expect(retraction?.relationshipDefinitionId).toBe(
+        seededDefinition("member_of").id,
+      );
+      expect(retraction?.appliedAt).toEqual(now);
+    });
+
+    // The line between the two operations, and the one an unwitting edit is most
+    // likely to cross: a retraction is transaction-time, so it is NOT placed in
+    // story time at all. An anchor here would make this a termination wearing a
+    // retraction's name, and the rule engine answers the two differently
+    // (`PrismaEvaluationFactReader`: retracted rows are dropped, terminated ones
+    // are folded as a valid-time end).
+    it("writes a retraction with no anchor and no restatement of the fact", async () => {
+      const { relationships, assertions, service } = createService();
+      seedOriginAssertion(assertions);
+      seedRelationship(relationships);
+
+      await service.deleteRelationship("proj-1", "relationship-1", {
+        requestingUserId: "user-1",
+        requestingMembership: writer,
+      });
+
+      const retraction = assertions[1];
+
+      expect(retraction?.anchorEntityType).toBeNull();
+      expect(retraction?.anchorEntityId).toBeNull();
+      // It points at the fact; it does not restate it. A second copy of the claim
+      // would be free to disagree with the row it withdraws.
+      expect(retraction?.relationshipType).toBeNull();
+      expect(retraction?.relatedEntityType).toBeNull();
+      expect(retraction?.relatedEntityId).toBeNull();
+      // The subject still travels, because the column is NOT NULL and the honest
+      // value is the subject of the claim being withdrawn.
+      expect(retraction?.targetEntityId).toBe("character-1");
+    });
+
+    it("publishes the withdrawal for the projector, naming both rows", async () => {
+      const { relationships, assertions, outbox, service } = createService();
+      const origin = seedOriginAssertion(assertions);
+      seedRelationship(relationships);
+
+      await service.deleteRelationship("proj-1", "relationship-1", {
+        requestingUserId: "user-1",
+        requestingMembership: writer,
+      });
+
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]).toMatchObject({
+        eventType: "content.relationship.retracted",
+        routingKey: "content.relationship.retracted",
+        aggregateId: "relationship-1",
+        projectId: "proj-1",
+        payload: {
+          assertionId: origin.id,
+          retractionId: assertions[1]?.id,
+          relationshipId: "relationship-1",
+          predicate: "member_of",
+        },
+      });
+    });
+
+    // A rejected delete must leave the log untouched. Without this, a 404 that
+    // wrote a retraction first would withdraw a claim the caller was never
+    // allowed to see.
+    it("writes nothing to the log when the delete is refused", async () => {
+      const forbidden = createService();
+      seedOriginAssertion(forbidden.assertions);
+      seedRelationship(forbidden.relationships);
+
+      await expect(
+        forbidden.service.deleteRelationship("proj-1", "relationship-1", {
+          requestingUserId: "user-1",
+          requestingMembership: reviewer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+
+      const foreign = createService();
+      seedOriginAssertion(foreign.assertions, { projectId: "proj-2" });
+      seedRelationship(foreign.relationships, { projectId: "proj-2" });
+
+      await expect(
+        foreign.service.deleteRelationship("proj-1", "relationship-1", {
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+        }),
+      ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
+
+      // One row each — the seeded claim, and nothing after it.
+      expect(forbidden.assertions).toHaveLength(1);
+      expect(foreign.assertions).toHaveLength(1);
+      expect(forbidden.outbox).toEqual([]);
+      expect(foreign.outbox).toEqual([]);
+    });
+
     it("maps a stale version to a 409 and a vanished row to a 404", async () => {
       const conflictCase = createService();
+      seedOriginAssertion(conflictCase.assertions);
       seedRelationship(conflictCase.relationships);
       conflictCase.relationships.conflictOnDelete = true;
 
@@ -675,6 +847,7 @@ describe("RelationshipService", () => {
       ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
 
       const notFoundCase = createService();
+      seedOriginAssertion(notFoundCase.assertions);
       seedRelationship(notFoundCase.relationships);
       notFoundCase.relationships.notFoundOnDelete = true;
 
