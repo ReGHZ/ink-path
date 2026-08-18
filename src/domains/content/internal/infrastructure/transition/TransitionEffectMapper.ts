@@ -1,6 +1,7 @@
 import {
   TransitionEffect,
   type TransitionEffectProperties,
+  type TransitionEffectType,
 } from "../../domain/transition/TransitionEffect.js";
 
 import type {
@@ -13,12 +14,23 @@ export const TransitionEffectMapper = {
   // property is `string | null` too, and rule 1 is enforced by
   // `reconstitute()` → `validate()`, which is where a value outside the registry
   // must be rejected rather than screened out silently at this boundary.
+  //
+  // Two columns DO need a cast since the 2026-08-18 migration, and for the same
+  // reason: the TABLE is now wider than this AGGREGATE. `transition_effects` is
+  // also the assertion log, so `narrative_transition_id` is nullable and
+  // `effect_type` carries `terminate`/`retract`. Both casts land on checks
+  // `validate()` already had — an empty transition id is "Narrative transition
+  // id is required", and an operation outside the union falls to the switch
+  // `default:` as "Invalid transition effect type". This is exactly the "value
+  // cast past the union" that the domain's own defence-in-depth comment
+  // anticipates, so the rejection stays where the aggregate can state its reason
+  // rather than being screened out silently here.
   toDomain(row: PrismaTransitionEffect): TransitionEffect {
     const props: TransitionEffectProperties = {
       id: row.id,
-      narrativeTransitionId: row.narrativeTransitionId,
+      narrativeTransitionId: row.narrativeTransitionId ?? "",
       projectId: row.projectId,
-      effectType: row.effectType,
+      effectType: row.effectType as TransitionEffectType,
       targetEntityType: row.targetEntityType,
       targetEntityId: row.targetEntityId,
       fieldPath: row.fieldPath,

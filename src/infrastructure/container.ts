@@ -40,6 +40,10 @@ import {
   registerUserDomain,
   type UserDomainCradle,
 } from "../domains/user/register.js";
+import {
+  registerValidationDomain,
+  type ValidationDomainCradle,
+} from "../domains/validation/register.js";
 import { createJwtVerifier } from "../shared/auth/JoseJwtVerifier.js";
 import {
   createAppAuthMiddleware,
@@ -71,7 +75,7 @@ export type AppCradle = {
   aiUsageLogWriter: AiUsageLogWriter;
   embeddingWorker: EmbeddingWorker;
   embeddingWorkerConsumer: Consumer;
-} & UserDomainCradle & ProjectDomainCradle & ContentDomainCradle
+} & UserDomainCradle & ProjectDomainCradle & ContentDomainCradle & ValidationDomainCradle
 
 export function createAppContainer(): AwilixContainer<AppCradle> {
   const container = createContainer<AppCradle>({
@@ -129,6 +133,7 @@ export function createAppContainer(): AwilixContainer<AppCradle> {
   registerUserDomain(container);
   registerProjectDomain(container)
   registerContentDomain(container);
+  registerValidationDomain(container);
 
   return container;
 }

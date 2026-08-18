@@ -4,10 +4,30 @@ enum NarrativeTransitionSourceType {
   chapter
 }
 
+// The first three are Phase 7 transition effects: an author's declared change to
+// the world, pending until applied.
+//
+// `terminate` and `retract` are the other two of the three append-only assertion
+// operations decided in `notes/premis-symbolic-rule-engine.md` §8.3, and they are
+// two operations rather than one because "taking a fact back" turns out to mean
+// two different things on two different clocks:
+//
+//   terminate — the fact STOPS holding at a story time. True before that anchor,
+//               false after. Valid time. "Bima was expelled in scene 12."
+//   retract   — the claim was NEVER true, at any cut. Transaction time.
+//               "Typo — Rama was never his master."
+//
+// Today the codebase conflates them: `relationship_remove` carries the first
+// meaning and a row DELETE carries the second, which also destroys the evidence.
+// Resolution needs exactly one rule — retraction beats termination — because it
+// works on the stratum of EXISTENCE while termination works on the stratum of
+// VALID RANGE.
 enum TransitionEffectType {
   attribute_change
   relationship_add
   relationship_remove
+  terminate
+  retract
 }
 
 model NarrativeTransition {
@@ -35,26 +55,82 @@ model NarrativeTransition {
   @@map("narrative_transitions")
 }
 
+// Phase 7's effect table, generalised into the ASSERTION LOG — the single source
+// of truth for narrative facts (`notes/premis-symbolic-rule-engine.md` §8.1/§8b
+// step 2). It was already ~80% of one: subject (`target_entity_*`), binary
+// predicate with a nullable object (`relationship_type` + `related_entity_*`),
+// transaction time (`applied_at`), append-only.
+//
+// The four columns below are what it was missing, and every one of them was
+// found the same way — a row in the gap table marked "✓" that was only true for
+// the table's OLD role.
 model TransitionEffect {
-  id                    String               @id @default(uuid()) @db.Uuid
-  narrativeTransitionId String               @map("narrative_transition_id") @db.Uuid
-  projectId             String               @map("project_id") @db.Uuid
-  effectType            TransitionEffectType @map("effect_type")
-  targetEntityType      ContentEntityType    @map("target_entity_type")
-  targetEntityId        String               @map("target_entity_id") @db.Uuid
-  fieldPath             String?              @map("field_path")
-  newValue              String?              @map("new_value")
-  relationshipType      String?              @map("relationship_type")
-  relatedEntityType     ContentEntityType?   @map("related_entity_type")
-  relatedEntityId       String?              @map("related_entity_id") @db.Uuid
-  appliedAt             DateTime?            @map("applied_at")
-  contentRevisionId     String?              @map("content_revision_id") @db.Uuid
-  createdAt             DateTime             @default(now()) @map("created_at")
+  id String @id @default(uuid()) @db.Uuid
 
-  narrativeTransition NarrativeTransition @relation(fields: [narrativeTransitionId], references: [id], onDelete: Restrict)
+  // NULLABLE since 2026-08-18. Blocker 1: an assertion made through plain CRUD
+  // has no transition to belong to. Every row written before this migration has
+  // one, and the CHECK below keeps provenance from simply going missing.
+  narrativeTransitionId String? @map("narrative_transition_id") @db.Uuid
 
+  projectId        String               @map("project_id") @db.Uuid
+  effectType       TransitionEffectType @map("effect_type")
+  targetEntityType ContentEntityType    @map("target_entity_type")
+  targetEntityId   String               @map("target_entity_id") @db.Uuid
+  fieldPath        String?              @map("field_path")
+  newValue         String?              @map("new_value")
+
+  relationshipType  String?            @map("relationship_type")
+  relatedEntityType ContentEntityType? @map("related_entity_type")
+  relatedEntityId   String?            @map("related_entity_id") @db.Uuid
+
+  // Blocker 4: a predicate the AUTHOR coined has no home otherwise. `field_path`
+  // is not a free symbol — it is checked against a closed allowlist of real
+  // entity columns at create AND again at apply, and `status`/`content` are
+  // excluded from that allowlist by frozen specification. Its shape is wrong
+  // too: `field_path` + `new_value` models attribute = value, and `dead(char)`
+  // has no value slot. Pointing at a definition row instead is what lets a unary
+  // narrative assertion exist at all.
+  relationshipDefinitionId String? @map("relationship_definition_id") @db.Uuid
+
+  // Blocker 2: VALID TIME — the story moment the fact starts holding at. Story
+  // anchors used to live only on the parent transition, which read as "✓" until
+  // blocker 1 made the parent optional; the two cancelled each other out and an
+  // assertion from CRUD would have had no anchor at all. Null = holds with no
+  // time information, which is a different answer from "holds at every cut".
+  anchorEntityType NarrativeTransitionSourceType? @map("anchor_entity_type")
+  anchorEntityId   String?                        @map("anchor_entity_id") @db.Uuid
+
+  // Blocker 3: which assertion a `terminate`/`retract` acts on. Extending the
+  // enum alone cannot say this — an enum value names an operation, not a target
+  // — and a `terminate` needs an anchor of its own, different from its parent's.
+  // Pointing at an ID rather than at a fact pattern is also what makes both
+  // operations idempotent under retries and double-clicks.
+  targetAssertionId String? @map("target_assertion_id") @db.Uuid
+
+  appliedAt         DateTime? @map("applied_at")
+  contentRevisionId String?   @map("content_revision_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  narrativeTransition NarrativeTransition? @relation(fields: [narrativeTransitionId], references: [id], onDelete: Restrict)
+
+  // Both composite, for the same reason as `relationship_definitions.subclass_of`:
+  // an assertion pointing at a predicate — or at another assertion — from a
+  // DIFFERENT project is a tenancy leak the database can refuse outright, rather
+  // than one that survives until a service forgets to check.
+  relationshipDefinition RelationshipDefinition? @relation(fields: [relationshipDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
+  targetAssertion        TransitionEffect?       @relation("AssertionTarget", fields: [targetAssertionId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  targetedBy TransitionEffect[] @relation("AssertionTarget")
+
+  // Exists only as the target of the two composite foreign keys above.
+  @@unique([id, projectId])
   @@index([narrativeTransitionId])
   @@index([projectId, targetEntityType, targetEntityId])
   @@index([narrativeTransitionId, appliedAt])
+  // Folding a predicate over a project is THE rule-engine read; without this it
+  // is a sequential scan of the whole log.
+  @@index([projectId, relationshipDefinitionId])
+  @@index([projectId, anchorEntityType, anchorEntityId])
+  @@index([targetAssertionId])
   @@map("transition_effects")
 }

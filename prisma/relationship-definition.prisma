@@ -1,0 +1,138 @@
+// Predicate vocabulary as PROJECT DATA, not a closed union in code.
+//
+// Until now the vocabulary lived in
+// `src/domains/content/internal/domain/support/relationTypeRegistry.ts` as a
+// frozen 17-member union, and the document that froze it
+// (`05-implementation-policy/02_relation_type_registry.md` §6) said in so many
+// words: "Tidak ada lookup table DB untuk relation types". That boundary was
+// crossed deliberately — §6 §REVISI 2026-08-17 records it — once determinism
+// stopped requiring the engine to understand what a predicate MEANS. A rule and
+// a fact only have to use the same symbol; the symbol itself can be authored
+// per project. See `notes/premis-symbolic-rule-engine.md` §2 and §6.2.
+//
+// §6.2 is why this is a table rather than a bigger union: grouping predicates
+// into families (`subclass_of(wields, ownership)`) is only first-order — and so
+// only expressible in the closed Datalog fragment the engine evaluates — when a
+// predicate is a ROW WITH AN ID, i.e. a constant. As a schema-level relation
+// name it would take second-order quantification to say the same thing.
+//
+// Step 1 of the interleaved work order (premis §8b): this schema sits BESIDE
+// the existing registry and touches no existing code. The 17-member union keeps
+// running until a replacement exists; the seeder writes 19 (17 + `owns` +
+// `rules`, addendum 2026-08-17).
+
+enum RelationDirectionality {
+  directional
+  non_directional
+}
+
+model RelationshipDefinition {
+  id        String @id @default(uuid()) @db.Uuid
+  projectId String @map("project_id") @db.Uuid
+
+  // The symbol itself — `related_to`, `owns`, and eventually author-coined ones
+  // like `dead` or `master_of`. Constrained to lowercase snake_case by a CHECK
+  // in the migration, not by convention: this column is the machine's symbol
+  // space, and the whole point of the new premise is that nothing downstream
+  // inspects it for meaning. Garbage here is garbage the engine cannot detect.
+  predicate String
+
+  // Arity. `false` = unary (`dead(char)`), `true` = binary (`owns(char, item)`).
+  // AST safety rule 3 (`02-system-design/07_validation_ast_schema.md:233`) reads
+  // exactly this column: a `RelationAtom` carries `object` if and only if this
+  // is true. All 19 seeded types are binary; unary predicates are what the
+  // vertical slice (step 3) introduces.
+  objectRequired Boolean @map("object_required")
+
+  // `non_directional` also means SYMMETRIC. There is deliberately no separate
+  // `symmetric` column: one fact, two columns is how `status` came to carry two
+  // axes at once, and the two can never disagree here — a non-directional row
+  // is canonicalized at write (registry §7.4), which is symmetry expressed in
+  // storage. A future directional-but-symmetric predicate is a schema change
+  // with an actual reason behind it, not a column kept warm just in case.
+  directionality RelationDirectionality
+
+  // Display-only symbol read from the object's side (registry §2, §7.5). For
+  // non-directional predicates it equals `predicate` itself — kept as a stored
+  // value rather than derived on read so the column means the same thing for
+  // all 19 rows, matching `inverseLabelOf()` in the current registry.
+  inverseLabel String @map("inverse_label")
+
+  // Formal property applied by the ENGINE when matching an atom, never by an
+  // author-written derivation rule (`07_validation_ast_schema.md` §2): with
+  // `transitive = true`, `master_of(A, C)` matches through the closure of
+  // `master_of(A, B)` + `master_of(B, C)`. The closure itself is materialized
+  // in the projection before rules run (Aturan A1), never inside a rule.
+  transitive Boolean @default(false)
+
+  // Predicate families (§6.2). Nullable: most predicates belong to none.
+  //
+  // The FK is composite — (subclass_of_id, project_id) -> (id, project_id) —
+  // so that "the parent lives in the same project" is enforced by the database
+  // rather than by a service check that travels only as far as the one call
+  // path that remembers it. `@@unique([id, projectId])` below exists solely as
+  // that FK's target.
+  subclassOfId String? @map("subclass_of_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project    Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  subclassOf RelationshipDefinition? @relation("PredicateFamily", fields: [subclassOfId, projectId], references: [id, projectId], onDelete: Restrict)
+
+  subclasses RelationshipDefinition[]         @relation("PredicateFamily")
+  signatures RelationshipDefinitionSignature[]
+  assertions TransitionEffect[]
+
+  @@unique([projectId, predicate])
+  @@unique([id, projectId])
+  @@index([projectId])
+  @@index([subclassOfId])
+  @@map("relationship_definitions")
+}
+
+// Which entity types a predicate accepts — stored as a SET OF SIGNATURES, one
+// row per accepted combination, not as two independent lists.
+//
+// `07_validation_ast_schema.md:237-238` names two lists
+// (`allowed_source_types` / `allowed_target_types`), and those would be the
+// cartesian product of what the frozen matrix actually allows. The difference
+// is not academic: `appears_in` lets character/faction/world_element reach
+// `scene` but lets `event` reach only chapter/plot, so two lists would readmit
+// `event -> scene` — banned on purpose by registry §7.2 because it duplicates
+// `depicts`, which is the same duplication Rule 12 exists to prevent. Likewise
+// `foreshadows` would readmit `scene -> chapter`, banned cross-type by §7.3.
+// One row per accepted signature is the only shape that carries the matrix over
+// without widening it.
+//
+// `objectEntityType` is nullable because a unary predicate has no object side —
+// only a list of subject types that may hold it. Nullable-plus-partial-unique
+// follows `RuleDependencyIndex`, which solves the identical problem one table
+// over. The tie between arity and this column (`object_required = false` =>
+// every signature has a null object) crosses two tables, so no CHECK can carry
+// it; it is a domain invariant, and it is stated here so nobody reads its
+// absence as an oversight.
+model RelationshipDefinitionSignature {
+  id                String             @id @default(uuid()) @db.Uuid
+  definitionId      String             @map("definition_id") @db.Uuid
+  subjectEntityType ContentEntityType  @map("subject_entity_type")
+  objectEntityType  ContentEntityType? @map("object_entity_type")
+
+  definition RelationshipDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  // Uniqueness is enforced by two PARTIAL unique indexes declared in the
+  // migration, not here: a nullable column in a composite unique lets Postgres
+  // admit `(d, character, NULL)` twice over, and Prisma has no native syntax
+  // for a partial index.
+  //   relationship_definition_signatures_unique_binary
+  //     (definition_id, subject_entity_type, object_entity_type) WHERE object_entity_type IS NOT NULL
+  //   relationship_definition_signatures_unique_unary
+  //     (definition_id, subject_entity_type)                     WHERE object_entity_type IS NULL
+  //
+  // Non-directional predicates are stored ONE WAY, exactly as the frozen
+  // document writes them (registry §1); the reader expands symmetry, the way
+  // `ALLOWED_PAIR_KEYS` does today. Storing both orders would make the stored
+  // matrix disagree with the document it was seeded from.
+  @@index([definitionId])
+  @@map("relationship_definition_signatures")
+}

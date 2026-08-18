@@ -4,6 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { mountContentModule } from "./domains/content/public/index.js";
 import { mountProjectModule } from "./domains/project/public/index.js";
 import { mountUserModule } from "./domains/user/public/index.js";
+import { mountValidationModule } from "./domains/validation/public/index.js";
 import { handleError } from "./shared/http/errorHandler.js";
 import {
   createProjectScopedRouter,
@@ -37,6 +38,7 @@ function createProjectScopedRoutes(
 
   mountProjectModule(router, container);
   mountContentModule(router, container);
+  mountValidationModule(router, container);
 
   return router;
 }

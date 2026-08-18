@@ -468,6 +468,20 @@ export function inverseLabelOf(relationType: RelationType): string {
   return RELATION_TYPE_DEFINITIONS[relationType].inverseLabel;
 }
 
+// The matrix as WRITTEN, one-way, before the symmetry expansion that
+// `isPairAllowed` reads through. Added so the project-owned predicate
+// vocabulary (`relationship_definitions`) can be seeded from this exact data
+// instead of a second hand-copied matrix — two copies of a 100-pair table drift
+// silently, and the drift would only surface as a rule quietly answering
+// `valid`. Read-only accessor: nothing about the enforcement path changes.
+//
+// `isPairAllowed` cannot serve that purpose. It answers over the expanded set,
+// so for a non-directional type it reports both orders and the one-way form the
+// frozen document uses can no longer be recovered from it.
+export function pairsOf(relationType: RelationType): readonly EntityPair[] {
+  return RELATION_TYPE_DEFINITIONS[relationType].pairs;
+}
+
 export function isPairAllowed(
   relationType: RelationType,
   source: ContentEntityType,

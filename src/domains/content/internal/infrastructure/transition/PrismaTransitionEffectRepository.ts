@@ -19,9 +19,17 @@ export class PrismaTransitionEffectRepository
 {
   constructor(private readonly client: TransitionEffectDatabase) {}
 
+  // `narrativeTransitionId: { not: null }` narrows the TABLE to this AGGREGATE.
+  // Since the 2026-08-18 migration `transition_effects` is also the assertion
+  // log, so it holds rows that belong to no transition at all. An assertion id
+  // handed to this method must answer "no such transition effect" — which is
+  // the truth, and a 404 — instead of reaching a mapper that would reject it
+  // with "Narrative transition id is required", a reason that is wrong for a row
+  // designed not to have one. findUnique cannot carry the extra predicate,
+  // hence findFirst on a unique column.
   async findById(id: string): Promise<TransitionEffect | null> {
-    const row = await this.client.transitionEffect.findUnique({
-      where: { id },
+    const row = await this.client.transitionEffect.findFirst({
+      where: { id, narrativeTransitionId: { not: null } },
     });
 
     return row ? TransitionEffectMapper.toDomain(row) : null;

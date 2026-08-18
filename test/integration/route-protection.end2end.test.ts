@@ -262,6 +262,10 @@ describe("Project-scoped route protection", () => {
         "narrativeTransitionRoutes (nested list)",
         "/scenes/:sceneId/narrative-transitions",
       ],
+      // First route of the Validation domain. One surface, one marker — unlike
+      // the pairs above, this router owns a single collection with no nested
+      // form that a lone fragment could keep green.
+      ["ruleEvaluationRoutes", "/rule-evaluations"],
     ];
 
     for (const [router, fragment] of mountedSurfaces) {

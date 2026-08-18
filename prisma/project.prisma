@@ -89,6 +89,9 @@ model Project {
   // narrative transition back-reference (Content mechanism)
   narrativeTransitions NarrativeTransition[]
 
+  // predicate vocabulary owned by the project (premis §6.2 / §8b step 1)
+  relationshipDefinitions RelationshipDefinition[]
+
   // ai domain back-references
   chatSessions ChatSession[]
   chatMessages ChatMessage[]

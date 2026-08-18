@@ -24,6 +24,13 @@ const row: PrismaTransitionEffect = {
   relationshipType: null,
   relatedEntityType: null,
   relatedEntityId: null,
+  // Assertion-log columns (2026-08-18). All null here on purpose: this fixture
+  // is a Phase 7 transition effect, which is exactly the row shape that carries
+  // none of them.
+  relationshipDefinitionId: null,
+  anchorEntityType: null,
+  anchorEntityId: null,
+  targetAssertionId: null,
   appliedAt: null,
   contentRevisionId: null,
   createdAt: now,
@@ -32,6 +39,7 @@ const row: PrismaTransitionEffect = {
 type Calls = {
   raw: string[];
   findUnique: number;
+  findFirst: unknown[];
   findMany: unknown[];
   create: unknown[];
   updateMany: unknown[];
@@ -44,6 +52,7 @@ function buildRepository(
   const calls: Calls = {
     raw: [],
     findUnique: 0,
+    findFirst: [],
     findMany: [],
     create: [],
     updateMany: [],
@@ -62,6 +71,16 @@ function buildRepository(
     transitionEffect: {
       findUnique: () => {
         calls.findUnique += 1;
+
+        return Promise.resolve(row);
+      },
+      // `findById` moved off findUnique when `transition_effects` became the
+      // assertion log too: it now has to carry `narrativeTransitionId: { not:
+      // null }` so an assertion id answers 404 rather than reaching a mapper
+      // that would reject it with the wrong reason. The `where` is recorded
+      // because that predicate IS the aggregate boundary.
+      findFirst: (args: unknown) => {
+        calls.findFirst.push(args);
 
         return Promise.resolve(row);
       },
@@ -115,6 +134,21 @@ function buildAppliedEffect(): TransitionEffect {
 }
 
 describe("PrismaTransitionEffectRepository", () => {
+  // Since `transition_effects` became the assertion log as well, the TABLE is
+  // wider than this AGGREGATE: it holds rows with no parent transition at all.
+  // Without this predicate an assertion id reached the mapper and came back as
+  // "Narrative transition id is required" — the wrong reason for a row designed
+  // not to have one, where the right answer is simply 404.
+  it("reads only rows that belong to a transition", async () => {
+    const { repository, calls } = buildRepository();
+
+    await repository.findById("effect-1");
+
+    expect(calls.findFirst).toEqual([
+      { where: { id: "effect-1", narrativeTransitionId: { not: null } } },
+    ]);
+  });
+
   // The lock IS the apply path's correctness. A version of this method that
   // read the row without `FOR UPDATE` would behave identically in every test
   // that is not concurrent — which is every test we can write — so the
