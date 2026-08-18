@@ -10,6 +10,7 @@ import { AppError } from "../../../../../shared/errors/AppError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import { ContentRelationshipRepositoryNotFoundError } from "../../domain/support/ContentRelationshipRepositoryError.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
@@ -33,6 +34,7 @@ function relationship(
     id,
     projectId: PROJECT_ID,
     relationType,
+    definition: seededDefinition(relationType),
     source,
     target,
     createdByUserId: "user-1",

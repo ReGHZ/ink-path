@@ -9,8 +9,8 @@ import {
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
 import {
   canonicalizeEndpoints,
-  isRelationType,
-} from "../../domain/support/relationTypeRegistry.js";
+  type RelationshipDefinition,
+} from "../../domain/support/relationshipDefinition.js";
 import { domainAttributeFieldOf } from "../../domain/transition/attributeFieldRegistry.js";
 import {
   deriveNarrativeTransitionStatus,
@@ -37,6 +37,7 @@ import type {
   NarrativeTransitionRepositories,
   NarrativeTransitionUnitOfWork,
 } from "../ports/NarrativeTransitionUnitOfWork.js";
+import type { RelationshipDefinitionReader } from "../ports/RelationshipDefinitionReader.js";
 
 export type DeclareTransitionInput = {
   requestingUserId: string;
@@ -198,6 +199,7 @@ export class NarrativeTransitionService {
     private readonly transitionEffectRepository: TransitionEffectRepository,
     private readonly contentEntityLocator: ContentEntityLocator,
     private readonly narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork,
+    private readonly relationshipDefinitionReader: RelationshipDefinitionReader,
   ) {}
 
   async declareTransition(
@@ -427,45 +429,69 @@ export class NarrativeTransitionService {
       "Target",
     );
 
-    if (input.effectType !== "attribute_change") {
+
+    let effect: TransitionEffect;
+
+    if (input.effectType === "attribute_change") {
+      try {
+        effect = TransitionEffect.create({
+          id: this.idGenerator.generate(),
+          narrativeTransitionId: transitionId,
+          projectId,
+          effectType: "attribute_change",
+          targetEntityType: input.targetEntityType,
+          targetEntityId: input.targetEntityId,
+          fieldPath: input.fieldPath,
+          newValue: input.newValue,
+          now: this.clock.now(),
+        });
+      } catch (error) {
+        mapNarrativeTransitionError(error);
+      }
+    } else {
+      // Flow 10 §Add Effect, the related endpoint — an effect whose endpoints do
+      // not exist is one that can never be applied.
       await this.assertEntityInProject(
         projectId,
         input.relatedEntityType,
         input.relatedEntityId,
         "Related",
       );
-    }
 
-    let effect: TransitionEffect;
-    try {
-      effect = TransitionEffect.create(
-        input.effectType === "attribute_change"
-          ? {
-              id: this.idGenerator.generate(),
-              narrativeTransitionId: transitionId,
-              projectId,
-              effectType: "attribute_change",
-              targetEntityType: input.targetEntityType,
-              targetEntityId: input.targetEntityId,
-              fieldPath: input.fieldPath,
-              newValue: input.newValue,
-              now: this.clock.now(),
-            }
-          : {
-              id: this.idGenerator.generate(),
-              narrativeTransitionId: transitionId,
-              projectId,
-              effectType: input.effectType,
-              targetEntityType: input.targetEntityType,
-              targetEntityId: input.targetEntityId,
-              relationshipType: input.relationshipType,
-              relatedEntityType: input.relatedEntityType,
-              relatedEntityId: input.relatedEntityId,
-              now: this.clock.now(),
-            },
-      );
-    } catch (error) {
-      mapNarrativeTransitionError(error);
+      // Rule 1 on the DECLARE path, read from the project's own vocabulary.
+      // Loaded here, before the transaction opens, for the same reason the
+      // endpoint checks are: this reader is built over the pool, so calling it
+      // inside would take a second connection while holding the first.
+      const definition =
+        await this.relationshipDefinitionReader.findByPredicate(
+          projectId,
+          input.relationshipType,
+        );
+
+      if (definition === null) {
+        throw new AppError(
+          ErrorCode.VALIDATION_ERROR,
+          `Unknown relation type: ${input.relationshipType}`,
+        );
+      }
+
+      try {
+        effect = TransitionEffect.create({
+          id: this.idGenerator.generate(),
+          narrativeTransitionId: transitionId,
+          projectId,
+          effectType: input.effectType,
+          targetEntityType: input.targetEntityType,
+          targetEntityId: input.targetEntityId,
+          relationshipType: input.relationshipType,
+          definition,
+          relatedEntityType: input.relatedEntityType,
+          relatedEntityId: input.relatedEntityId,
+          now: this.clock.now(),
+        });
+      } catch (error) {
+        mapNarrativeTransitionError(error);
+      }
     }
 
     // In a transaction, under the AGGREGATE ROOT lock, even though the write
@@ -556,6 +582,10 @@ export class NarrativeTransitionService {
       );
     }
 
+    // Read before the transaction opens, same reason as the batch path above.
+    const definitions =
+      await this.relationshipDefinitionReader.findAllByProject(projectId);
+
     return this.narrativeTransitionUnitOfWork.transaction(
       async (repositories, outboxEvents) =>
         this.applyOneEffect(
@@ -564,6 +594,7 @@ export class NarrativeTransitionService {
           projectId,
           effectId,
           input.requestingUserId,
+          definitions,
         ),
     );
   }
@@ -598,6 +629,14 @@ export class NarrativeTransitionService {
       }
     }
 
+    // The whole vocabulary, read on the pooled client BEFORE the transaction —
+    // same rule the endpoint checks follow: this reader is built over the pool,
+    // so calling it inside the transaction would take a second connection while
+    // holding the first. One map for the whole loop, since several effects
+    // commonly share a predicate.
+    const definitions =
+      await this.relationshipDefinitionReader.findAllByProject(projectId);
+
     await this.narrativeTransitionUnitOfWork.transaction(
       async (repositories, outboxEvents) => {
         const effects =
@@ -611,6 +650,7 @@ export class NarrativeTransitionService {
             projectId,
             effect.id,
             input.requestingUserId,
+            definitions,
           );
         }
       },
@@ -630,6 +670,7 @@ export class NarrativeTransitionService {
     projectId: string,
     effectId: string,
     requestingUserId: string,
+    definitions: ReadonlyMap<string, RelationshipDefinition>,
   ): Promise<TransitionEffectDetail> {
     const effect =
       await repositories.transitionEffects.findByIdForUpdate(effectId);
@@ -665,6 +706,7 @@ export class NarrativeTransitionService {
         effect,
         requestingUserId,
         now,
+        definitions,
       );
     }
 
@@ -771,6 +813,7 @@ export class NarrativeTransitionService {
     effect: TransitionEffect,
     requestingUserId: string,
     now: Date,
+    definitions: ReadonlyMap<string, RelationshipDefinition>,
   ): Promise<void> {
     const relationshipType = effect.relationshipType;
     const relatedEntityType = effect.relatedEntityType;
@@ -779,8 +822,7 @@ export class NarrativeTransitionService {
     if (
       relationshipType === null ||
       relatedEntityType === null ||
-      relatedEntityId === null ||
-      !isRelationType(relationshipType)
+      relatedEntityId === null
     ) {
       // Unreachable through the domain, which refuses to build such an effect.
       // Kept because the alternative is non-null assertions on three fields, and
@@ -788,6 +830,22 @@ export class NarrativeTransitionService {
       // than a TypeError deeper in.
       throw new Error(
         `Relationship effect ${effect.id} is missing its relationship fields`,
+      );
+    }
+
+    // REACHABLE, unlike the guard above, and that is the difference worth
+    // naming: declare checked this predicate against the vocabulary, but
+    // `transition_effects.relationship_type` carries no foreign key, so an
+    // author who deletes the predicate between declare and apply leaves an
+    // effect pointing at a name their project no longer has. A 400 that names it
+    // is the honest answer — the transition is still declarable, and redefining
+    // the predicate makes it appliable again.
+    const definition = definitions.get(relationshipType);
+
+    if (definition === undefined) {
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        `Unknown relation type: ${relationshipType}`,
       );
     }
 
@@ -803,6 +861,7 @@ export class NarrativeTransitionService {
           id: this.idGenerator.generate(),
           projectId: effect.projectId,
           relationType: relationshipType,
+          definition,
           source: {
             entityType: effect.targetEntityType,
             entityId: effect.targetEntityId,
@@ -830,7 +889,7 @@ export class NarrativeTransitionService {
       // inside this transaction and spent inside it, which is exactly the
       // interleaving the guard protects (`ContentRelationshipRepository.ts:102-113`).
       const { source, target } = canonicalizeEndpoints(
-        relationshipType,
+        definition.directionality,
         {
           entityType: effect.targetEntityType,
           entityId: effect.targetEntityId,
@@ -1092,6 +1151,7 @@ export function createNarrativeTransitionService({
   transitionEffectRepository,
   contentEntityLocator,
   narrativeTransitionUnitOfWork,
+  relationshipDefinitionReader,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
@@ -1099,6 +1159,7 @@ export function createNarrativeTransitionService({
   transitionEffectRepository: TransitionEffectRepository;
   contentEntityLocator: ContentEntityLocator;
   narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork;
+  relationshipDefinitionReader: RelationshipDefinitionReader;
 }): NarrativeTransitionService {
   return new NarrativeTransitionService(
     clock,
@@ -1107,5 +1168,6 @@ export function createNarrativeTransitionService({
     transitionEffectRepository,
     contentEntityLocator,
     narrativeTransitionUnitOfWork,
+    relationshipDefinitionReader,
   );
 }

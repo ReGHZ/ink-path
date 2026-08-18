@@ -1,9 +1,3 @@
-import {
-  inverseLabelOf,
-  isDirectional,
-  isRelationType,
-} from "../../../domain/support/relationTypeRegistry.js";
-
 import type { ProjectMembership } from "../../../../../../shared/application/ports/ProjectMembership.js";
 import type {
   CreateRelationshipInput,
@@ -36,12 +30,12 @@ type PerspectiveView = {
   label: string;
 };
 
-// The registry is imported straight from `domain/` rather than being re-exported
-// through the application layer: the allowed direction of dependency is
-// `interface → application → domain` (`notes/02-struktur-domain-dan-test.md:81`),
-// and this module is already the layer that maps entity-shaped data to DTOs.
-// Threading two pure lookups through RelationshipService would only add a
-// pass-through that the service itself never calls.
+// The two facts this needs — directionality and the inverse symbol — used to be
+// pure lookups into a constant and are ROWS since step 4, so they arrive on the
+// detail instead of being imported. The division the frozen addendum draws is
+// unchanged and is the reason this still lives here: the registry supplies the
+// symbol, the interface layer picks WHICH of the two applies to the perspective
+// being read (§7.5). What moved is only where the symbol comes from.
 function viewFromPerspective(
   detail: RelationshipDetail,
   perspective: RelationshipPerspective,
@@ -55,26 +49,29 @@ function viewFromPerspective(
   // (`ContentRelationshipRepository.ts`), and rule 9 forbids a self-relationship,
   // so exactly one side matches.
 
-  // `relationType` is a plain `String` column with no enum and no CHECK
-  // (`prisma/content-support.prisma:65`); the registry is the only thing
-  // narrowing it, and registries shrink. A row written by an older build whose
-  // type has since been retired must still be readable — rendering it verbatim
-  // is a worse label, but a 500 on GET would be a worse API. Direction is still
-  // structurally true; only the flip is unknown, so no flip is applied.
-  if (!isRelationType(detail.relationType)) {
+  // A missing definition should be unreachable — the composite foreign key
+  // `(project_id, relation_type)` refuses a row whose predicate the project does
+  // not define. It is still handled, because the alternative to a verbatim label
+  // is a 500 on GET, and the row stays perfectly meaningful without its label
+  // flipped. Direction is structurally true either way; only the flip is
+  // unknown, so no flip is applied.
+  if (detail.directionality === undefined) {
     return {
       direction: readFromSource ? "outgoing" : "incoming",
       label: detail.relationType,
     };
   }
 
-  if (!isDirectional(detail.relationType)) {
+  if (detail.directionality === "non_directional") {
     return { direction: "non_directional", label: detail.relationType };
   }
 
   return readFromSource
     ? { direction: "outgoing", label: detail.relationType }
-    : { direction: "incoming", label: inverseLabelOf(detail.relationType) };
+    : {
+        direction: "incoming",
+        label: detail.inverseLabel ?? detail.relationType,
+      };
 }
 
 // Bridges DTO <-> the Input/Detail types RelationshipService already defines —

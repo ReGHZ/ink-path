@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
+
 import {
   createRelationshipService,
   type RelationshipService,
@@ -10,7 +11,9 @@ import {
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../src/domains/content/internal/domain/support/ContentRelationshipRepositoryError.js";
+import { seededDefinition } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
 import { PrismaContentRelationshipRepository } from "../../src/domains/content/internal/infrastructure/support/PrismaContentRelationshipRepository.js";
+import { PrismaRelationshipDefinitionReader } from "../../src/domains/content/internal/infrastructure/support/PrismaRelationshipDefinitionReader.js";
 import { Project } from "../../src/domains/project/internal/domain/Project.js";
 import { PrismaProjectRepository } from "../../src/domains/project/internal/infrastructure/PrismaProjectRepository.js";
 import { User } from "../../src/domains/user/internal/domain/User.js";
@@ -18,6 +21,7 @@ import { PrismaUserRepository } from "../../src/domains/user/internal/infrastruc
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
 import { AppError } from "../../src/shared/errors/AppError.js";
 import { ErrorCode } from "../../src/shared/errors/ErrorCode.js";
+import { seedProjectVocabulary } from "../helpers/relationshipVocabulary.js";
 
 
 import type { ContentRelationshipRepository } from "../../src/domains/content/internal/domain/support/ContentRelationshipRepository.js";
@@ -72,6 +76,10 @@ const prisma = createPrismaClient();
 const users = new PrismaUserRepository(prisma);
 const projects = new PrismaProjectRepository(prisma);
 const repository = new PrismaContentRelationshipRepository(prisma);
+// The real adapter over the real rows the seeder wrote — not a stub. The point
+// of this file is that the database answers, and the vocabulary is now part of
+// what it answers with.
+const definitionReader = new PrismaRelationshipDefinitionReader(prisma);
 
 async function cleanDatabase(client: PrismaClient): Promise<void> {
   // Relationships first: `content_relationships.project_id` is onDelete:
@@ -80,10 +88,16 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   await client.contentRelationship.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });
+  // Vocabulary before the project: `relationship_definitions` is onDelete:
+  // Restrict, so a project still holding its predicates refuses to be deleted.
+  await client.relationshipDefinition.deleteMany({
+    where: { projectId: { in: [projectId, otherProjectId] } },
+  });
   await client.project.deleteMany({
     where: { id: { in: [projectId, otherProjectId] } },
   });
   await client.user.deleteMany({ where: { id: ownerUserId } });
+
 }
 
 async function seedOwnerAndProjects(): Promise<void> {
@@ -119,6 +133,11 @@ async function seedOwnerAndProjects(): Promise<void> {
       now,
     }),
   );
+
+  // Both projects need the predicate vocabulary: since step 4 a relationship row
+  // references it by composite foreign key.
+  await seedProjectVocabulary(prisma, projectId);
+  await seedProjectVocabulary(prisma, otherProjectId);
 }
 
 // No content entities are seeded anywhere in this file, and that is not an
@@ -137,10 +156,16 @@ function relationship(
     now?: Date;
   } = {},
 ): ContentRelationship {
+  const relationType = overrides.relationType ?? "ally_of";
+
   return ContentRelationship.create({
     id,
     projectId: overrides.projectId ?? projectId,
-    relationType: overrides.relationType ?? "ally_of",
+    relationType,
+    // The seeded row for this predicate — the same one the seeder wrote into
+    // both fixture projects. Derived from `relationType` so a case that changes
+    // only the predicate cannot keep another one's pair matrix.
+    definition: seededDefinition(relationType),
     source: overrides.source ?? { entityType: "character", entityId: characterA },
     target: overrides.target ?? { entityType: "character", entityId: characterB },
     note: overrides.note,
@@ -443,7 +468,12 @@ describe("PrismaContentRelationshipRepository", () => {
     // The locator is faked on purpose: what is under test is the version chain,
     // and a real locator would drag nine repositories in without changing the
     // outcome. Its own wiring is proven in content-relationship-wiring.
-    const locator = { locate: () => Promise.resolve({ projectId }) };
+    // `entityName` is required by the port and never read on the paths under
+    // test — update and delete resolve nothing by name. Empty string rather than
+    // a plausible label so a test that starts depending on it reads as wrong.
+    const locator = {
+      locate: () => Promise.resolve({ projectId, entityName: "" }),
+    };
 
     // Reads through the real repository, then advances the row's version so the
     // aggregate the service is holding is already out of date by the time it
@@ -471,6 +501,7 @@ describe("PrismaContentRelationshipRepository", () => {
         idGenerator,
         contentRelationshipRepository: staleReading,
         contentEntityLocator: locator,
+        relationshipDefinitionReader: definitionReader,
       });
     }
 
@@ -518,6 +549,7 @@ describe("PrismaContentRelationshipRepository", () => {
         idGenerator,
         contentRelationshipRepository: repository,
         contentEntityLocator: locator,
+        relationshipDefinitionReader: definitionReader,
       });
 
       const error = await service

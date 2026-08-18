@@ -1,11 +1,10 @@
 import {
   canonicalizeEndpoints,
   isDedicatedHierarchyPair,
-  isPairAllowed,
-  isRelationType,
+  isPairAllowedBy,
   type RelationEndpoint,
-  type RelationType,
-} from "./relationTypeRegistry.js";
+  type RelationshipDefinition,
+} from "./relationshipDefinition.js";
 import { normalizeOptionalText } from "../../../../../shared/domain/normalizeOptionalText.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
@@ -17,10 +16,11 @@ import type { ContentEntityType } from "./ContentRevision.js";
 // (`02-system-design/03_flow_04_content_relationship.md`) plus the 12 validation
 // rules of `05-implementation-policy/02_relation_type_registry.md` §4.
 //
-// Rules 1, 3, 4 and 11 live in validate(), rules 9 and 10 in create() (write
-// path only — see the note at the end of validate()), rule 12 is structural;
-// 5, 6, 7 and 8 (endpoint existence, same project, permission) need a repository
-// or a membership context and stay in RelationshipService. The split is not
+// Rules 4 and 11 live in validate(); rules 1, 3, 9 and 10 in create(), the write
+// path only — 1 and 3 moved there in step 4 because they now read a DEFINITION
+// ROW, and reconstitute() has none (see the note in validate()). Rule 12 is
+// structural; 5, 6, 7 and 8 (endpoint existence, same project, permission) need
+// a repository or a membership context and stay in RelationshipService. The split is not
 // stylistic: Phase 7.7
 // (NarrativeTransition `relationship_add`/`relationship_remove`) writes to this
 // same table through a different path than RelationshipService, so an invariant
@@ -38,24 +38,31 @@ export type ContentRelationshipProperties = {
   sourceEntityId: string;
   targetEntityType: ContentEntityType;
   targetEntityId: string;
-  relationType: RelationType;
+  // Plain `string` since step 4. The closed union it used to be WAS the
+  // vocabulary; now the vocabulary is `relationship_definitions` rows, and the
+  // composite FK `(project_id, relation_type) -> (project_id, predicate)` is
+  // what keeps this column from being free text. A union here would be a second
+  // vocabulary, which is the exact condition step 4 removed.
+  relationType: string;
   note: string | null;
   createdByUserId: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
-// `relationType` is a plain `string` here, not `RelationType`, while every other
-// closed set in this domain is narrowed at the type level (compare
-// `ContentRevision.CreateContentRevisionProperties.entityType`). Deliberate:
-// Rule 1 is the domain's own responsibility, so the wire value may be handed in
-// unnarrowed and both entry paths — RelationshipService and 7.7 — get the same
-// rejection. Entity types stay unions because they arrive as route constants,
-// never as free text (registry §4 rule 2).
+// Entity types stay unions because they arrive as route constants, never as free
+// text (registry §4 rule 2). `relationType` cannot: it is an author-owned symbol
+// with no compile-time extent at all.
 export type CreateContentRelationshipProperties = {
   id: string;
   projectId: string;
   relationType: string;
+  // The project's row for `relationType`, loaded by the caller. Handed IN rather
+  // than looked up here so the entity stays free of I/O while still refusing its
+  // own invalid construction — both write paths (RelationshipService and the 7.7
+  // apply path) load it, so the invariant travels with the aggregate exactly as
+  // it did when the matrix was a constant.
+  definition: RelationshipDefinition;
   source: RelationEndpoint;
   target: RelationEndpoint;
   note?: string | null;
@@ -80,31 +87,65 @@ export class ContentRelationship {
   static create(
     props: CreateContentRelationshipProperties,
   ): ContentRelationship {
-    // Rule 1 runs here as well as in validate(), and not redundantly:
-    // canonicalizeEndpoints() below needs a narrowed RelationType to know the
-    // type's directionality, so an unknown type has to be refused before
-    // canonicalization can even be attempted. validate() repeats the check for
-    // the reconstitute() path.
-    if (!isRelationType(props.relationType)) {
+    // Rule 1. The caller resolved the predicate against the project's own
+    // vocabulary and hands the row in; this only refuses a MISMATCHED pair,
+    // which would mean the caller validated one predicate and stored another.
+    // "No such predicate" is answered before create() is reached, because a
+    // missing row means there is nothing to hand in.
+    if (props.definition.predicate !== props.relationType) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `Unknown relation type: ${props.relationType}`,
+        `Definition ${props.definition.predicate} does not describe relation type ${props.relationType}`,
       );
     }
 
-    const relationType: RelationType = props.relationType;
+    // ARITY, the check registry §REVISI 2026-08-17 (a) says falls due together
+    // with the vocabulary becoming data. A relationship row has two endpoints by
+    // construction, so a unary predicate — `dead(char)`, the kind the vertical
+    // slice introduced — can never be one. Rejected by NAME here rather than
+    // left to rule 3: "predicate takes no object" is the caller's actual mistake,
+    // while "pair not allowed" would send them looking for a signature to add.
+    if (!props.definition.objectRequired) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        `Predicate ${props.relationType} takes no object and cannot be stored as a relationship`,
+      );
+    }
 
     // Rules 9 and 10. Canonicalization happens before construction because the
     // canonical orientation IS the stored row's identity (registry §7.4): it is
     // what makes `A↔B` and `B↔A` collide on the unique index, which is how
     // duplicates are detected without any read-before-write (Flow 4 step 8,
-    // superseded 2026-08-14). Directional types are returned untouched, so
+    // superseded 2026-08-14). Directional predicates are returned untouched, so
     // `A -> B` and `B -> A` remain two legitimate relationships.
     const { source, target } = canonicalizeEndpoints(
-      relationType,
+      props.definition.directionality,
       props.source,
       props.target,
     );
+
+    // Rule 11 before rule 3, the same order validate() uses and for the same
+    // reason: both reject the pair, only this one names the mechanism to use
+    // instead. Checked here as well so the caller-facing message arrives before
+    // rule 3 can pre-empt it with a vaguer one.
+    if (isDedicatedHierarchyPair(source.entityType, target.entityType)) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        `Pair ${source.entityType}/${target.entityType} is structural hierarchy with its own FK column and must never be stored as a content relationship`,
+      );
+    }
+
+    // Rule 3, against the definition's signatures instead of a constant matrix.
+    // Checked on the CANONICAL endpoints, which cannot change the answer —
+    // symmetry is expanded by isPairAllowedBy() for non-directional predicates
+    // and canonicalization is the identity for directional ones — but keeps this
+    // check reading the same values that get stored.
+    if (!isPairAllowedBy(props.definition, source.entityType, target.entityType)) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        `Relation type ${props.relationType} does not allow the pair ${source.entityType} -> ${target.entityType}`,
+      );
+    }
 
     return new ContentRelationship({
       id: props.id,
@@ -114,7 +155,7 @@ export class ContentRelationship {
       sourceEntityId: source.entityId,
       targetEntityType: target.entityType,
       targetEntityId: target.entityId,
-      relationType,
+      relationType: props.relationType,
       note: normalizeOptionalText(props.note ?? null),
       createdByUserId: props.createdByUserId,
       createdAt: props.now,
@@ -156,7 +197,7 @@ export class ContentRelationship {
     return this.props.targetEntityId;
   }
 
-  get relationType(): RelationType {
+  get relationType(): string {
     return this.props.relationType;
   }
 
@@ -263,17 +304,29 @@ export class ContentRelationship {
       );
     }
 
-    // Rule 1. Repeated from create() because reconstitute() is the path a
-    // corrupted or hand-edited row arrives through, and `relation_type` is a
-    // plain TEXT column with no enum and no CHECK constraint
-    // (`20260711000100_init_schema`) — this file and the registry are the only
-    // things standing between that column and free text.
-    if (!isRelationType(props.relationType)) {
-      const unknownRelationType: never = props.relationType;
-
+    // Rule 1 is NOT repeated here, and the omission is the substantive change of
+    // step 4 rather than an oversight. Answering "is this a real predicate"
+    // requires the project's definition rows, and reconstitute() — the path a
+    // stored row arrives through — has none to consult without doing I/O inside
+    // a constructor. The column is not unguarded: the composite foreign key
+    // `(project_id, relation_type) -> relationship_definitions(project_id,
+    // predicate)` refuses a row whose predicate the project does not define, and
+    // it refuses it for every writer, including SQL run by hand. That is a
+    // stronger guarantee than the union it replaced, which only bound callers
+    // who went through this file.
+    //
+    // Rule 3 is absent for the same reason and with a weaker guarantee: the FK
+    // proves the predicate exists, not that the stored pair still matches one of
+    // its signatures. An author who narrows a signature set after the fact
+    // leaves rows behind that no longer satisfy it. That is deliberately a
+    // data-audit question, not a constructor's — the argument at the end of this
+    // method for rules 9 and 10 applies unchanged: a row this constructor
+    // refused to build could never be read, and therefore never be deleted,
+    // through the API again.
+    if (props.relationType.trim() === "") {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `Unknown relation type: ${String(unknownRelationType)}`,
+        "Relation type is required",
       );
     }
 
@@ -289,44 +342,19 @@ export class ContentRelationship {
       );
     }
 
-    // Rule 11, checked before Rule 3 on purpose: both would reject these pairs,
-    // but only this one can tell the caller WHICH mechanism to use instead. The
-    // registry already refuses to contain such a pair at module load
-    // (`relationTypeRegistry.ts:414-425`), so this is the caller-facing half of
-    // the same rule, not a second source of truth.
+    // Rule 11. Unlike rules 1 and 3 this one needs no definition — it reads only
+    // the two entity types — so it stays on the read path as well, where it is
+    // the last line against a row that was written before the signature CHECK
+    // existed. The database refuses to store such a signature at all
+    // (`relationship_definition_signatures_no_dedicated_hierarchy`), so this is
+    // the caller-facing half of a rule the schema holds, not a second source of
+    // truth.
     if (
       isDedicatedHierarchyPair(props.sourceEntityType, props.targetEntityType)
     ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         `Pair ${props.sourceEntityType}/${props.targetEntityType} is structural hierarchy with its own FK column and must never be stored as a content relationship`,
-      );
-    }
-
-    // Rule 3.
-    //
-    // Rule 2 (unknown entity type) has no check of its own, and not merely
-    // because rule 3 happens to catch it: `source_entity_type` and
-    // `target_entity_type` are Postgres ENUM columns
-    // (`content-support.prisma:61-64`), so a row carrying an entity type outside
-    // the closed set cannot exist in the database in the first place, and the TS
-    // union closes the same door on the caller's side. That is a different class
-    // of protection from `relation_type`, which is plain TEXT with no CHECK and
-    // therefore needs the explicit rule 1 above. What rule 3 adds is defence in
-    // depth for a value cast past the union — it can never be a member of any
-    // allowed pair set. Hence no third copy of the nine `ContentEntityType`
-    // values; registry §4 rule 2 keeps that list in exactly one place
-    // (`ContentRevision.ts:5-15`).
-    if (
-      !isPairAllowed(
-        props.relationType,
-        props.sourceEntityType,
-        props.targetEntityType,
-      )
-    ) {
-      throw new DomainError(
-        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `Relation type ${props.relationType} does not allow the pair ${props.sourceEntityType} -> ${props.targetEntityType}`,
       );
     }
 

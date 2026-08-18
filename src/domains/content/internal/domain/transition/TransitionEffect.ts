@@ -10,9 +10,9 @@ import {
 } from "../support/ContentRevision.js";
 import {
   isDedicatedHierarchyPair,
-  isPairAllowed,
-  isRelationType,
-} from "../support/relationTypeRegistry.js";
+  isPairAllowedBy,
+  type RelationshipDefinition,
+} from "../support/relationshipDefinition.js";
 
 // One intended consequence of a narrative transition, on one entity
 // (`transition_effects`, `prisma/narrative-transition.prisma:38-60`). Flow 10
@@ -86,12 +86,10 @@ type BaseCreateTransitionEffectProperties = {
 // validate() ever runs. validate() still repeats the check, because
 // reconstitute() is how a hand-edited or drifted row gets back in.
 //
-// `relationshipType` is a plain `string` rather than `RelationType`, exactly like
-// `CreateContentRelationshipProperties.relationType`
-// (`../support/ContentRelationship.ts:48-54`): the wire value arrives
-// unnarrowed and the domain owns the rejection, so both entry paths get the same
-// answer. Entity types stay narrowed — those are route constants, never free
-// text.
+// `relationshipType` is a plain `string`, exactly like
+// `CreateContentRelationshipProperties.relationType`: an author-owned symbol has
+// no compile-time extent. Entity types stay narrowed — those are route
+// constants, never free text.
 export type CreateTransitionEffectProperties =
   | (BaseCreateTransitionEffectProperties & {
       effectType: "attribute_change";
@@ -101,6 +99,12 @@ export type CreateTransitionEffectProperties =
   | (BaseCreateTransitionEffectProperties & {
       effectType: "relationship_add" | "relationship_remove";
       relationshipType: string;
+      // The project's row for `relationshipType`. Required on the DECLARE path
+      // for the reason the whole check exists here: an effect that
+      // `ContentRelationship.create()` would refuse is an effect that can never
+      // be applied, and the caller has to have resolved the predicate anyway to
+      // know it exists at all.
+      definition: RelationshipDefinition;
       relatedEntityType: ContentEntityType;
       relatedEntityId: string;
     });
@@ -139,6 +143,74 @@ export class TransitionEffect {
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         `Field ${props.fieldPath} is not writable by a narrative transition on ${props.targetEntityType}. Writable fields: ${writableAttributeFieldsOf(props.targetEntityType).join(", ")}`,
       );
+    }
+
+    // Rules 1 and 3, on the declare path, against the predicate's own definition.
+    // Both are the twins of the checks in `ContentRelationship.create()`; what
+    // they add here is TIME — refusing at declare rather than at apply, so an
+    // effect that could never be applied is never stored as a promise.
+    if (props.effectType !== "attribute_change") {
+      if (props.definition.predicate !== props.relationshipType) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          `Definition ${props.definition.predicate} does not describe relation type ${props.relationshipType}`,
+        );
+      }
+
+      if (!props.definition.objectRequired) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          `Predicate ${props.relationshipType} takes no object and cannot be stored as a relationship`,
+        );
+      }
+
+      // Rule 11 before rule 3, the order validate() also uses: both reject the
+      // pair, only this one names the mechanism to use instead. Repeated here
+      // because rule 3 now runs in create(), ahead of the constructor, and would
+      // otherwise pre-empt it with the vaguer message.
+      if (
+        isDedicatedHierarchyPair(props.targetEntityType, props.relatedEntityType)
+      ) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          `Pair ${props.targetEntityType}/${props.relatedEntityType} is structural hierarchy with its own FK column and must never be stored as a content relationship`,
+        );
+      }
+
+      // Checked on the endpoints exactly as DECLARED, with no canonicalisation
+      // step — and that is a verified claim rather than an omission. Symmetry is
+      // expanded by isPairAllowedBy() for non-directional predicates and
+      // canonicalisation is the identity for directional ones, so canonicalising
+      // first could never change the answer; the call would be a line nothing
+      // could falsify.
+      //
+      // Two consequences worth stating, since the storage decision rests on them:
+      //
+      //   The effect stores its endpoints as the writer declared them.
+      //   `target_entity_*` is indexed as "which entity does this effect touch"
+      //   (`16:122-123`, the pending-effects partial index), so swapping the
+      //   sides at declaration time would break the query those columns exist
+      //   for. The row that apply eventually writes IS canonicalised, by
+      //   `ContentRelationship.create()` — that belongs to the row's identity,
+      //   not to the intent.
+      //
+      //   For a DIRECTIONAL predicate the orientation carries meaning, so it is
+      //   fixed here: `target_entity_*` is the relationship's SOURCE side and
+      //   `related_entity_*` its target side. "Sword owns Prince" is declared
+      //   with target=sword, related=prince, and declaring it the other way
+      //   round is a different claim, rejected here.
+      if (
+        !isPairAllowedBy(
+          props.definition,
+          props.targetEntityType,
+          props.relatedEntityType,
+        )
+      ) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          `Relation type ${props.relationshipType} does not allow the pair ${props.targetEntityType} -> ${props.relatedEntityType}`,
+        );
+      }
     }
 
     return new TransitionEffect({
@@ -405,23 +477,16 @@ export class TransitionEffect {
       );
     }
 
-    // From here down the rules are the registry's, not this file's, and they are
-    // enforced HERE rather than deferred to apply for one reason: an effect that
-    // `ContentRelationship.create()` would refuse is an effect that can never be
-    // applied — declaring it means storing a promise the system already knows it
-    // cannot keep. Every check below has a twin in
-    // `../support/ContentRelationship.ts`, and the twin is what actually guards
-    // the table; this pair only moves the rejection from apply time to declare
-    // time.
+    // From here down the rules belong to the predicate's definition, not to this
+    // file, and only the two that need no definition row are still checked here.
+    // Every check below has a twin in `../support/ContentRelationship.ts`, and
+    // the twin is what actually guards the table; this pair only moves the
+    // rejection from apply time to declare time — an effect that create() would
+    // refuse is a promise the system already knows it cannot keep.
     //
-    // `relationship_type` is plain TEXT here too (`16:101`), so rule 1 is the
-    // only thing between the column and free text.
-    if (!isRelationType(props.relationshipType)) {
-      throw new DomainError(
-        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `Unknown relation type: ${props.relationshipType}`,
-      );
-    }
+    // Rules 1 and 3 moved to create() in step 4 for the reason spelled out in
+    // `ContentRelationship.validate()`: answering them requires the project's
+    // definition rows, and reconstitute() has none.
 
     // Rule 4. Both halves must match: the same id under a different entity type
     // is a different entity.
@@ -435,53 +500,14 @@ export class TransitionEffect {
       );
     }
 
-    // Rule 11, before rule 3 for the same reason ContentRelationship orders them
-    // that way: both reject the pair, only this one names the mechanism to use
-    // instead.
+    // Rule 11. Needs no definition row — it reads only the two entity types — so
+    // unlike rules 1 and 3 it stays on the read path too.
     if (
       isDedicatedHierarchyPair(props.targetEntityType, props.relatedEntityType)
     ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         `Pair ${props.targetEntityType}/${props.relatedEntityType} is structural hierarchy with its own FK column and must never be stored as a content relationship`,
-      );
-    }
-
-    // Rule 3, checked on the endpoints exactly as declared — no canonicalisation
-    // step here, and that is a verified claim rather than an omission: a first
-    // draft canonicalised first, and mutating the check to skip it turned no test
-    // red, because `ALLOWED_PAIR_KEYS` already stores both orientations for every
-    // non-directional type (`../support/relationTypeRegistry.ts:445-447`) and
-    // canonicalisation is the identity for directional ones
-    // (`:494-503`). Canonicalising before this call could therefore never change
-    // the answer; keeping the call would have been a line nothing could falsify.
-    //
-    // Two consequences worth stating, since they are what the storage decision
-    // rests on:
-    //
-    //   The effect stores its endpoints as the writer declared them.
-    //   `target_entity_*` is indexed as "which entity does this effect touch"
-    //   (`16:122-123`, the pending-effects partial index), so swapping the sides
-    //   at declaration time would break the query those columns exist for. The
-    //   row that apply eventually writes IS canonicalised, by
-    //   `ContentRelationship.create()` — that belongs to the row's identity, not
-    //   to the intent.
-    //
-    //   For a DIRECTIONAL type the orientation carries meaning, so it is fixed
-    //   here: `target_entity_*` is the relationship's SOURCE side and
-    //   `related_entity_*` its target side. "Sword owns Prince" is declared with
-    //   target=sword, related=prince, and declaring it the other way round is a
-    //   different claim, rejected below.
-    if (
-      !isPairAllowed(
-        props.relationshipType,
-        props.targetEntityType,
-        props.relatedEntityType,
-      )
-    ) {
-      throw new DomainError(
-        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `Relation type ${props.relationshipType} does not allow the pair ${props.targetEntityType} -> ${props.relatedEntityType}`,
       );
     }
   }

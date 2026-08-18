@@ -9,6 +9,7 @@ import {
   PlotRepositoryReferencedError,
 } from "../../domain/story/PlotRepositoryError.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -442,6 +443,7 @@ describe("PlotService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "appears_in",
+          definition: seededDefinition("appears_in"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "plot", entityId: "plot-1" },
           createdByUserId: "user-1",

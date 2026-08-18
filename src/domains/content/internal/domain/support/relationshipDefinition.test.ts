@@ -1,17 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  RELATION_TYPES,
-  assertNoHierarchyPairs,
   canonicalizeEndpoints,
-  directionalityOf,
-  inverseLabelOf,
   isDedicatedHierarchyPair,
-  isDirectional,
-  isPairAllowed,
-  isRelationType,
-  type RelationType,
-} from "./relationTypeRegistry.js";
+  isPairAllowedBy,
+} from "./relationshipDefinition.js";
+import {
+  RELATIONSHIP_DEFINITION_SEED,
+  seededDefinition,
+} from "./relationshipDefinitionSeed.js";
 
 import type { ContentEntityType } from "./ContentRevision.js";
 
@@ -30,8 +27,27 @@ const ALL_ENTITY_TYPES: readonly ContentEntityType[] = [
 // Transcribed from the frozen summary table (registry §3) rather than derived
 // from the module under test — a test that asks the implementation what it
 // contains cannot detect the implementation drifting from the document.
+type MatrixPredicate =
+  | "related_to"
+  | "ally_of"
+  | "enemy_of"
+  | "same_location_context"
+  | "same_timeline_context"
+  | "member_of"
+  | "participates_in"
+  | "appears_in"
+  | "depicts"
+  | "located_in"
+  | "causes"
+  | "influences"
+  | "supports"
+  | "opposes"
+  | "betrays"
+  | "foreshadows"
+  | "resolves";
+
 const SUMMARY_TABLE: Readonly<
-  Record<RelationType, { directional: boolean; inverseLabel: string }>
+  Record<MatrixPredicate, { directional: boolean; inverseLabel: string }>
 > = {
   related_to: { directional: false, inverseLabel: "related_to" },
   ally_of: { directional: false, inverseLabel: "ally_of" },
@@ -65,12 +81,12 @@ const SUMMARY_TABLE: Readonly<
 // but spot checks, and a dropped or invented pair would keep the suite green.
 //
 // Maintenance rule: update this table from the DOCUMENT, never from
-// `relationTypeRegistry.ts`. Copying the module's own fan-out lists would make
+// the seed module. Copying its own fan-out lists would make
 // the two agree by construction and detect nothing. Symmetry for
 // non-directional types is expanded below from SUMMARY_TABLE — the test's own
 // knowledge, not the module's.
 const DOCUMENT_PAIR_MATRIX: Readonly<
-  Record<RelationType, ReadonlyArray<readonly [ContentEntityType, string]>>
+  Record<MatrixPredicate, ReadonlyArray<readonly [ContentEntityType, string]>>
 > = {
   related_to: [
     [
@@ -173,7 +189,24 @@ const DOCUMENT_PAIR_MATRIX: Readonly<
   ],
 };
 
-function expectedPairKeys(relationType: RelationType): ReadonlySet<string> {
+const MATRIX_PREDICATES = Object.keys(SUMMARY_TABLE) as MatrixPredicate[];
+
+// The seeded rows are what the frozen matrix became. Reading them through the
+// same accessor production uses keeps this suite locking the DATA the seeder
+// writes, not a constant that no longer exists.
+function definitionOf(predicate: MatrixPredicate) {
+  return seededDefinition(predicate);
+}
+
+function isPairAllowed(
+  predicate: MatrixPredicate,
+  source: ContentEntityType,
+  target: ContentEntityType,
+): boolean {
+  return isPairAllowedBy(definitionOf(predicate), source, target);
+}
+
+function expectedPairKeys(relationType: MatrixPredicate): ReadonlySet<string> {
   const keys = new Set<string>();
 
   for (const [source, targets] of DOCUMENT_PAIR_MATRIX[relationType]) {
@@ -193,55 +226,62 @@ function endpoint(entityType: ContentEntityType, entityId: string) {
   return { entityType, entityId };
 }
 
-describe("relationTypeRegistry — catalogue", () => {
+describe("relationship definitions — catalogue", () => {
   it("holds exactly the 17 frozen relation types", () => {
-    expect(RELATION_TYPES).toHaveLength(17);
-    expect([...RELATION_TYPES].sort()).toEqual(
-      Object.keys(SUMMARY_TABLE).sort(),
+    expect(MATRIX_PREDICATES).toHaveLength(17);
+    // Every matrix predicate is present in the seed, and the seed adds exactly
+    // the two the 2026-08-17 addendum names — nothing else may appear without
+    // this failing.
+    expect(RELATIONSHIP_DEFINITION_SEED.map((seed) => seed.predicate).sort()).toEqual(
+      [...MATRIX_PREDICATES, "owns", "rules"].sort(),
     );
   });
 
   it("splits 5 non-directional and 12 directional (registry §6 Phase Boundary)", () => {
-    const directional = RELATION_TYPES.filter(isDirectional);
+    const directional = MATRIX_PREDICATES.filter(
+      (predicate) => definitionOf(predicate).directionality === "directional",
+    );
 
     expect(directional).toHaveLength(12);
-    expect(RELATION_TYPES.length - directional.length).toBe(5);
+    expect(MATRIX_PREDICATES.length - directional.length).toBe(5);
   });
 
-  it.each(RELATION_TYPES)(
+  it.each(MATRIX_PREDICATES)(
     "%s matches the summary table on directionality and inverse label",
     (relationType) => {
       const expected = SUMMARY_TABLE[relationType];
 
-      expect(directionalityOf(relationType)).toBe(
+      expect(definitionOf(relationType).directionality).toBe(
         expected.directional ? "directional" : "non_directional",
       );
-      expect(inverseLabelOf(relationType)).toBe(expected.inverseLabel);
+      expect(definitionOf(relationType).inverseLabel).toBe(
+        expected.inverseLabel,
+      );
     },
   );
 
-  it("rejects strings outside the registry (Rule 1)", () => {
-    expect(isRelationType("has_member")).toBe(false);
-    expect(isRelationType("caused_by")).toBe(false);
-    expect(isRelationType("depicted_by")).toBe(false);
-    expect(isRelationType("")).toBe(false);
-    expect(isRelationType("RELATED_TO")).toBe(false);
-  });
+  // Inverse labels are SYMBOLS, never predicates: seeding `has_member` as a row
+  // would make the same fact storable twice, once per direction.
+  it("seeds no inverse label as a predicate of its own", () => {
+    const predicates = new Set(
+      RELATIONSHIP_DEFINITION_SEED.map((seed) => seed.predicate),
+    );
 
-  it("accepts every registered type", () => {
-    for (const relationType of RELATION_TYPES) {
-      expect(isRelationType(relationType)).toBe(true);
+    for (const { inverseLabel, directional } of Object.values(SUMMARY_TABLE)) {
+      if (directional) {
+        expect(predicates.has(inverseLabel)).toBe(false);
+      }
     }
   });
 });
 
-describe("relationTypeRegistry — pair matrix locked to the frozen document", () => {
+describe("relationship definitions — pair matrix locked to the frozen document", () => {
   // 17 types × 9 × 9 = 1377 combinations asserted for EQUALITY, not just for
   // the positives. Every "Excluded" line the document writes is therefore
   // locked too, without needing its own test: a pair that is invented, dropped,
   // or silently made symmetric shows up here. Mismatches are collected instead
   // of asserted one by one so a failure names every offending pair at once.
-  it.each(RELATION_TYPES)(
+  it.each(MATRIX_PREDICATES)(
     "%s allows exactly the pairs the document lists, and nothing else",
     (relationType) => {
       const expected = expectedPairKeys(relationType);
@@ -254,7 +294,7 @@ describe("relationTypeRegistry — pair matrix locked to the frozen document", (
 
           if (allowed !== shouldAllow) {
             mismatches.push(
-              `${source} -> ${target}: document says ${shouldAllow}, registry says ${allowed}`,
+              `${source} -> ${target}: document says ${shouldAllow}, seed says ${allowed}`,
             );
           }
         }
@@ -265,11 +305,11 @@ describe("relationTypeRegistry — pair matrix locked to the frozen document", (
   );
 
   it("covers every entity type pair for every relation type", () => {
-    expect(RELATION_TYPES.length * ALL_ENTITY_TYPES.length ** 2).toBe(1377);
+    expect(MATRIX_PREDICATES.length * ALL_ENTITY_TYPES.length ** 2).toBe(1377);
   });
 });
 
-describe("relationTypeRegistry — directionality of the pair matrix", () => {
+describe("relationship definitions — directionality of the pair matrix", () => {
   it("treats non-directional pairs as symmetric even though the matrix is written one-way", () => {
     expect(isPairAllowed("related_to", "character", "faction")).toBe(true);
     expect(isPairAllowed("related_to", "faction", "character")).toBe(true);
@@ -308,7 +348,7 @@ describe("relationTypeRegistry — directionality of the pair matrix", () => {
   });
 });
 
-describe("relationTypeRegistry — dedicated hierarchy (Rule 11, §5, §7.3)", () => {
+describe("relationship definitions — dedicated hierarchy (Rule 11, §5, §7.3)", () => {
   it("recognises the three hierarchy pairs in either order", () => {
     expect(isDedicatedHierarchyPair("layer", "layer")).toBe(true);
     expect(isDedicatedHierarchyPair("map", "map")).toBe(true);
@@ -325,7 +365,7 @@ describe("relationTypeRegistry — dedicated hierarchy (Rule 11, §5, §7.3)", (
   // The cross-type sweep is the point: a per-type spot check would pass even if
   // a future edit reopened hierarchy through a single relation type.
   it("allows no hierarchy pair through ANY relation type", () => {
-    for (const relationType of RELATION_TYPES) {
+    for (const relationType of MATRIX_PREDICATES) {
       for (const [first, second] of [
         ["layer", "layer"],
         ["map", "map"],
@@ -337,32 +377,34 @@ describe("relationTypeRegistry — dedicated hierarchy (Rule 11, §5, §7.3)", (
     }
   });
 
-  // The module-load guard is what keeps the sweep above true for matrices that
-  // do not exist yet. Proving it fires needs a bad matrix, which the frozen
-  // constant will never contain — hence the guard takes its input as an
-  // argument.
-  it("rejects a matrix that smuggles hierarchy in, naming the offending pair", () => {
-    expect(() => {
-      assertNoHierarchyPairs("related_to", [["scene", "chapter"]]);
-    }).toThrow(/scene\/chapter/);
+  // What used to be a module-load guard over a constant. The constant is gone,
+  // so the assertion moved to the DATA the seeder writes — and the database
+  // holds the same rule for every row an author adds later
+  // (`relationship_definition_signatures_no_dedicated_hierarchy`).
+  it("seeds no signature that is a dedicated hierarchy pair", () => {
+    const offenders: string[] = [];
 
-    expect(() => {
-      assertNoHierarchyPairs("related_to", [["map", "map"]]);
-    }).toThrow(/content_relationships/);
-  });
+    for (const seed of RELATIONSHIP_DEFINITION_SEED) {
+      for (const signature of seed.signatures) {
+        if (
+          signature.objectEntityType !== null &&
+          isDedicatedHierarchyPair(
+            signature.subjectEntityType,
+            signature.objectEntityType,
+          )
+        ) {
+          offenders.push(
+            `${seed.predicate}: ${signature.subjectEntityType} -> ${signature.objectEntityType}`,
+          );
+        }
+      }
+    }
 
-  it("passes a matrix that only contains legitimate pairs", () => {
-    expect(() => {
-      assertNoHierarchyPairs("related_to", [
-        ["scene", "scene"],
-        ["chapter", "chapter"],
-        ["map", "layer"],
-      ]);
-    }).not.toThrow();
+    expect(offenders).toEqual([]);
   });
 });
 
-describe("relationTypeRegistry — scene (addendum 2026-08-14)", () => {
+describe("relationship definitions — scene (addendum 2026-08-14)", () => {
   it("puts scene on the receiving end of appears_in", () => {
     for (const source of ["character", "faction", "world_element"] as const) {
       expect(isPairAllowed("appears_in", source, "scene")).toBe(true);
@@ -429,13 +471,13 @@ describe("relationTypeRegistry — scene (addendum 2026-08-14)", () => {
   });
 });
 
-describe("relationTypeRegistry — canonicalisation (§7.4)", () => {
+describe("relationship definitions — canonicalisation (§7.4)", () => {
   const character = endpoint("character", "c-1");
   const faction = endpoint("faction", "f-1");
 
   it("orders a non-directional pair by entity type, whichever way it arrives", () => {
-    const fromLeft = canonicalizeEndpoints("related_to", character, faction);
-    const fromRight = canonicalizeEndpoints("related_to", faction, character);
+    const fromLeft = canonicalizeEndpoints("non_directional", character, faction);
+    const fromRight = canonicalizeEndpoints("non_directional", faction, character);
 
     expect(fromLeft).toEqual({ source: character, target: faction });
     expect(fromRight).toEqual(fromLeft);
@@ -444,19 +486,19 @@ describe("relationTypeRegistry — canonicalisation (§7.4)", () => {
   it("falls back to entity id only when the entity types match", () => {
     const younger = endpoint("character", "c-2");
 
-    expect(canonicalizeEndpoints("ally_of", younger, character)).toEqual({
+    expect(canonicalizeEndpoints("non_directional", younger, character)).toEqual({
       source: character,
       target: younger,
     });
-    expect(canonicalizeEndpoints("ally_of", character, younger)).toEqual({
+    expect(canonicalizeEndpoints("non_directional", character, younger)).toEqual({
       source: character,
       target: younger,
     });
   });
 
   it("is idempotent", () => {
-    const once = canonicalizeEndpoints("related_to", faction, character);
-    const twice = canonicalizeEndpoints("related_to", once.source, once.target);
+    const once = canonicalizeEndpoints("non_directional", faction, character);
+    const twice = canonicalizeEndpoints("non_directional", once.source, once.target);
 
     expect(twice).toEqual(once);
   });
@@ -465,13 +507,13 @@ describe("relationTypeRegistry — canonicalisation (§7.4)", () => {
     const event = endpoint("event", "e-1");
 
     expect(
-      canonicalizeEndpoints("causes", event, endpoint("plot", "p-1")),
+      canonicalizeEndpoints("directional", event, endpoint("plot", "p-1")),
     ).toEqual({ source: event, target: endpoint("plot", "p-1") });
-    expect(canonicalizeEndpoints("influences", faction, character)).toEqual({
+    expect(canonicalizeEndpoints("directional", faction, character)).toEqual({
       source: faction,
       target: character,
     });
-    expect(canonicalizeEndpoints("influences", character, faction)).toEqual({
+    expect(canonicalizeEndpoints("directional", character, faction)).toEqual({
       source: character,
       target: faction,
     });
@@ -484,7 +526,7 @@ describe("relationTypeRegistry — canonicalisation (§7.4)", () => {
     const map = endpoint("map", "m-1");
     const scene = endpoint("scene", "s-1");
 
-    expect(canonicalizeEndpoints("related_to", scene, map)).toEqual({
+    expect(canonicalizeEndpoints("non_directional", scene, map)).toEqual({
       source: map,
       target: scene,
     });

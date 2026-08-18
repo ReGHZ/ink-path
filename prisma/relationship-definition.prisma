@@ -80,9 +80,14 @@ model RelationshipDefinition {
   project    Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
   subclassOf RelationshipDefinition? @relation("PredicateFamily", fields: [subclassOfId, projectId], references: [id, projectId], onDelete: Restrict)
 
-  subclasses RelationshipDefinition[]         @relation("PredicateFamily")
-  signatures RelationshipDefinitionSignature[]
-  assertions TransitionEffect[]
+  subclasses    RelationshipDefinition[]         @relation("PredicateFamily")
+  signatures    RelationshipDefinitionSignature[]
+  assertions    TransitionEffect[]
+  // The CRUD projection. `onDelete: Restrict` on the other side means a
+  // predicate cannot be deleted while relationships still use it — the author
+  // has to remove the facts first, which is the same shape as every other
+  // Restrict in this schema.
+  relationships ContentRelationship[]
 
   @@unique([projectId, predicate])
   @@unique([id, projectId])

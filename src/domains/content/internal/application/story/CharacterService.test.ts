@@ -8,6 +8,7 @@ import {
   CharacterRepositoryNotFoundError,
 } from "../../domain/story/CharacterRepositoryError.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -847,6 +848,7 @@ describe("CharacterService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "member_of",
+          definition: seededDefinition("member_of"),
           source: { entityType: "character", entityId: "char-1" },
           target: { entityType: "faction", entityId: "faction-9" },
           createdByUserId: "user-1",

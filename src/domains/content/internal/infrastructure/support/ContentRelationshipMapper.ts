@@ -7,7 +7,6 @@ import type {
   ContentRelationship as PrismaContentRelationship,
   Prisma,
 } from "../../../../../generated/prisma/client.js";
-import type { RelationType } from "../../domain/support/relationTypeRegistry.js";
 
 export const ContentRelationshipMapper = {
   toDomain(row: PrismaContentRelationship): ContentRelationship {
@@ -22,13 +21,13 @@ export const ContentRelationshipMapper = {
       // `relation_type` is a plain TEXT column — no enum, no CHECK
       // (`content-support.prisma:65`, `20260711000100_init_schema`) — so this
       // cast asserts nothing. It is the same move as SceneMapper's
-      // `currentRevisionId: row.currentRevisionId ?? ""`: hand the value to the
-      // entity and let `reconstitute()` → `validate()` apply Rule 1 and throw a
-      // DomainError for anything outside the registry
-      // (`ContentRelationship.ts:266-278`). Screening it here with
-      // `isRelationType()` instead would move a domain rule into infrastructure
-      // and turn a corrupt row into a silent `null` at the repository boundary.
-      relationType: row.relationType as RelationType,
+      // Passed through verbatim, and since step 4 nothing downstream narrows it
+      // either: the predicate is project data, so a name this codebase has never
+      // heard of is a legitimate row. What keeps the column honest is the
+      // composite foreign key `(project_id, relation_type) ->
+      // relationship_definitions(project_id, predicate)`, which binds every
+      // writer rather than only callers who go through the entity.
+      relationType: row.relationType,
       note: row.note,
       createdByUserId: row.createdByUserId,
       createdAt: row.createdAt,

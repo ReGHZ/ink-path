@@ -14,9 +14,14 @@ import type { ProjectMembership } from "../../../../../shared/application/ports/
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
 import type {
+  RelationDirectionality,
+  RelationshipDefinition,
+} from "../../domain/support/relationshipDefinition.js";
+import type {
   ContentEntityLocation,
   ContentEntityLocator,
 } from "../ports/ContentEntityLocator.js";
+import type { RelationshipDefinitionReader } from "../ports/RelationshipDefinitionReader.js";
 
 export type CreateRelationshipInput = {
   requestingUserId: string;
@@ -59,6 +64,14 @@ export type RelationshipDetail = {
   targetEntityType: ContentEntityType;
   targetEntityId: string;
   relationType: string;
+  // Carried on the detail because the vocabulary is data now: the interface
+  // layer still decides WHICH label a perspective sees (§7.5), but the symbol
+  // and the directionality it picks from are rows, and only the application
+  // layer may read rows. Undefined never happens for a row that satisfies the
+  // `(project_id, relation_type)` foreign key — it is here so a definition
+  // deleted between the two reads degrades to a verbatim label instead of a 500.
+  directionality?: RelationDirectionality;
+  inverseLabel?: string;
   note: string | null;
   createdByUserId: string | null;
   createdAt: Date;
@@ -167,6 +180,7 @@ export class RelationshipService {
     private readonly idGenerator: IdGenerator,
     private readonly contentRelationshipRepository: ContentRelationshipRepository,
     private readonly contentEntityLocator: ContentEntityLocator,
+    private readonly relationshipDefinitionReader: RelationshipDefinitionReader,
   ) { }
 
   async createRelationship(
@@ -193,6 +207,23 @@ export class RelationshipService {
     assertEntityInProject(source, input.projectId, "Source");
     assertEntityInProject(target, input.projectId, "Target");
 
+    // Rule 1, and the one place it can be answered: the vocabulary belongs to
+    // the project, so "no such predicate" is a fact about THIS project's rows.
+    // A 400 rather than a 404 — the request is fixable by the author, either by
+    // correcting the name or by defining the predicate, and 404 would claim the
+    // relationship endpoint does not exist.
+    const definition = await this.relationshipDefinitionReader.findByPredicate(
+      input.projectId,
+      input.relationType,
+    );
+
+    if (definition === null) {
+      throw new AppError(
+        ErrorCode.VALIDATION_ERROR,
+        `Unknown relation type: ${input.relationType}`,
+      );
+    }
+
     // Wrapped construction, the Phase 6 invariant "`X.create()` wajib di dalam
     // try/catch": create() carries rules 1, 3, 4, 9, 10 and 11, all of which are
     // caller-fixable 400s rather than bugs.
@@ -202,6 +233,7 @@ export class RelationshipService {
         id: this.idGenerator.generate(),
         projectId: input.projectId,
         relationType: input.relationType,
+        definition,
         source: {
           entityType: input.sourceEntityType,
           entityId: input.sourceEntityId,
@@ -228,7 +260,7 @@ export class RelationshipService {
       mapRelationshipError(error);
     }
 
-    return toRelationshipDetail(relationship);
+    return toRelationshipDetail(relationship, definition);
   }
 
   // No role guard on either read: Flow 4 §Read Relation step 3 — every role,
@@ -243,7 +275,12 @@ export class RelationshipService {
       relationshipId,
     );
 
-    return toRelationshipDetail(relationship);
+    const definition = await this.relationshipDefinitionReader.findByPredicate(
+      projectId,
+      relationship.relationType,
+    );
+
+    return toRelationshipDetail(relationship, definition ?? undefined);
   }
 
   async listRelationshipsByEntity(
@@ -268,8 +305,17 @@ export class RelationshipService {
         entityId,
       );
 
+    // One query for the whole vocabulary rather than one per row: a list of 50
+    // relationships would otherwise be 51 round trips, and every row needs its
+    // inverse label.
+    const definitions =
+      await this.relationshipDefinitionReader.findAllByProject(projectId);
+
     return relationships.map((relationship) =>
-      toRelationshipDetail(relationship),
+      toRelationshipDetail(
+        relationship,
+        definitions.get(relationship.relationType),
+      ),
     );
   }
 
@@ -283,6 +329,13 @@ export class RelationshipService {
     const relationship = await this.loadExistingRelationship(
       projectId,
       relationshipId,
+    );
+
+    // Loaded for the response label only — the note update touches neither the
+    // predicate nor the endpoints, so nothing here can be invalidated by it.
+    const definition = await this.relationshipDefinitionReader.findByPredicate(
+      projectId,
+      relationship.relationType,
     );
 
     let changed: boolean;
@@ -299,7 +352,7 @@ export class RelationshipService {
     // no-op contract as Scene/Character updates, and here it also keeps a
     // pointless write from colliding with a concurrent one.
     if (!changed) {
-      return toRelationshipDetail(relationship);
+      return toRelationshipDetail(relationship, definition ?? undefined);
     }
 
     try {
@@ -310,7 +363,7 @@ export class RelationshipService {
       mapRelationshipError(error);
     }
 
-    return toRelationshipDetail(relationship);
+    return toRelationshipDetail(relationship, definition ?? undefined);
   }
 
   async deleteRelationship(
@@ -364,6 +417,7 @@ export class RelationshipService {
 // and the effective label for a given perspective.
 function toRelationshipDetail(
   relationship: ContentRelationship,
+  definition: RelationshipDefinition | undefined,
 ): RelationshipDetail {
   return {
     id: relationship.id,
@@ -373,6 +427,8 @@ function toRelationshipDetail(
     targetEntityType: relationship.targetEntityType,
     targetEntityId: relationship.targetEntityId,
     relationType: relationship.relationType,
+    directionality: definition?.directionality,
+    inverseLabel: definition?.inverseLabel,
     note: relationship.note,
     createdByUserId: relationship.createdByUserId,
     createdAt: relationship.createdAt,
@@ -385,16 +441,19 @@ export function createRelationshipService({
   idGenerator,
   contentRelationshipRepository,
   contentEntityLocator,
+  relationshipDefinitionReader,
 }: {
   clock: Clock;
   idGenerator: IdGenerator;
   contentRelationshipRepository: ContentRelationshipRepository;
   contentEntityLocator: ContentEntityLocator;
+  relationshipDefinitionReader: RelationshipDefinitionReader;
 }): RelationshipService {
   return new RelationshipService(
     clock,
     idGenerator,
     contentRelationshipRepository,
     contentEntityLocator,
+    relationshipDefinitionReader,
   );
 }

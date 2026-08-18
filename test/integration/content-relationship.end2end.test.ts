@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
 import { createAppContainer } from "../../src/infrastructure/container.js";
+import { seedProjectVocabulary } from "../helpers/relationshipVocabulary.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -98,7 +99,13 @@ async function createProject(accessToken: string, name: string): Promise<string>
 
   expect(response.status).toBe(201);
 
-  return (await readData(response)).projectId as string;
+  const projectId = (await readData(response)).projectId as string;
+
+  // Every relationship this suite writes needs its predicate to exist — the
+  // composite foreign key added in step 4.
+  await seedProjectVocabulary(prisma, projectId);
+
+  return projectId;
 }
 
 async function createCharacter(
@@ -231,6 +238,13 @@ beforeEach(async () => {
   }
 
   await prisma.userProject.deleteMany({ where: { userId: { in: userIds } } });
+  // Predicate vocabulary before the project: `relationship_definitions` is
+  // onDelete: Restrict, so a project still holding its vocabulary refuses to be
+  // deleted. Consequence of step 4, and the reason this belongs in a cleanup
+  // helper rather than in each test.
+  await prisma.relationshipDefinition.deleteMany({
+    where: { project: { ownerUserId: { in: userIds } } },
+  });
   await prisma.project.deleteMany({ where: { ownerUserId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
 });

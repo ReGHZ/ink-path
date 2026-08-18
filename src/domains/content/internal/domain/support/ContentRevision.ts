@@ -2,8 +2,9 @@ import { normalizeOptionalText } from "../../../../../shared/domain/normalizeOpt
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 
-// Derived union, same shape as RELATION_TYPES/RelationType in
-// `relationTypeRegistry.ts:23-43`. The union itself is unchanged — what the
+// Derived union. Unlike the relation-type union that used to sit beside it and
+// was retired in step 4, THIS one stays closed on purpose: entity types are
+// route constants shipped with the code, not vocabulary an author extends. What
 // array adds is a VALUE to iterate at runtime, so consumers that need "every
 // content entity type" (the POST body enum and the nested relationship route
 // table, 7.3) read one list instead of retyping it and drifting from it. A tenth

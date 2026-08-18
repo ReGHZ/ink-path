@@ -5,14 +5,15 @@ import {
   type ContentRelationshipProperties,
   type CreateContentRelationshipProperties,
 } from "./ContentRelationship.js";
+import { seededDefinition } from "./relationshipDefinitionSeed.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 
 import type { ContentEntityType } from "./ContentRevision.js";
 import type {
   RelationEndpoint,
-  RelationType,
-} from "./relationTypeRegistry.js";
+  RelationshipDefinition,
+} from "./relationshipDefinition.js";
 
 const now = new Date("2026-08-14T00:00:00.000Z");
 const later = new Date("2026-08-15T00:00:00.000Z");
@@ -51,13 +52,20 @@ const baseSnapshot: ContentRelationshipProperties = {
   updatedAt: now,
 };
 
+// The definition follows the predicate unless a case overrides it explicitly.
+// Deriving it is what keeps a test that only changes `relationType` honest: a
+// fixed default would hand `related_to` the `member_of` row and quietly test the
+// wrong pair matrix.
 function createRelationship(
   overrides: Partial<CreateContentRelationshipProperties> = {},
 ) {
+  const relationType = overrides.relationType ?? "member_of";
+
   return ContentRelationship.create({
     id: "relationship-1",
     projectId,
-    relationType: "member_of",
+    relationType,
+    definition: overrides.definition ?? seededDefinition(relationType),
     source: character,
     target: faction,
     createdByUserId,
@@ -104,19 +112,48 @@ function expectDomainError(act: () => unknown): DomainError {
 // The message matcher is what makes these cases distinguishable at all: every
 // rule here fails with the same DomainErrorCode, so asserting only the code
 // would let rule 3 stand in for rule 4 or 11 without the suite noticing.
+// An author-coined UNARY predicate — the shape the vertical slice introduced
+// (`dead(char)`), which no seeded row has. Written by hand rather than seeded
+// precisely because the seed is all binary: the arity rule has to be provable
+// against a predicate the codebase never shipped.
+const UNARY_DEAD: RelationshipDefinition = {
+  predicate: "dead",
+  directionality: "directional",
+  objectRequired: false,
+  inverseLabel: "dead",
+  signatures: [{ subjectEntityType: "character", objectEntityType: null }],
+};
+
 const RULE_VIOLATIONS: ReadonlyArray<{
   rule: string;
   relationType: string;
   source: RelationEndpoint;
   target: RelationEndpoint;
   message: RegExp;
+  // Whether reconstitute() still enforces it. False = the rule needs a
+  // definition row and therefore lives on the write path only since step 4.
+  enforcedOnRead: boolean;
+  // Overrides the definition create() is handed. Only the two cases whose whole
+  // point is a definition that does NOT match set it.
+  definition?: RelationshipDefinition;
 }> = [
   {
-    rule: "rule 1 — relation type outside the registry",
+    rule: "rule 1 — the definition handed in describes a different predicate",
     relationType: "besties_with",
     source: character,
     target: faction,
-    message: /unknown relation type/i,
+    message: /does not describe relation type/i,
+    enforcedOnRead: false,
+    definition: seededDefinition("ally_of"),
+  },
+  {
+    rule: "arity — a unary predicate cannot be a relationship",
+    relationType: "dead",
+    source: character,
+    target: faction,
+    message: /takes no object/i,
+    enforcedOnRead: false,
+    definition: UNARY_DEAD,
   },
   {
     rule: "rule 4 — same entity type and id on both sides",
@@ -124,6 +161,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: character,
     target: character,
     message: /self-relationship/i,
+    enforcedOnRead: true,
   },
   {
     rule: "rule 11 — layer hierarchy",
@@ -131,6 +169,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: { entityType: "layer", entityId: "layer-1" },
     target: { entityType: "layer", entityId: "layer-2" },
     message: /structural hierarchy/i,
+    enforcedOnRead: true,
   },
   {
     rule: "rule 11 — map hierarchy",
@@ -138,6 +177,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: { entityType: "map", entityId: "map-1" },
     target: { entityType: "map", entityId: "map-2" },
     message: /structural hierarchy/i,
+    enforcedOnRead: true,
   },
   {
     rule: "rule 11 — chapter-scene hierarchy",
@@ -145,6 +185,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: { entityType: "chapter", entityId: "chapter-1" },
     target: { entityType: "scene", entityId: "scene-1" },
     message: /structural hierarchy/i,
+    enforcedOnRead: true,
   },
   {
     rule: "rule 11 — chapter-scene hierarchy, other way round",
@@ -152,6 +193,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: { entityType: "scene", entityId: "scene-1" },
     target: { entityType: "chapter", entityId: "chapter-1" },
     message: /structural hierarchy/i,
+    enforcedOnRead: true,
   },
   {
     rule: "rule 3 — pair not allowed for this relation type",
@@ -159,6 +201,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: faction,
     target: character,
     message: /does not allow the pair/i,
+    enforcedOnRead: false,
   },
   {
     rule: "rule 3 — event -> scene, which `depicts` already covers one way",
@@ -166,6 +209,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
     source: { entityType: "event", entityId: "event-1" },
     target: { entityType: "scene", entityId: "scene-1" },
     message: /does not allow the pair/i,
+    enforcedOnRead: false,
   },
   {
     rule: "rule 3 — entity type outside the closed set",
@@ -176,6 +220,7 @@ const RULE_VIOLATIONS: ReadonlyArray<{
       entityId: "whatever-1",
     },
     message: /does not allow the pair/i,
+    enforcedOnRead: false,
   },
 ];
 
@@ -292,6 +337,8 @@ describe("ContentRelationship", () => {
         const error = expectDomainError(() =>
           createRelationship({
             relationType: violation.relationType,
+            definition:
+              violation.definition ?? seededDefinition(violation.relationType),
             source: violation.source,
             target: violation.target,
           }),
@@ -332,16 +379,39 @@ describe("ContentRelationship", () => {
       );
     });
 
-    for (const violation of RULE_VIOLATIONS) {
+    // Only the rules that survive WITHOUT a definition row. Rules 1, 3 and arity
+    // moved to create() in step 4 because answering them needs the project's
+    // vocabulary, which reconstitute() cannot consult — the composite foreign key
+    // `(project_id, relation_type)` is what guards the column on this path now,
+    // and a drifted PAIR is a data-audit question by the same argument the file
+    // already makes for rules 9 and 10. Asserting the absence rather than
+    // deleting the cases: a reconstitute() that quietly started rejecting again
+    // would trap rows out of the API, which is the failure this split prevents.
+    for (const violation of RULE_VIOLATIONS.filter(
+      (candidate) => candidate.enforcedOnRead,
+    )) {
       it(`rejects ${violation.rule}`, () => {
         const error = expectDomainError(() =>
           reconstituteRelationship({
-            relationType: violation.relationType as RelationType,
+            relationType: violation.relationType,
             ...endpointOverrides(violation.source, violation.target),
           }),
         );
 
         expect(error.message).toMatch(violation.message);
+      });
+    }
+
+    for (const violation of RULE_VIOLATIONS.filter(
+      (candidate) => !candidate.enforcedOnRead,
+    )) {
+      it(`accepts ${violation.rule} — write-path rule, guarded by the FK`, () => {
+        expect(() =>
+          reconstituteRelationship({
+            relationType: violation.relationType,
+            ...endpointOverrides(violation.source, violation.target),
+          }),
+        ).not.toThrow();
       });
     }
 
@@ -465,10 +535,11 @@ describe("ContentRelationship", () => {
   });
 
   describe("invariant boundaries (improvement rule)", () => {
-    // The pair matrix itself — 17 types × 9 × 9 — is locked against the frozen
-    // document by relationTypeRegistry.test.ts. Re-transcribing it here would
-    // duplicate that sweep and rot beside it; these tests only prove that the
-    // entity DELEGATES to the registry instead of carrying its own opinion.
+    // The pair matrix itself — 17 predicates × 9 × 9 — is locked against the
+    // frozen document by `relationshipDefinition.test.ts`, which transcribes it
+    // by hand and compares it to the seeded rows. Re-transcribing it here would
+    // duplicate that sweep and rot beside it; these tests only prove the entity
+    // DELEGATES to the definition it is handed instead of holding an opinion.
     it("accepts endpoints it cannot verify: existence, ownership, and project match are the service's job (rules 5-7)", () => {
       const relationship = createRelationship({
         projectId: "some-other-project",
@@ -506,7 +577,10 @@ describe("ContentRelationship", () => {
 
     it("rejects with the neutral domain-validation code, not a relation-specific one", () => {
       const error = expectDomainError(() =>
-        createRelationship({ relationType: "besties_with" }),
+        createRelationship({
+          relationType: "besties_with",
+          definition: seededDefinition("member_of"),
+        }),
       );
 
       expect(error.code).toBe(DomainErrorCode.DOMAIN_VALIDATION_FAILED);

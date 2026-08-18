@@ -8,6 +8,7 @@ import {
   FactionRepositoryNotFoundError,
 } from "../../domain/story/FactionRepositoryError.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -876,6 +877,7 @@ describe("FactionService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "member_of",
+          definition: seededDefinition("member_of"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "faction", entityId: "faction-1" },
           createdByUserId: "user-1",

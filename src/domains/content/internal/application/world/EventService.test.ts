@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { EventService } from "./EventService.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 import { Event } from "../../domain/world/Event.js";
 import {
   EventRepositoryConflictError,
@@ -466,6 +467,7 @@ describe("EventService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "participates_in",
+          definition: seededDefinition("participates_in"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "event", entityId: "event-1" },
           createdByUserId: "user-1",

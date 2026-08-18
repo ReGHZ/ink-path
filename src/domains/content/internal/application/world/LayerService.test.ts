@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LayerService } from "./LayerService.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 import { Layer } from "../../domain/world/Layer.js";
 import {
   LayerRepositoryConflictError,
@@ -1000,6 +1001,7 @@ describe("LayerService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "located_in",
+          definition: seededDefinition("located_in"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "layer", entityId: "layer-1" },
           createdByUserId: "user-1",

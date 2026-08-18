@@ -38,11 +38,12 @@ export const relationshipNoteSchema = z.string().trim().min(1).max(2000);
 export const contentEntityIdSchema = z.uuid();
 
 // Perspective of a listed relationship relative to the entity that was queried.
-// `non_directional` is not a hedge: for those types `canonicalizeEndpoints()`
-// picks source/target by lexicographic order (`relationTypeRegistry.ts:494-511`),
-// so "outgoing" there would report an artefact of sorting as if it were a
-// narrative fact. The vocabulary matches `RelationDirectionality`
-// (`relationTypeRegistry.ts:19`) instead of introducing a third word for it.
+// `non_directional` is not a hedge: for those predicates `canonicalizeEndpoints()`
+// picks source/target by lexicographic order
+// (`../../../domain/support/relationshipDefinition.ts`), so "outgoing" there
+// would report an artefact of sorting as if it were a narrative fact. The
+// vocabulary matches `RelationDirectionality` in that same module instead of
+// introducing a third word for it.
 export const relationshipDirectionSchema = z.enum([
   "outgoing",
   "incoming",

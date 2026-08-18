@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { WorldMapService } from "./WorldMapService.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 import { WorldMap } from "../../domain/world/WorldMap.js";
 import {
   WorldMapRepositoryConflictError,
@@ -952,6 +953,7 @@ describe("WorldMapService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "located_in",
+          definition: seededDefinition("located_in"),
           source: { entityType: "character", entityId: "char-9" },
           target: { entityType: "map", entityId: "map-1" },
           createdByUserId: "user-1",

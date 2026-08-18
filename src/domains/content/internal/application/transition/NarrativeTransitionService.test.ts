@@ -9,6 +9,10 @@ import {
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
 import {
+  SEEDED_DEFINITIONS,
+  seededDefinition,
+} from "../../domain/support/relationshipDefinitionSeed.js";
+import {
   NarrativeTransition,
   type NarrativeTransitionProperties,
 } from "../../domain/transition/NarrativeTransition.js";
@@ -30,6 +34,15 @@ import type {
 } from "../ports/ContentAttributeMutator.js";
 import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type { NarrativeTransitionUnitOfWork } from "../ports/NarrativeTransitionUnitOfWork.js";
+import type { RelationshipDefinitionReader } from "../ports/RelationshipDefinitionReader.js";
+
+// The seeded vocabulary — what a project has from creation. An unknown
+// predicate answers null here exactly as the database does.
+const seededDefinitionReader: RelationshipDefinitionReader = {
+  findByPredicate: (_projectId: string, predicate: string) =>
+    Promise.resolve(SEEDED_DEFINITIONS.get(predicate) ?? null),
+  findAllByProject: () => Promise.resolve(SEEDED_DEFINITIONS),
+};
 
 const now = new Date("2026-08-16T00:00:00.000Z");
 const later = new Date("2026-08-17T00:00:00.000Z");
@@ -326,6 +339,7 @@ beforeEach(() => {
     effects,
     locator,
     unitOfWork,
+    seededDefinitionReader,
   );
 });
 
@@ -1056,6 +1070,7 @@ describe("applyEffect — relationship effects", () => {
       id: "relationship-1",
       projectId,
       relationType: "member_of",
+      definition: seededDefinition("member_of"),
       source: { entityType: "character", entityId: "character-1" },
       target: { entityType: "faction", entityId: "faction-1" },
       createdByUserId: userId,
@@ -1091,6 +1106,7 @@ describe("applyEffect — relationship effects", () => {
         id: "relationship-1",
         projectId,
         relationType: "member_of",
+        definition: seededDefinition("member_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
         createdByUserId: userId,
@@ -1138,6 +1154,7 @@ describe("applyEffect — relationship effects", () => {
         id: "relationship-other",
         projectId,
         relationType: "ally_of",
+        definition: seededDefinition("ally_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
         createdByUserId: userId,

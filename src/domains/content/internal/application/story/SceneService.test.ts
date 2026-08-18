@@ -14,6 +14,7 @@ import {
   SceneRepositoryOrderConflictError,
 } from "../../domain/story/SceneRepositoryError.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -580,6 +581,7 @@ describe("SceneService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "depicts",
+          definition: seededDefinition("depicts"),
           source: { entityType: "scene", entityId: "scene-1" },
           target: { entityType: "event", entityId: "event-9" },
           createdByUserId: "user-1",

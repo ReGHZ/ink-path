@@ -1,22 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { isDedicatedHierarchyPair } from "./relationshipDefinition.js";
 import {
   PREDICATE_NAME_PATTERN,
   RELATIONSHIP_DEFINITION_SEED,
 } from "./relationshipDefinitionSeed.js";
-import {
-  RELATION_TYPES,
-  isDedicatedHierarchyPair,
-} from "./relationTypeRegistry.js";
 
 // What this file can and cannot prove, stated up front so nobody reads more
 // assurance into it than it carries.
 //
-// 17 of the 19 seeds are DERIVED from the registry, so "the seed matches the
-// registry" is a tautology here and is deliberately not asserted — the 67
-// exhaustiveness tests in `relationTypeRegistry.test.ts` are what tie those 17
-// to `05-implementation-policy/02_relation_type_registry.md`, and they tie the
-// derived seed along with them.
+// The matrix itself is tied to `05-implementation-policy/02_relation_type_registry.md`
+// by the exhaustiveness suite in `relationshipDefinition.test.ts`, which
+// transcribes the frozen document by hand and compares it against these rows —
+// that is where "the seed matches the document" is proved, and it is not
+// re-proved here.
 //
 // What is worth asserting is everything the derivation does NOT give for free:
 // the count, the two hand-written addendum entries, and the invariants the
@@ -27,18 +24,18 @@ const byPredicate = new Map(
 );
 
 describe("relationship definition seed", () => {
-  it("seeds 19 predicates: the registry's 17 plus the 2026-08-17 addendum", () => {
+  it("seeds 19 predicates: the frozen matrix's 17 plus the 2026-08-17 addendum", () => {
     expect(RELATIONSHIP_DEFINITION_SEED).toHaveLength(19);
-    expect(RELATION_TYPES).toHaveLength(17);
   });
 
-  // The failure this guards against is specific and scheduled: step 4 of the
-  // work order retires the closed union, and whoever adds `owns`/`rules` to
-  // RELATION_TYPES will produce a seed with two `owns` entries. `(project_id,
-  // predicate)` is unique, so the seeder would then fail halfway through a
-  // project's vocabulary — after some definitions had already been written.
-  // Here it fails at `npm test` instead, pointing at the addendum list that has
-  // to shrink.
+  // The invariant survived step 4; only its enforcement site moved. It used to
+  // guard a scheduled collision — adding `owns`/`rules` to the closed union
+  // while the addendum list still carried them would have produced two `owns`
+  // seeds — and the union is gone, so that particular collision cannot happen.
+  // What remains is the same rule the DATABASE now holds for every project:
+  // `@@unique([projectId, predicate])`. A duplicate here would make the seeder
+  // fail halfway through a project's vocabulary, after some definitions had
+  // already been written; failing at `pnpm test` instead is the point.
   it("declares each predicate exactly once", () => {
     expect(byPredicate.size).toBe(RELATIONSHIP_DEFINITION_SEED.length);
   });

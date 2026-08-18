@@ -71,6 +71,23 @@ model ContentRelationship {
   project       Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
   createdByUser User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
+  // Step 4. `relation_type` used to be free TEXT held in check only by a closed
+  // union in `relationTypeRegistry.ts`, which bound callers who went through the
+  // entity and nothing else. The predicate is a ROW now, and this composite key
+  // is what replaces the union — for every writer, hand-run SQL included.
+  //
+  // Composite `(project_id, relation_type)` rather than a `definition_id` column,
+  // because the predicate is scoped to the project either way and the pairing is
+  // exactly what must hold: a row may not borrow another project's vocabulary.
+  // Keeping the symbol in the column also keeps every read that only needs the
+  // name — the whole CRUD surface — free of a join.
+  //
+  // `onUpdate: Restrict` is load-bearing and not a default: `predicate` is
+  // editable by the author, and a cascade would silently rewrite stored facts
+  // when someone renames a predicate. Refusing the rename while relationships
+  // reference it is the honest answer.
+  definition RelationshipDefinition @relation(fields: [projectId, relationType], references: [projectId, predicate], onDelete: Restrict, onUpdate: Restrict)
+
   @@unique([projectId, relationType, sourceEntityType, sourceEntityId, targetEntityType, targetEntityId])
   @@index([projectId])
   @@index([projectId, sourceEntityType, sourceEntityId])

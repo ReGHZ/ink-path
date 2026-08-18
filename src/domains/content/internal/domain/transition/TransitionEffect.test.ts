@@ -7,6 +7,7 @@ import {
 } from "./TransitionEffect.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { CONTENT_ENTITY_TYPES } from "../support/ContentRevision.js";
+import { seededDefinition } from "../support/relationshipDefinitionSeed.js";
 
 const now = new Date("2026-08-16T00:00:00.000Z");
 const later = new Date("2026-08-17T00:00:00.000Z");
@@ -47,6 +48,11 @@ function createAttributeChange(
 function createRelationshipChange(
   overrides: Partial<CreateRelationshipChangeProperties> = {},
 ) {
+  const relationshipType =
+    "relationshipType" in overrides && overrides.relationshipType !== undefined
+      ? overrides.relationshipType
+      : "member_of";
+
   return TransitionEffect.create({
     id: "effect-1",
     narrativeTransitionId,
@@ -54,7 +60,13 @@ function createRelationshipChange(
     effectType: "relationship_add",
     targetEntityType: "character",
     targetEntityId: "character-1",
-    relationshipType: "member_of",
+    relationshipType,
+    // Follows the predicate unless the case overrides it — a fixed default would
+    // hand one predicate's row to another and test the wrong matrix.
+    definition:
+      "definition" in overrides && overrides.definition !== undefined
+        ? overrides.definition
+        : seededDefinition(relationshipType),
     relatedEntityType: "faction",
     relatedEntityId: "faction-1",
     now,
@@ -229,10 +241,18 @@ describe("TransitionEffect.create — relationship effects", () => {
     ).toThrow(/does not allow the pair faction -> character/);
   });
 
-  it("rejects an unknown relation type", () => {
+  // "Unknown predicate" is no longer answerable here: since step 4 the
+  // vocabulary is per-project rows, and a name nobody defined has no definition
+  // to hand in — NarrativeTransitionService answers that one, with a 400, before
+  // create() is reached. What the entity can still catch is a caller that
+  // resolved one predicate and declared another.
+  it("rejects a definition that describes a different predicate", () => {
     expect(() =>
-      createRelationshipChange({ relationshipType: "owns" }),
-    ).toThrow(/Unknown relation type: owns/);
+      createRelationshipChange({
+        relationshipType: "owns",
+        definition: seededDefinition("member_of"),
+      }),
+    ).toThrow(/does not describe relation type owns/);
   });
 
   it("rejects a pair the relation type does not allow", () => {

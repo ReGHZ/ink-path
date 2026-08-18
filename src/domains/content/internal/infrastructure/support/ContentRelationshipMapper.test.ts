@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ContentRelationshipMapper } from "./ContentRelationshipMapper.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { ContentRelationship as PrismaContentRelationship } from "../../../../../generated/prisma/client.js";
 
@@ -19,17 +20,19 @@ import type { ContentRelationship as PrismaContentRelationship } from "../../../
 // and the round trip on the way back (pins the two directions to each other).
 const NOW = new Date("2026-08-15T00:00:00.000Z");
 
-// `influences` allows character -> faction AND faction -> character
-// (`relationTypeRegistry.ts:304-332`), chosen on purpose: with a directional
-// type whose reverse pair is illegal, a swap would blow up inside
-// reconstitute() as a rule-3 DomainError, and the test would pass for a reason
-// unrelated to what it claims to check. Here a swapped mapper produces a
-// perfectly valid aggregate, so only the assertions below can catch it.
+// `influences` allows character -> faction AND faction -> character in the
+// frozen matrix (`05-implementation-policy/02_relation_type_registry.md` §2),
+// chosen on purpose: with a directional predicate whose reverse pair is illegal,
+// a swap would once have blown up inside reconstitute() and the test would have
+// passed for a reason unrelated to what it claims. Since step 4 the read path
+// checks no pair at all, so the choice matters even more — only the assertions
+// below can catch a swapped mapper.
 function buildRelationship(): ContentRelationship {
   return ContentRelationship.create({
     id: "relationship-1",
     projectId: "project-1",
     relationType: "influences",
+    definition: seededDefinition("influences"),
     source: { entityType: "character", entityId: "character-1" },
     target: { entityType: "faction", entityId: "faction-1" },
     note: "the sect elder leans on him",
@@ -132,18 +135,26 @@ describe("ContentRelationshipMapper", () => {
       expect(ContentRelationshipMapper.toDomain(row).version).toBe(7);
     });
 
-    // `relation_type` is TEXT with no CHECK, so the cast in toDomain asserts
-    // nothing — the entity is what refuses a value outside the registry. This
-    // proves the refusal actually happens on the read path rather than the cast
-    // quietly admitting free text.
-    it("refuses a row whose relation_type is not in the registry", () => {
+    // Since step 4 the read path does NOT refuse an unrecognised predicate, and
+    // this asserts the absence deliberately. `relation_type` is guarded by the
+    // composite foreign key `(project_id, relation_type) ->
+    // relationship_definitions(project_id, predicate)`, which holds for every
+    // writer including hand-run SQL — a strictly stronger guarantee than the
+    // closed union it replaced, which only bound callers going through the
+    // entity. Re-adding a refusal here would trap a row out of the API: reading
+    // is how the API obtains the `version` a delete needs, so a row this mapper
+    // rejected could never be deleted again.
+    //
+    // `cultivates_with` is exactly the case the change exists for: an
+    // author-coined predicate is a legitimate row, not corruption.
+    it("loads a row whose predicate this codebase has never heard of", () => {
       const row = {
         ...asStoredRow(buildRelationship()),
         relationType: "cultivates_with",
       };
 
-      expect(() => ContentRelationshipMapper.toDomain(row)).toThrow(
-        /Unknown relation type/,
+      expect(ContentRelationshipMapper.toDomain(row).relationType).toBe(
+        "cultivates_with",
       );
     });
 

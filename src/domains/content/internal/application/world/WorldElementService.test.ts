@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { WorldElementService } from "./WorldElementService.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
 import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
+import { seededDefinition } from "../../domain/support/relationshipDefinitionSeed.js";
 import { WorldElement } from "../../domain/world/WorldElement.js";
 import {
   WorldElementRepositoryConflictError,
@@ -858,6 +859,7 @@ describe("WorldElementService", () => {
           id: "rel-1",
           projectId: "proj-1",
           relationType: "participates_in",
+          definition: seededDefinition("participates_in"),
           source: { entityType: "world_element", entityId: "we-1" },
           target: { entityType: "event", entityId: "event-9" },
           createdByUserId: "user-1",

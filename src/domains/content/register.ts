@@ -58,6 +58,7 @@ import { createPlotUnitOfWork } from "./internal/infrastructure/story/PrismaPlot
 import { createSceneRepository } from "./internal/infrastructure/story/PrismaSceneRepository.js";
 import { createSceneUnitOfWork } from "./internal/infrastructure/story/PrismaSceneUnitOfWork.js";
 import { createContentRelationshipRepository } from "./internal/infrastructure/support/PrismaContentRelationshipRepository.js";
+import { createRelationshipDefinitionReader } from "./internal/infrastructure/support/PrismaRelationshipDefinitionReader.js";
 import { createNarrativeTransitionRepository } from "./internal/infrastructure/transition/PrismaNarrativeTransitionRepository.js";
 import { createTransitionEffectRepository } from "./internal/infrastructure/transition/PrismaTransitionEffectRepository.js";
 import { createEventRepository } from "./internal/infrastructure/world/PrismaEventRepository.js";
@@ -116,6 +117,7 @@ import {
 import type { ContentEntityLocator } from "./internal/application/ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "./internal/application/ports/ContentUnitOfWork.js";
 import type { NarrativeTransitionUnitOfWork } from "./internal/application/ports/NarrativeTransitionUnitOfWork.js";
+import type { RelationshipDefinitionReader } from "./internal/application/ports/RelationshipDefinitionReader.js";
 import type { ChapterRepository } from "./internal/domain/story/ChapterRepository.js";
 import type { CharacterRepository } from "./internal/domain/story/CharacterRepository.js";
 import type { FactionRepository } from "./internal/domain/story/FactionRepository.js";
@@ -183,6 +185,9 @@ export type ContentDomainCradle = {
   // `contentEntityReader` because they are built from the same descriptors.
   contentEntityLocator: ContentEntityLocator;
   contentRelationshipRepository: ContentRelationshipRepository;
+  // The project's predicate vocabulary, read by both write paths into
+  // `content_relationships` (step 4 retired the constant they used to share).
+  relationshipDefinitionReader: RelationshipDefinitionReader;
   relationshipService: RelationshipService;
   relationshipController: RelationshipController;
   // Phase 7.6-7.7. `narrativeTransitionUnitOfWork` has no
@@ -264,6 +269,9 @@ export function registerContentDomain(
     sceneService: asFunction(createSceneService).singleton(),
     sceneController: asFunction(createSceneController).singleton(),
     contentEntityLocator: asFunction(createContentEntityLocator).singleton(),
+    relationshipDefinitionReader: asFunction(
+      createRelationshipDefinitionReader,
+    ).singleton(),
     contentRelationshipRepository: asFunction(
       createContentRelationshipRepository,
     ).singleton(),

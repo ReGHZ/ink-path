@@ -8,6 +8,7 @@ import {
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
+import { SEEDED_DEFINITIONS } from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -18,6 +19,18 @@ import type {
   ContentEntityLocation,
   ContentEntityLocator,
 } from "../ports/ContentEntityLocator.js";
+import type { RelationshipDefinitionReader } from "../ports/RelationshipDefinitionReader.js";
+
+
+// The seeded vocabulary, which is what a project has from the moment it is
+// created. Deliberately not a stub that says yes: an unknown predicate answers
+// null here exactly as the database does, so the service's own 400 is what the
+// tests exercise.
+const seededDefinitionReader: RelationshipDefinitionReader = {
+  findByPredicate: (_projectId: string, predicate: string) =>
+    Promise.resolve(SEEDED_DEFINITIONS.get(predicate) ?? null),
+  findAllByProject: () => Promise.resolve(SEEDED_DEFINITIONS),
+};
 
 const now = new Date("2026-08-15T00:00:00.000Z");
 
@@ -185,6 +198,7 @@ function createService() {
       new FakeIdGenerator(),
       relationships,
       locator,
+      seededDefinitionReader,
     ),
   };
 }
