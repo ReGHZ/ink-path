@@ -1,7 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { RELATIONSHIP_DEFINITION_SEED } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
-import { seedRelationshipDefinitions } from "../../src/domains/content/internal/infrastructure/support/PrismaRelationshipDefinitionSeeder.js";
+import {
+  seedRelationshipDefinitions,
+  type RelationshipDefinitionSeedResult,
+} from "../../src/domains/content/internal/infrastructure/support/PrismaRelationshipDefinitionSeeder.js";
 import { Project } from "../../src/domains/project/internal/domain/Project.js";
 import { PrismaProjectRepository } from "../../src/domains/project/internal/infrastructure/PrismaProjectRepository.js";
 import { User } from "../../src/domains/user/internal/domain/User.js";
@@ -122,6 +125,18 @@ async function seedOwnerAndProjects(): Promise<void> {
   );
 }
 
+// The seeder's contract is "runs inside the caller's transaction" — it writes
+// definitions and signatures as two statements and leaves atomicity to whoever
+// owns the transaction (in production, project creation). Exercising it any
+// other way would test a shape nothing uses.
+async function seedVocabulary(
+  targetProjectId: string,
+): Promise<RelationshipDefinitionSeedResult> {
+  return prisma.$transaction((tx) =>
+    seedRelationshipDefinitions(tx, targetProjectId),
+  );
+}
+
 beforeEach(async () => {
   await cleanDatabase(prisma);
   await seedOwnerAndProjects();
@@ -134,7 +149,7 @@ afterAll(async () => {
 
 describe("relationship definition seeder", () => {
   it("gives a fresh project all 19 predicates with their signatures", async () => {
-    const result = await seedRelationshipDefinitions(prisma, projectId);
+    const result = await seedVocabulary(projectId);
 
     expect(result).toEqual({ created: 19, skipped: 0 });
 
@@ -158,7 +173,7 @@ describe("relationship definition seeder", () => {
   // derived count proves nothing was dropped, but it moves with the seed, so a
   // matrix that silently emptied would still satisfy it.
   it("writes each predicate's own signature set, not a shared one", async () => {
-    await seedRelationshipDefinitions(prisma, projectId);
+    await seedVocabulary(projectId);
 
     const owns = await prisma.relationshipDefinition.findUniqueOrThrow({
       where: { projectId_predicate: { projectId, predicate: "owns" } },
@@ -184,8 +199,8 @@ describe("relationship definition seeder", () => {
   });
 
   it("is a no-op on a project that already has its vocabulary", async () => {
-    await seedRelationshipDefinitions(prisma, projectId);
-    const second = await seedRelationshipDefinitions(prisma, projectId);
+    await seedVocabulary(projectId);
+    const second = await seedVocabulary(projectId);
 
     expect(second).toEqual({ created: 0, skipped: 19 });
 
@@ -204,7 +219,7 @@ describe("relationship definition seeder", () => {
   // marks it transitive owns that row; a seeder that "restores defaults" would
   // undo the change with nothing to show for it.
   it("leaves an author's edits alone when it runs again", async () => {
-    await seedRelationshipDefinitions(prisma, projectId);
+    await seedVocabulary(projectId);
 
     const allyOf = await prisma.relationshipDefinition.findUniqueOrThrow({
       where: { projectId_predicate: { projectId, predicate: "ally_of" } },
@@ -218,7 +233,7 @@ describe("relationship definition seeder", () => {
       data: { transitive: true, inverseLabel: "sworn_with" },
     });
 
-    await seedRelationshipDefinitions(prisma, projectId);
+    await seedVocabulary(projectId);
 
     const after = await prisma.relationshipDefinition.findUniqueOrThrow({
       where: { id: allyOf.id },
@@ -232,8 +247,45 @@ describe("relationship definition seeder", () => {
     ).toBe(false);
   });
 
+  // TWO CONNECTIONS, not two awaits. The bug this replaced was a TOCTOU
+  // (`findUnique` said "missing", then `create` raced another caller into the
+  // `(project_id, predicate)` unique index), and a race needs two transactions
+  // in flight at once to reproduce. Sequential awaits on one client cannot
+  // fail this way no matter how the seeder is written, so they would be a
+  // control that always passes.
+  it("stays correct when two connections seed the same project at once", async () => {
+    const rival = createPrismaClient();
+
+    try {
+      const [first, second] = await Promise.all([
+        prisma.$transaction((tx) => seedRelationshipDefinitions(tx, projectId)),
+        rival.$transaction((tx) => seedRelationshipDefinitions(tx, projectId)),
+      ]);
+
+      // Exactly one caller owns each predicate. Not "at least 19": a total of
+      // 38 would mean both wrote, and a total below 19 would mean a predicate
+      // was reported skipped that nobody ever created.
+      expect(first.created + second.created).toBe(19);
+      expect(first.skipped + second.skipped).toBe(19);
+
+      expect(
+        await prisma.relationshipDefinition.count({ where: { projectId } }),
+      ).toBe(19);
+      // The signature side is where a "both callers think they won" bug would
+      // land, and it would land silently: signatures have no per-project
+      // unique index to stop a second write.
+      expect(
+        await prisma.relationshipDefinitionSignature.count({
+          where: { definition: { projectId } },
+        }),
+      ).toBe(seededSignatureTotal);
+    } finally {
+      await rival.$disconnect();
+    }
+  });
+
   it("seeds each project separately", async () => {
-    await seedRelationshipDefinitions(prisma, projectId);
+    await seedVocabulary(projectId);
 
     expect(
       await prisma.relationshipDefinition.count({
@@ -241,7 +293,7 @@ describe("relationship definition seeder", () => {
       }),
     ).toBe(0);
 
-    const result = await seedRelationshipDefinitions(prisma, otherProjectId);
+    const result = await seedVocabulary(otherProjectId);
 
     expect(result).toEqual({ created: 19, skipped: 0 });
     expect(
