@@ -166,8 +166,27 @@ export function outcomeOf(
   return "unsupported";
 }
 
-// Returns null when a binding names something this snapshot cannot enumerate,
-// which the caller turns into `unsupported`.
+// The enumeration below materialises the WHOLE cartesian product of the
+// bindings before a single atom is looked at, and nothing in the grammar bounds
+// it: k bindings over a project holding n entities of each type is n^k maps, in
+// one single-threaded process. Five bindings over 200 characters is 3.2e11.
+//
+// So the product is budgeted, and going over budget is REFUSED rather than
+// attempted. That refusal belongs to the same family as the three doors above:
+// the engine did not look, so it must not answer `valid`. `unsupported` is the
+// honest answer, and the AI path already receives it.
+//
+// The number is a ceiling, not a tuning. 10_000 assignments each doing a linear
+// scan of the snapshot is already the edge of what belongs inside a synchronous
+// request. RAISING it later is backwards-compatible — a rule that answered
+// `unsupported` starts answering. LOWERING it is not: rules that were answered
+// go quiet. Its real replacement is `where` pre-filtering on bindings, which is
+// grammar this slice does not evaluate yet.
+const MAX_ASSIGNMENTS = 10_000;
+
+// Returns null when a binding names something this snapshot cannot enumerate or
+// when the product outgrows the budget, both of which the caller turns into
+// `unsupported`.
 function enumerateAssignments(
   bindings: readonly Binding[],
   snapshot: EvaluationSnapshot,
@@ -192,6 +211,14 @@ function enumerateAssignments(
     const candidates = snapshot.entities.filter(
       (entity) => entity.entityType === binding.entity_type,
     );
+
+    // Checked BEFORE the product is built, never after — the whole point is to
+    // not allocate it. Zero candidates is NOT over budget: an enumerable type
+    // that holds no entities is a fact about the project, and it keeps the
+    // empty-assignment `valid` that `aggregateOutcomes` documents.
+    if (assignments.length * candidates.length > MAX_ASSIGNMENTS) {
+      return null;
+    }
 
     const extended: Assignment[] = [];
 

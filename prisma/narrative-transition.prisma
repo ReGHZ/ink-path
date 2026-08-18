@@ -107,6 +107,22 @@ model TransitionEffect {
   // operations idempotent under retries and double-clicks.
   targetAssertionId String? @map("target_assertion_id") @db.Uuid
 
+  // C-1 (`quality-gate/gerbang-mutu-phase-11-slice-pass2-2026-08-18.md`). The
+  // KIND of the row `target_assertion_id` points at, denormalised so that a
+  // CHECK can see it — a CHECK only ever sees its own row, and "what sort of row
+  // is my target" is the whole question here.
+  //
+  // It cannot drift, and that is the point of the shape: the composite foreign
+  // key below carries it, so a value disagreeing with the target's real
+  // `effect_type` has no row to reference. Append-only makes that permanent —
+  // `effect_type` is never updated, so the reference can never go stale.
+  //
+  // What it enforces (premis §8.3 AMENDMENT 2026-08-18): `terminate` acts only
+  // on an assertion; `retract` acts on an assertion or on a `terminate`, never
+  // on another `retract`. Before this, both were writable and silently ignored —
+  // a mistyped termination could not be corrected at all.
+  targetEffectType TransitionEffectType? @map("target_effect_type")
+
   appliedAt         DateTime? @map("applied_at")
   contentRevisionId String?   @map("content_revision_id") @db.Uuid
   createdAt         DateTime  @default(now()) @map("created_at")
@@ -118,12 +134,15 @@ model TransitionEffect {
   // DIFFERENT project is a tenancy leak the database can refuse outright, rather
   // than one that survives until a service forgets to check.
   relationshipDefinition RelationshipDefinition? @relation(fields: [relationshipDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
-  targetAssertion        TransitionEffect?       @relation("AssertionTarget", fields: [targetAssertionId, projectId], references: [id, projectId], onDelete: Restrict)
+  targetAssertion        TransitionEffect?       @relation("AssertionTarget", fields: [targetAssertionId, projectId, targetEffectType], references: [id, projectId, effectType], onDelete: Restrict)
 
   targetedBy TransitionEffect[] @relation("AssertionTarget")
 
-  // Exists only as the target of the two composite foreign keys above.
-  @@unique([id, projectId])
+  // Exists only as the target of the self-referencing foreign key above. It
+  // carries `effect_type` so a referencing row can name its target's KIND and be
+  // held to it by the key itself — the one thing a CHECK cannot do, since a
+  // CHECK only ever sees its own row.
+  @@unique([id, projectId, effectType])
   @@index([narrativeTransitionId])
   @@index([projectId, targetEntityType, targetEntityId])
   @@index([narrativeTransitionId, appliedAt])

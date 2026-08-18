@@ -276,6 +276,7 @@ describe("PrismaEvaluationFactReader", () => {
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: assertionId,
+          targetEffectType: "relationship_add",
         },
       });
 
@@ -301,6 +302,7 @@ describe("PrismaEvaluationFactReader", () => {
           anchorEntityType: "scene",
           anchorEntityId: sceneId,
           targetAssertionId: assertionId,
+          targetEffectType: "relationship_add",
         },
       });
 
@@ -330,6 +332,7 @@ describe("PrismaEvaluationFactReader", () => {
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: assertionId,
+          targetEffectType: "relationship_add",
         },
       });
 
@@ -351,6 +354,7 @@ describe("PrismaEvaluationFactReader", () => {
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: assertionId,
+          targetEffectType: "relationship_add",
         },
       });
 
@@ -360,6 +364,55 @@ describe("PrismaEvaluationFactReader", () => {
       // facts — that would double the assertion and make the character dead
       // twice over.
       expect(snapshot.assertions).toHaveLength(1);
+    });
+
+    // C-1 (`quality-gate/gerbang-mutu-phase-11-slice-pass2-2026-08-18.md`),
+    // decided in premis §8.3 AMENDMENT 2026-08-18. A mistyped termination is
+    // corrected by retracting the terminate ROW — nothing erases it, the log
+    // being append-only. Before this the retraction was stored and read as
+    // nothing, so the fact stayed `terminated` forever and every rule over it
+    // answered `unsupported` for good.
+    //
+    // The assertion below is on `terminated`, not on the outcome: `false` here
+    // and `true` in the test above are the whole difference the correction
+    // makes, and an outcome-level check would show it only indirectly.
+    it("un-terminates a fact when the terminate row is itself retracted", async () => {
+      const assertionId = await assertDead({ type: "chapter", id: chapterId });
+
+      const termination = await prisma.transitionEffect.create({
+        data: {
+          projectId,
+          narrativeTransitionId: null,
+          relationshipDefinitionId: deadDefinitionId,
+          effectType: "terminate",
+          targetEntityType: "character",
+          targetEntityId: characterId,
+          anchorEntityType: "scene",
+          anchorEntityId: sceneId,
+          targetAssertionId: assertionId,
+          targetEffectType: "relationship_add",
+        },
+      });
+
+      await prisma.transitionEffect.create({
+        data: {
+          projectId,
+          narrativeTransitionId: null,
+          relationshipDefinitionId: deadDefinitionId,
+          effectType: "retract",
+          targetEntityType: "character",
+          targetEntityId: characterId,
+          targetAssertionId: termination.id,
+          targetEffectType: "terminate",
+        },
+      });
+
+      const snapshot = await reader.read(projectId);
+
+      // The fact itself was never retracted, so it is still here...
+      expect(snapshot.assertions).toHaveLength(1);
+      // ...and the termination that was withdrawn no longer marks it.
+      expect(snapshot.assertions[0]?.terminated).toBe(false);
     });
   });
 

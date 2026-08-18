@@ -505,3 +505,49 @@ describe("aggregating outcomes across assignments", () => {
     expect(aggregateOutcomes([])).toBe("valid");
   });
 });
+
+function crowdedWorld(perType: number): EvaluationSnapshot {
+  const entities = [];
+
+  for (let index = 0; index < perType; index += 1) {
+    entities.push({
+      id: `char-${index}`,
+      entityType: "character" as const,
+      position: null,
+    });
+    entities.push({
+      id: `scene-${index}`,
+      entityType: "scene" as const,
+      position: scenePosition(index),
+    });
+  }
+
+  return {
+    enumerableEntityTypes: ENUMERABLE,
+    predicates: PREDICATES,
+    entities,
+    assertions: [],
+  };
+}
+
+// B-11 (`quality-gate/gerbang-mutu-phase-11-slice-pass2-2026-08-18.md`). The
+// product of the bindings is the engine's only unbounded quantity, and it is an
+// EXPONENT of the project's size, so the two tests below pin the ceiling from
+// both sides. They are deliberately one entity apart: dropping the ceiling makes
+// the first one red, raising it makes the second one red, and deleting the check
+// altogether makes the second one red as well. A one-sided test would have let
+// the number drift silently in either direction.
+describe("rule evaluation — the enumeration budget", () => {
+  // 100 x 100 = 10_000, exactly the budget. It is answered, and the answer is
+  // the real one: nothing is asserted, so nothing contradicts.
+  it("still answers when the product lands exactly on the budget", () => {
+    expect(evaluateRule(rule, crowdedWorld(100))).toBe("valid");
+  });
+
+  // 101 x 101 = 10_201. One entity more, and the engine refuses to enumerate
+  // instead of trying. `unsupported`, never `valid` — the whole file's rule: a
+  // product the engine declined to build is not a project without contradictions.
+  it("answers unsupported when the product outgrows the budget", () => {
+    expect(evaluateRule(rule, crowdedWorld(101))).toBe("unsupported");
+  });
+});

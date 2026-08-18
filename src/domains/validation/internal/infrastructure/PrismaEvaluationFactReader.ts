@@ -129,9 +129,19 @@ export class PrismaEvaluationFactReader implements EvaluationFactReader {
     // Termination is valid-time and deletes nothing: the fact held before its
     // anchor. Collected separately so the evaluator can answer `unknown`
     // instead of pretending in either direction.
+    //
+    // A terminate row that has itself been retracted does not count, and this
+    // log being append-only, that is the ONLY way to undo a mistyped
+    // termination — nothing erases the row (premis §8.3 AMENDMENT 2026-08-18).
+    // Reading it from `retractedIds`, built above, is what keeps the two strata
+    // in the right order: existence is settled before validity range is asked
+    // about. Without it the retraction was stored and silently ignored, and the
+    // fact stayed `terminated` forever.
     const terminatedIds = new Set(
       rows
-        .filter((row) => row.effectType === "terminate")
+        .filter(
+          (row) => row.effectType === "terminate" && !retractedIds.has(row.id),
+        )
         .map((row) => row.targetAssertionId)
         .filter((id): id is string => id !== null),
     );

@@ -31,6 +31,7 @@ const row: PrismaTransitionEffect = {
   anchorEntityType: null,
   anchorEntityId: null,
   targetAssertionId: null,
+  targetEffectType: null,
   appliedAt: null,
   contentRevisionId: null,
   createdAt: now,

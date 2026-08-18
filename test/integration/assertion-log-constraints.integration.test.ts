@@ -148,6 +148,12 @@ type AssertionOverrides = Partial<{
   anchorEntityType: "chapter" | "scene" | "event" | null;
   anchorEntityId: string | null;
   targetAssertionId: string | null;
+  targetEffectType:
+    | "attribute_change"
+    | "relationship_add"
+    | "terminate"
+    | "retract"
+    | null;
   id: string;
 }>;
 
@@ -164,6 +170,7 @@ function assertionRow(overrides: AssertionOverrides = {}) {
     anchorEntityType: "chapter" as const,
     anchorEntityId: chapterId,
     targetAssertionId: null,
+    targetEffectType: null,
     createdAt: now,
     ...overrides,
   };
@@ -172,6 +179,18 @@ function assertionRow(overrides: AssertionOverrides = {}) {
 async function seedAssertion(id?: string): Promise<string> {
   const created = await prisma.transitionEffect.create({
     data: assertionRow(id === undefined ? {} : { id }),
+  });
+
+  return created.id;
+}
+
+async function seedTerminate(): Promise<string> {
+  const created = await prisma.transitionEffect.create({
+    data: assertionRow({
+      effectType: "terminate",
+      targetAssertionId: await seedAssertion(),
+      targetEffectType: "relationship_add",
+    }),
   });
 
   return created.id;
@@ -263,7 +282,12 @@ describe("assertion log constraints", () => {
 
       await expect(
         prisma.transitionEffect.create({
-          data: assertionRow({ targetAssertionId: targetId }),
+          // The kind is stated too, so the row is well formed in every OTHER
+          // dimension and only one constraint can be the one that refuses it.
+          data: assertionRow({
+            targetAssertionId: targetId,
+            targetEffectType: "relationship_add",
+          }),
         }),
       ).rejects.toThrow(/transition_effects_target_matches_operation/);
     });
@@ -275,6 +299,7 @@ describe("assertion log constraints", () => {
         data: assertionRow({
           effectType: "terminate",
           targetAssertionId: targetId,
+          targetEffectType: "relationship_add",
         }),
       });
 
@@ -290,6 +315,7 @@ describe("assertion log constraints", () => {
             id,
             effectType: "terminate",
             targetAssertionId: id,
+            targetEffectType: "relationship_add",
           }),
         }),
       ).rejects.toThrow(/transition_effects_target_not_self/);
@@ -304,13 +330,108 @@ describe("assertion log constraints", () => {
             ...assertionRow({
               effectType: "terminate",
               targetAssertionId: targetId,
+              targetEffectType: "relationship_add",
               relationshipDefinitionId: otherProjectDefinitionId,
             }),
             projectId: otherProjectId,
           },
         }),
       ).rejects.toThrow(
-        /transition_effects_target_assertion_id_project_id_fkey/,
+        /transition_effects_target_assertion_id_project_id_target_e_fkey/,
+      );
+    });
+  });
+
+  // C-1 (`quality-gate/gerbang-mutu-phase-11-slice-pass2-2026-08-18.md`).
+  // `target_matches_operation` only ever asked whether a target EXISTS. What
+  // KIND of row it is went unasked, so `retract` over a `terminate` row — and
+  // `terminate` over either operation — were all writable and all read as
+  // nothing. Premis §8.3 AMENDMENT 2026-08-18 decides which of them mean
+  // something; these tests are that decision, enforced.
+  describe("an operation's target is checked by KIND, not just existence", () => {
+    it("refuses a target whose kind goes unstated", async () => {
+      await expect(
+        prisma.transitionEffect.create({
+          data: assertionRow({
+            effectType: "terminate",
+            targetAssertionId: await seedAssertion(),
+            targetEffectType: null,
+          }),
+        }),
+      ).rejects.toThrow(/transition_effects_target_kind_complete/);
+    });
+
+    // The load-bearing one. `target_effect_type` is denormalised, so the whole
+    // design rests on it being unable to lie — and it is the FOREIGN KEY, not a
+    // CHECK, that makes that true: a kind disagreeing with the target's real
+    // `effect_type` has no row to point at.
+    it("refuses a target kind that disagrees with the target row", async () => {
+      const assertionId = await seedAssertion();
+
+      await expect(
+        prisma.transitionEffect.create({
+          data: assertionRow({
+            effectType: "retract",
+            targetAssertionId: assertionId,
+            // The row really is a `relationship_add`.
+            targetEffectType: "terminate",
+          }),
+        }),
+      ).rejects.toThrow(
+        /transition_effects_target_assertion_id_project_id_target_e_fkey/,
+      );
+    });
+
+    it("refuses a terminate over a terminate", async () => {
+      await expect(
+        prisma.transitionEffect.create({
+          data: assertionRow({
+            effectType: "terminate",
+            targetAssertionId: await seedTerminate(),
+            targetEffectType: "terminate",
+          }),
+        }),
+      ).rejects.toThrow(/transition_effects_terminate_targets_assertion/);
+    });
+
+    // The correction path for a mistyped termination, and — the log being
+    // append-only — the only one there is.
+    it("accepts a retract over a terminate", async () => {
+      const terminateId = await seedTerminate();
+
+      const created = await prisma.transitionEffect.create({
+        data: assertionRow({
+          effectType: "retract",
+          targetAssertionId: terminateId,
+          targetEffectType: "terminate",
+        }),
+      });
+
+      expect(created.targetAssertionId).toBe(terminateId);
+    });
+
+    // Double negation, refused at the door. Allowing it would resurrect an
+    // assertion and force every reader to resolve retractions transitively
+    // rather than as a flat set.
+    it("refuses a retract over a retract", async () => {
+      const retracted = await prisma.transitionEffect.create({
+        data: assertionRow({
+          effectType: "retract",
+          targetAssertionId: await seedAssertion(),
+          targetEffectType: "relationship_add",
+        }),
+      });
+
+      await expect(
+        prisma.transitionEffect.create({
+          data: assertionRow({
+            effectType: "retract",
+            targetAssertionId: retracted.id,
+            targetEffectType: "retract",
+          }),
+        }),
+      ).rejects.toThrow(
+        /transition_effects_retract_targets_assertion_or_terminate/,
       );
     });
   });

@@ -191,7 +191,14 @@ export const ruleAstSchema = z
     // that shadows an outer binding makes an atom point at a different entity
     // than the author is reading, with no error anywhere — so uniqueness is
     // checked here, at the only boundary an untrusted rule crosses.
-    bindings: z.array(bindingSchema).min(1),
+    // Arity is capped too, because the evaluator raises the project's entity
+    // count TO this number: it is an exponent, not a length. Four is one slot
+    // above the widest rule the frozen canon needs (rule (c) — character x item
+    // x scene). Refused here with a 400 rather than left to come back as
+    // `unsupported`, because a rule nobody can evaluate is a mistake to show
+    // its author, not a question worth forwarding to the AI. Widening this
+    // later is backwards-compatible; narrowing it is not.
+    bindings: z.array(bindingSchema).min(1).max(4),
     condition: booleanExpressionSchema,
     unless: booleanExpressionSchema.optional(),
     severity: z.enum(["error", "warning", "info"]),
