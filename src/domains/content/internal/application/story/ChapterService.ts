@@ -1,3 +1,4 @@
+import { CONTENT_CREATED, CONTENT_DELETED, CONTENT_UPDATED } from "../../../../../shared/application/events/routingKeys.js";
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
@@ -277,7 +278,7 @@ export class ChapterService {
           );
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.created",
+            eventType: CONTENT_CREATED,
             eventVersion: 1,
             aggregateType: "chapter",
             aggregateId: chapter.id,
@@ -291,7 +292,7 @@ export class ChapterService {
               revisionNumber: chapter.version,
               changedByUserId: input.requestingUserId,
             },
-            routingKey: "content.created",
+            routingKey: CONTENT_CREATED,
             exchange: "saas.events",
           });
         },
@@ -423,7 +424,7 @@ export class ChapterService {
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.deleted",
+            eventType: CONTENT_DELETED,
             eventVersion: 1,
             aggregateType: "chapter",
             aggregateId: chapter.id,
@@ -437,7 +438,7 @@ export class ChapterService {
               revisionNumber: chapter.version + 1,
               changedByUserId: input.requestingUserId,
             },
-            routingKey: "content.deleted",
+            routingKey: CONTENT_DELETED,
             exchange: "saas.events",
           });
           // Fails with ReferencedError while scenes still point here — the
@@ -493,7 +494,7 @@ export class ChapterService {
           await repositories.entity.update(chapterToPersist);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.updated",
+            eventType: CONTENT_UPDATED,
             eventVersion: 1,
             aggregateType: "chapter",
             aggregateId: chapter.id,
@@ -507,7 +508,7 @@ export class ChapterService {
               revisionNumber: oldVersion + 1,
               changedByUserId: requestingUserId,
             },
-            routingKey: "content.updated",
+            routingKey: CONTENT_UPDATED,
             exchange: "saas.events",
           });
         },

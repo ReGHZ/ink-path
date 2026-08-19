@@ -380,7 +380,7 @@ describe("PlotService", () => {
 
   describe("updatePlot", () => {
     it("writes an update revision and swaps currentRevisionId", async () => {
-      const { plots, contentRevisions, service } = createService();
+      const { plots, contentRevisions, outboxEvents, service } = createService();
       await seedPlot(plots);
 
       const detail = await service.updatePlot("proj-1", "plot-1", {
@@ -392,6 +392,13 @@ describe("PlotService", () => {
       expect(detail.theme).toBe("the price of ascension");
       expect(detail.currentRevisionId).not.toBe("rev-0");
       expect([...contentRevisions.revisions.values()][0]?.revisionNumber).toBe(1);
+      // The LITERAL wire value, on purpose — the create and delete paths of this suite
+      // already pin theirs, and this was the last update path in the nine Phase 4-6
+      // services with no pin at all (gerbang G1-P, P-1). Since the producers import
+      // `CONTENT_UPDATED` now, asserting the constant here would be self-confirming: only
+      // the string the broker actually sees can catch a wrong constant.
+      expect(outboxEvents.events[0]?.eventType).toBe("content.updated");
+      expect(outboxEvents.events[0]?.routingKey).toBe("content.updated");
     });
 
     it("is a no-op when nothing changes", async () => {

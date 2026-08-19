@@ -1,3 +1,7 @@
+import {
+  CONTENT_RELATIONSHIP_ASSERTED,
+  CONTENT_RELATIONSHIP_RETRACTED,
+} from "../../../../../shared/application/events/routingKeys.js";
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
@@ -148,12 +152,20 @@ function mapRelationshipError(error: unknown): never {
 }
 
 // No ContentUnitOfWork here, unlike every Phase 4-6 content service: a
-// relationship write produces no `content_revisions` row and no outbox event
-// (notes §3 — relationship changes no entity's content, so nothing is
-// re-indexed), and each operation is a single statement, so there is no
-// multi-write atomicity to protect.
+// relationship write produces no `content_revisions` row, because it changes no
+// entity's content and so nothing is re-indexed (notes §3).
 //
-// ACCEPTED RISK, and the reason that sentence stops there: create is still a
+// CORRECTED 2026-08-19 (gerbang G1, T-4). The rest of that sentence used to read
+// "and no outbox event … each operation is a single statement, so there is no
+// multi-write atomicity to protect". BOTH halves died with step 4b:
+// `createRelationship` writes assertion + fold + `content.relationship.asserted`
+// in ONE transaction, and `deleteRelationship` writes retraction + fold-removal +
+// `content.relationship.retracted` in another. What stands in for
+// ContentUnitOfWork is `relationshipUnitOfWork`, not the absence of one. Kept as
+// a correction rather than deleted because two other files cited this comment as
+// their source (`register.ts`, `../transition/NarrativeTransitionService.ts`).
+//
+// ACCEPTED RISK, and what that transaction does NOT close: create is still a
 // check-then-act across two connections. Between `locate()` and `insert()` a
 // concurrent delete of either endpoint leaves a relationship row pointing at an
 // entity that no longer exists, and NOTHING catches it afterwards — this table
@@ -235,6 +247,12 @@ export class RelationshipService {
     // arbitrary: the assertion is the FACT and the relationship row is a FOLD of
     // it, so the fold must not be able to succeed against an assertion the
     // domain would have refused.
+    // ONE clock read for ONE action (gerbang G1, T-7): the assertion and the fold
+    // it feeds must carry the same instant. Two `clock.now()` calls can straddle a
+    // tick, and the result would be a projection whose `created_at` disagrees with
+    // the fact it projects — a divergence nothing downstream could explain.
+    const now = this.clock.now();
+
     let assertion: TransitionEffect;
     let relationship: ContentRelationship;
     try {
@@ -255,7 +273,7 @@ export class RelationshipService {
         definition,
         relatedEntityType: input.targetEntityType,
         relatedEntityId: input.targetEntityId,
-        now: this.clock.now(),
+        now,
       });
 
       relationship = ContentRelationship.create({
@@ -277,7 +295,7 @@ export class RelationshipService {
         sourceAssertionId: assertion.id,
         note: input.note,
         createdByUserId: input.requestingUserId,
-        now: this.clock.now(),
+        now,
       });
     } catch (error) {
       mapRelationshipError(error);
@@ -301,11 +319,29 @@ export class RelationshipService {
           // Written now, consumed by `GraphProjector` later (item 11.4). The
           // precedent is `narrative.effect.applied`, produced since 7.7 with no
           // consumer on purpose: what is not recorded today cannot be
-          // reconstructed later. `content.` prefix matches the binding the one
-          // existing consumer already uses.
+          // reconstructed later.
+          //
+          // ⚠ CORRECTED 2026-08-19 (gerbang G1, T-1 + A-1). This used to claim the
+          // `content.` prefix "matches the binding the one existing consumer
+          // already uses". IT DOES NOT, and no binding today matches this key. The
+          // exchange is a TOPIC exchange (`infrastructure/queue/publisher.ts`,
+          // `assertExchange(…, "topic")`), where `*` stands for EXACTLY ONE word:
+          // the embedding worker binds `content.*`
+          // (`infrastructure/embedding/embeddingWorkerConsumer.ts`), which cannot
+          // match a three-word key. Harmless today — nothing consumes this event —
+          // and matching would in fact be WORSE: the worker casts the routing key
+          // to `ContentEventType` and an unmatched value goes straight to the DLQ.
+          //
+          // TWO CONSEQUENCES, both binding on 4b-4. (1) The binding
+          // `GraphProjector` gets must be DECIDED (`content.#` / `narrative.#`, or
+          // explicit keys) and must cover all three keys that exist:
+          // `content.relationship.asserted`, `content.relationship.retracted`,
+          // `narrative.effect.applied`. (2) Do NOT shorten this key to two words
+          // hoping a binding picks it up — that is exactly what would feed the
+          // embedding worker garbage.
           await outboxEvents.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.relationship.asserted",
+            eventType: CONTENT_RELATIONSHIP_ASSERTED,
             eventVersion: 1,
             aggregateType: "content_relationship",
             aggregateId: relationship.id,
@@ -317,7 +353,7 @@ export class RelationshipService {
               relationshipId: relationship.id,
               predicate: input.relationType,
             },
-            routingKey: "content.relationship.asserted",
+            routingKey: CONTENT_RELATIONSHIP_ASSERTED,
             exchange: "saas.events",
           });
         },
@@ -445,8 +481,16 @@ export class RelationshipService {
   // no reader can answer. Premis §8.3 asks the UI to offer the two as separate
   // actions, so the terminate half waits for an action that can name a moment.
   //
-  // The API contract does NOT change: still 204, and a subsequent GET still
-  // answers 404, because the projection is what the relationship API reads.
+  // ONE THING IT REFUSES SINCE 2026-08-19 (gerbang G1, T-2): a relationship whose
+  // origin assertion has a parent transition answers 409, not 200. The full argument
+  // sits at the guard inside the transaction; the short version is that `retract`
+  // claims a fact was never true, and a narrated fact was.
+  //
+  // The API contract does NOT change: still 200 with a null payload
+  // (`RelationshipController.deleteRelationship` → `success(c, null, 200)`), and a
+  // subsequent GET still answers 404, because the projection is what the
+  // relationship API reads. Said "204" until 2026-08-19 (gerbang G1, T-7) — a
+  // comment that claims an API contract has to be right.
   async deleteRelationship(
     projectId: string,
     relationshipId: string,
@@ -510,6 +554,49 @@ export class RelationshipService {
             );
           }
 
+          // DECIDED 2026-08-19 — blokir gerbang G1 (T-2 + A-3). A relationship whose
+          // fact was asserted BY A NARRATIVE TRANSITION cannot be withdrawn through
+          // this endpoint. Three reasons, and the first is the one that decides it:
+          //
+          // 1. `retract` means "this claim was never true, at every cut" (premis
+          //    §8.3). A narrated fact WAS true in the story — the author wrote the
+          //    scene where it began. Retracting it does not correct a mistake, it
+          //    erases the story's own causality, and it leaves the log stating two
+          //    things that cannot both hold: the transition still reports `applied`,
+          //    while the fact it applied is gone at every cut.
+          // 2. The honest operation for "it stopped holding" is `terminate`, which is
+          //    valid-time and needs a story anchor. This endpoint has no way to name
+          //    a story moment, which is exactly why 4b-2 chose `retract` for it.
+          //    Allowing it here would answer §8.3's open sub-item
+          //    (`reversesTransitionId` → retract? terminate?) in the most destructive
+          //    direction, using the least information available anywhere.
+          // 3. `05-implementation-policy/05_append_only_invariants.md` §NarrativeTransition
+          //    — Aturan Delete already has the answer for undoing an applied effect:
+          //    a reversal transition. That rule survived the 2026-08-19 revision of
+          //    that document precisely because it is still the right shape.
+          //
+          // THE OTHER DIRECTION IS ALLOWED, and the asymmetry is the point (A-3): a
+          // narrative `relationship_remove` may end a fact this endpoint asserted,
+          // because it carries strictly MORE information — a story anchor through its
+          // parent transition — and it adds a log row instead of erasing one. What is
+          // still missing there is that row itself (`terminate` naming the origin
+          // assertion); it belongs to 4b-3, and until then the window is stated in
+          // `narrative-transition.end2end.test.ts` and in `notes/phase-11-validation.md`.
+          //
+          // 409 and not 403: the caller has the right, the STATE refuses. And the
+          // message names the way out, because an error that only says "no" turns a
+          // deliberate rule into a bug report.
+          if (assertion.narrativeTransitionId !== null) {
+            throw new AppError(
+              ErrorCode.CONFLICT,
+              "This relationship was asserted by a narrative transition and cannot be deleted directly. Reverse the transition, or narrate the relationship ending with a relationship_remove effect.",
+              {
+                narrativeTransitionId: assertion.narrativeTransitionId,
+                sourceAssertionId: assertion.id,
+              },
+            );
+          }
+
           let retraction: TransitionEffect;
           try {
             retraction = TransitionEffect.retractFact({
@@ -541,9 +628,14 @@ export class RelationshipService {
           // consumed by `GraphProjector` at 11.4. A projector that saw the
           // assertion appear and never saw it withdrawn would rebuild the fact
           // back into `evaluation_edges`.
+          //
+          // Three words like the assertion key, so the same binding caveat applies
+          // (gerbang G1, T-1 + A-2) — and THIS is the key whose loss would be
+          // silent in the worst way: a projector bound to the assertion event but
+          // not to this one resurrects facts the author retracted.
           await outboxEvents.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.relationship.retracted",
+            eventType: CONTENT_RELATIONSHIP_RETRACTED,
             eventVersion: 1,
             aggregateType: "content_relationship",
             aggregateId: relationship.id,
@@ -556,7 +648,7 @@ export class RelationshipService {
               relationshipId: relationship.id,
               predicate: relationship.relationType,
             },
-            routingKey: "content.relationship.retracted",
+            routingKey: CONTENT_RELATIONSHIP_RETRACTED,
             exchange: "saas.events",
           });
         },

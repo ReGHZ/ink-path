@@ -1,3 +1,4 @@
+import { CONTENT_CREATED, CONTENT_DELETED, CONTENT_UPDATED } from "../../../../../shared/application/events/routingKeys.js";
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
@@ -219,7 +220,7 @@ export class EventService {
       await repositories.entity.linkRevision(event.id, revisionId, event.version);
       await outboxEvent.insert({
         id: this.idGenerator.generate(),
-        eventType: "content.created",
+        eventType: CONTENT_CREATED,
         eventVersion: 1,
         aggregateType: "event",
         aggregateId: event.id,
@@ -233,7 +234,7 @@ export class EventService {
           revisionNumber: event.version,
           changedByUserId: input.requestingUserId,
         },
-        routingKey: "content.created",
+        routingKey: CONTENT_CREATED,
         exchange: "saas.events",
       });
     });
@@ -359,7 +360,7 @@ export class EventService {
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.deleted",
+            eventType: CONTENT_DELETED,
             eventVersion: 1,
             aggregateType: "event",
             aggregateId: event.id,
@@ -373,7 +374,7 @@ export class EventService {
               revisionNumber: event.version + 1,
               changedByUserId: input.requestingUserId,
             },
-            routingKey: "content.deleted",
+            routingKey: CONTENT_DELETED,
             exchange: "saas.events",
           });
           await repositories.entity.delete(event.id, event.version);
@@ -425,7 +426,7 @@ export class EventService {
           await repositories.entity.update(eventToPersist);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.updated",
+            eventType: CONTENT_UPDATED,
             eventVersion: 1,
             aggregateType: "event",
             aggregateId: event.id,
@@ -439,7 +440,7 @@ export class EventService {
               revisionNumber: oldVersion + 1,
               changedByUserId: requestingUserId,
             },
-            routingKey: "content.updated",
+            routingKey: CONTENT_UPDATED,
             exchange: "saas.events",
           });
         },

@@ -1,4 +1,5 @@
 import { isRetryableEmbeddingWorkerError } from "./isRetryableEmbeddingWorkerError.js";
+import { EMBEDDING_WORKER_BINDING } from "../../shared/application/events/routingKeys.js";
 import { createRabbitMqConsumer, type RabbitMqMessage } from "../queue/consumer.js";
 
 import type { ContentEventPayload, ContentEventType, EmbeddingWorker } from "./EmbeddingWorker.js";
@@ -13,7 +14,10 @@ const EMBEDDING_WORKER_QUEUE = "embedding-worker";
 // field stored on the outbox_events row itself (e.g. "saas.events") is never read by
 // RabbitMqPublisher.publish() (known tech debt), so binding to that value instead would
 // silently never receive a single message.
-const CONTENT_EVENTS_ROUTING_KEY_PATTERN = "content.*";
+// Now imported rather than spelled out here (gerbang G1, T-1): this pattern and the
+// keys it is supposed to match had drifted apart in the documents, and a shared
+// constant plus `routingKeys.test.ts` is what makes that drift go red.
+const CONTENT_EVENTS_ROUTING_KEY_PATTERN = EMBEDDING_WORKER_BINDING;
 
 // Three attempts (default exponential backoff off the Consumer's own retryBaseDelayMs)
 // before a message is dead-lettered — enough to ride out a brief Qdrant/Postgres hiccup

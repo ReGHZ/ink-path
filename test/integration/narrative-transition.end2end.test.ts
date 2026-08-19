@@ -978,11 +978,99 @@ describe("Narrative transition end-to-end", () => {
         .status,
     ).toBe(200);
 
+    // ⚠ KNOWN DIVERGENCE WINDOW, owned by 4b-3 (gerbang G1, T-6 + A-3). This
+    // assertion is true of the PROJECTION only, and after step 4b-2 the projection
+    // is no longer the whole truth: `applyRelationshipChange` deletes the row for
+    // `relationship_remove` WITHOUT writing any `terminate`/`retract`, so the
+    // original `relationship_add` assertion stays applied and unwithdrawn in the
+    // log. Rebuilding the projection from the log — which is exactly what
+    // `GraphProjector` does at 4b-4 — would resurrect this relationship.
+    //
+    // Read this `toBe(0)` as "the CRUD surface no longer shows it", NOT as "the
+    // fact is gone". The log side is deliberately left inconsistent until 4b-3
+    // decides which operation a narrative removal writes (`terminate`, which has a
+    // story anchor through its parent, or `retract`) — and A-3 adds the mirror
+    // case: this same path can delete a projection row born from a PARENTLESS CRUD
+    // assertion, cancelling another path's claim without naming it. Do not
+    // strengthen or copy this assertion before that decision exists.
     expect(
       await prisma.contentRelationship.count({
         where: { projectId, relationType: "member_of" },
       }),
     ).toBe(0);
+  });
+
+  // DECIDED 2026-08-19 — blokir gerbang G1 (T-2 + A-3). End to end, over HTTP,
+  // because the hole was end to end: the CRUD button and the narrative path meet
+  // only in the database, and a unit test with a fake repository cannot show that
+  // the projection row jalur 7.7 wrote is reachable by
+  // `DELETE /projects/:projectId/relationships/:relationshipId`.
+  it("refuses a CRUD delete of a relationship a narrative transition asserted", async () => {
+    const { accessToken, projectId, sceneId, characterId, factionId } =
+      await seedFixture("nt-crud-guard");
+
+    const transition = await declareTransition(accessToken, projectId, {
+      sourceEntityType: "scene",
+      sourceEntityId: sceneId,
+      title: "Aria joins the Silver Hand",
+    });
+    const effect = await addEffect(
+      accessToken,
+      projectId,
+      transition.id as string,
+      {
+        effectType: "relationship_add",
+        targetEntityType: "character",
+        targetEntityId: characterId,
+        relationshipType: "member_of",
+        relatedEntityType: "faction",
+        relatedEntityId: factionId,
+      },
+    );
+
+    expect(
+      (await applyEffect(accessToken, projectId, effect.id as string)).status,
+    ).toBe(200);
+
+    // Read straight from the projection rather than through the list DTO: what
+    // matters here is the row's identity and its `source_assertion_id`, not how the
+    // API renders it.
+    const projected = await prisma.contentRelationship.findFirstOrThrow({
+      where: { projectId, relationType: "member_of" },
+      select: { id: true, sourceAssertionId: true },
+    });
+
+    // The premise of the whole finding, asserted so the test explains itself if the
+    // wiring ever changes: on this path the EFFECT ROW is the assertion.
+    expect(projected.sourceAssertionId).toBe(effect.id);
+
+    const refused = await request(
+      `/api/v1/projects/${projectId}/relationships/${projected.id}`,
+      { method: "DELETE", accessToken },
+    );
+
+    expect(refused.status).toBe(409);
+    expect((await readError(refused)).message).toMatch(/narrative transition/i);
+
+    // Nothing moved. The projection survives, and — the assertion that actually
+    // separates "refused" from "half-done" — no `retract` row was written and the
+    // transition's own effect is still applied.
+    expect(
+      await prisma.contentRelationship.count({
+        where: { projectId, relationType: "member_of" },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.transitionEffect.count({
+        where: { projectId, effectType: "retract" },
+      }),
+    ).toBe(0);
+    const stillApplied = await prisma.transitionEffect.findFirstOrThrow({
+      where: { id: effect.id as string },
+      select: { appliedAt: true, narrativeTransitionId: true },
+    });
+    expect(stillApplied.appliedAt).not.toBeNull();
+    expect(stillApplied.narrativeTransitionId).toBe(transition.id);
   });
 
   describe("idempotency and concurrency, against real row locks", () => {

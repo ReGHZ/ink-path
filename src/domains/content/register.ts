@@ -180,11 +180,14 @@ export type ContentDomainCradle = {
   sceneUnitOfWork: ContentUnitOfWork<SceneRepository>;
   sceneService: SceneService;
   sceneController: SceneController;
-  // Phase 7.1-7.3. No `relationshipUnitOfWork`: a relationship write produces no
-  // revision and no outbox event, so there is no multi-write to make atomic
-  // (`RelationshipService.ts:135-139`). `contentEntityLocator` is the second
-  // adapter over the shared descriptor table — registered next to
-  // `contentEntityReader` because they are built from the same descriptors.
+  // Phase 7.1-7.3. A relationship write still produces no revision — it changes no
+  // entity's content — but since step 4b it DOES write an assertion plus an outbox
+  // event, which is why `relationshipUnitOfWork` is registered a few lines below.
+  // This comment claimed the opposite until 2026-08-19 (gerbang G1, T-4); the
+  // corrected reasoning lives in the header comment above `class
+  // RelationshipService`. `contentEntityLocator` is the second adapter over the
+  // shared descriptor table — registered next to `contentEntityReader` because
+  // they are built from the same descriptors.
   contentEntityLocator: ContentEntityLocator;
   contentRelationshipRepository: ContentRelationshipRepository;
   // The project's predicate vocabulary, read by both write paths into

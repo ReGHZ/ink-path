@@ -3,13 +3,14 @@ import {
     type RabbitMqConsumer,
     type RabbitMqMessage,
 } from "./consumer.js";
+import { CONTENT_CREATED } from "../../shared/application/events/routingKeys.js";
 
 import type { RabbitMqManager } from "./rabbitmqManager.js";
 
 
 const SAMPLE_QUEUE = "sample-consumer";
 
-const SAMPLE_ROUTING_KEY_PATTERN = "content.created";
+const SAMPLE_ROUTING_KEY_PATTERN = CONTENT_CREATED;
 
 type SampleMessage = RabbitMqMessage;
 

@@ -1,3 +1,7 @@
+import {
+  NARRATIVE_EFFECT_APPLIED,
+  CONTENT_UPDATED,
+} from "../../../../../shared/application/events/routingKeys.js";
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
@@ -788,7 +792,7 @@ export class NarrativeTransitionService {
     // services — a divergence here would be invisible until a consumer broke.
     await outboxEvents.insert({
       id: this.idGenerator.generate(),
-      eventType: "content.updated",
+      eventType: CONTENT_UPDATED,
       eventVersion: 1,
       aggregateType: effect.targetEntityType,
       aggregateId: effect.targetEntityId,
@@ -802,7 +806,7 @@ export class NarrativeTransitionService {
         revisionNumber: applied.revisionNumber,
         changedByUserId: requestingUserId,
       },
-      routingKey: "content.updated",
+      routingKey: CONTENT_UPDATED,
       exchange: "saas.events",
     });
   }
@@ -956,13 +960,17 @@ export class NarrativeTransitionService {
     // arrive as forward events — including reversals
     // (`05-implementation-policy/05_append_only_invariants.md:80-85`).
     //
-    // Manual relationship edits still emit nothing (`RelationshipService.ts:135-139`).
-    // That asymmetry is the two-path provenance of keputusan #12 made visible on
-    // the wire: narrative changes are permanent history, manual ones are
-    // ephemeral by design.
+    // CORRECTED 2026-08-19 (gerbang G1, T-4). This used to read "manual
+    // relationship edits still emit nothing … narrative changes are permanent
+    // history, manual ones are ephemeral by design". Steps 4b-1/4b-2 ended that
+    // asymmetry: the CRUD path writes its own assertions and emits
+    // `content.relationship.asserted` / `content.relationship.retracted`. BOTH
+    // paths are permanent history now, and keputusan #12's two-path provenance
+    // survives only as WHICH log a fact is born in — not as whether it is recorded
+    // at all. See the header comment above `class RelationshipService`.
     await outboxEvents.insert({
       id: this.idGenerator.generate(),
-      eventType: "narrative.effect.applied",
+      eventType: NARRATIVE_EFFECT_APPLIED,
       eventVersion: 1,
       aggregateType: "narrative_transition",
       aggregateId: narrativeTransitionId,
@@ -980,7 +988,7 @@ export class NarrativeTransitionService {
         relatedEntityId,
         appliedByUserId: requestingUserId,
       },
-      routingKey: "narrative.effect.applied",
+      routingKey: NARRATIVE_EFFECT_APPLIED,
       exchange: "saas.events",
     });
   }

@@ -18,6 +18,7 @@ import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { OutboxEvent } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
+import type { AppError } from "../../../../../shared/errors/AppError.js";
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
 import type {
@@ -302,6 +303,36 @@ function createInput(
 // retraction, so it reads this row to learn the target's real `effect_type` — a
 // test that seeds only the projection is testing a state the database refuses
 // (the composite foreign key would have no row to reference).
+// A fact asserted BY A NARRATIVE TRANSITION, i.e. what jalur 7.7 leaves behind: the
+// effect row IS the assertion, and it carries a parent. Built through create() +
+// markApplied() rather than assertFact(), which the type system reserves for the
+// parentless CRUD path — that reservation is itself the invariant this fixture is
+// here to exercise from the outside.
+function seedNarrativeOriginAssertion(
+  assertions: TransitionEffect[],
+  overrides: Partial<{ id: string; projectId: string; predicate: string }> = {},
+): TransitionEffect {
+  const predicate = overrides.predicate ?? "member_of";
+  const assertion = TransitionEffect.create({
+    id: overrides.id ?? "assertion-1",
+    narrativeTransitionId: "transition-1",
+    projectId: overrides.projectId ?? "proj-1",
+    effectType: "relationship_add",
+    targetEntityType: "character",
+    targetEntityId: "character-1",
+    relationshipType: predicate,
+    definition: seededDefinition(predicate),
+    relatedEntityType: "faction",
+    relatedEntityId: "faction-1",
+    now,
+  });
+
+  assertion.markApplied({ now });
+  assertions.push(assertion);
+
+  return assertion;
+}
+
 function seedOriginAssertion(
   assertions: TransitionEffect[],
   overrides: Partial<{ id: string; projectId: string; predicate: string }> = {},
@@ -831,6 +862,68 @@ describe("RelationshipService", () => {
       expect(foreign.assertions).toHaveLength(1);
       expect(forbidden.outbox).toEqual([]);
       expect(foreign.outbox).toEqual([]);
+    });
+
+    // DECIDED 2026-08-19 — blokir gerbang G1 (T-2). Before this, the CRUD button
+    // could retract a fact a narrative transition had asserted: the projection row
+    // points at the effect row (jalur 7.7 sets `sourceAssertionId: effect.id`), and
+    // nothing on the delete path looked at whether that row had a parent. The
+    // transition kept reporting `applied` while the fact it applied was withdrawn at
+    // every cut.
+    it("refuses to retract a fact a narrative transition asserted, and writes nothing", async () => {
+      const { relationships, assertions, outbox, service } = createService();
+      const narrated = seedNarrativeOriginAssertion(assertions);
+      seedRelationship(relationships);
+
+      const failure = await service
+        .deleteRelationship("proj-1", "relationship-1", {
+          requestingUserId: "user-1",
+          requestingMembership: writer,
+        })
+        .then(
+          () => null,
+          (error: unknown) => error as AppError,
+        );
+
+      // 409, because the caller HAS the right and the state refuses — a 403 would
+      // send an author to their administrator over a modelling rule.
+      expect(failure?.code).toBe(ErrorCode.CONFLICT);
+      // The message must name the way out. Asserted, not left to review: an error
+      // that only says "no" gets reported as a bug and then "fixed" by deleting the
+      // guard.
+      expect(failure?.message).toMatch(/reverse the transition/i);
+      expect(failure?.message).toMatch(/relationship_remove/);
+      expect(failure?.details).toMatchObject({
+        narrativeTransitionId: "transition-1",
+        sourceAssertionId: narrated.id,
+      });
+
+      // Nothing written and nothing destroyed: no retraction in the log, no event,
+      // and the projection still there. A guard that threw after the delete would
+      // pass the assertion above and still lose the row.
+      expect(assertions).toHaveLength(1);
+      expect(outbox).toEqual([]);
+      expect(relationships.deleteCalls).toEqual([]);
+      expect(relationships.relationships.size).toBe(1);
+    });
+
+    // The other half of the same decision, and the reason the test above cannot be
+    // read as "delete is broken": a PARENTLESS claim — everything the CRUD path
+    // itself writes — is still withdrawable. Without this pairing, replacing the
+    // guard with `throw` unconditionally would look correct.
+    it("still retracts a parentless claim, so the guard is about provenance and not about delete", async () => {
+      const { relationships, assertions, service } = createService();
+      seedOriginAssertion(assertions);
+      seedRelationship(relationships);
+
+      await service.deleteRelationship("proj-1", "relationship-1", {
+        requestingUserId: "user-1",
+        requestingMembership: writer,
+      });
+
+      expect(assertions).toHaveLength(2);
+      expect(assertions[1]?.effectType).toBe("retract");
+      expect(relationships.relationships.size).toBe(0);
     });
 
     it("maps a stale version to a 409 and a vanished row to a 404", async () => {

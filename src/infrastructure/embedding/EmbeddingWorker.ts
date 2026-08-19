@@ -1,4 +1,9 @@
 import {
+  CONTENT_CREATED,
+  CONTENT_DELETED,
+  CONTENT_UPDATED,
+} from "../../shared/application/events/routingKeys.js";
+import {
   buildMediumOrLongFieldCanonicalText,
   buildShortFieldCanonicalText,
 } from "../../shared/embedding/canonicalText.js";
@@ -19,10 +24,17 @@ import type {
 // 05-implementation-policy/03_qdrant_point_id_chunking.md:§17 — the payload every
 // content.created/content.updated/content.deleted outbox event carries (see e.g.
 // LayerService's outboxEvent.insert() calls), independent of which entity type it's about.
-export type ContentEventType =
-  | "content.created"
-  | "content.updated"
-  | "content.deleted";
+// Derived from the contract, not restated: a fourth copy of these three strings was
+// exactly how the routing-key claim drifted (gerbang G1-P, P-1). The runtime array is
+// what makes the union derivable — and it doubles as the list a future consumer can
+// iterate instead of re-typing the keys.
+export const CONTENT_EVENT_TYPES = [
+  CONTENT_CREATED,
+  CONTENT_UPDATED,
+  CONTENT_DELETED,
+] as const;
+
+export type ContentEventType = (typeof CONTENT_EVENT_TYPES)[number];
 
 export type ContentEventPayload = {
   projectId: string;
@@ -69,7 +81,7 @@ export class EmbeddingWorker {
     eventType: ContentEventType,
     payload: ContentEventPayload,
   ): Promise<void> {
-    if (eventType === "content.deleted") {
+    if (eventType === CONTENT_DELETED) {
       await this.vectorIndex.deletePointsForEntity({
         projectId: payload.projectId,
         entityType: payload.entityType,

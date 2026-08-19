@@ -1037,6 +1037,91 @@ describe("Content relationship end-to-end", () => {
       expect((await readError(response)).message).toMatch(/Unknown relation type/i);
     });
 
+    // GERBANG G1, T-5. The test above was the suite's only "unknown predicate"
+    // assertion, and it uses `befriends` — a predicate that exists in NO project.
+    // That makes it green even if `findByPredicate` stopped filtering by
+    // `project_id` altogether, which is the mutation that has to be caught here:
+    // vocabulary is PROJECT DATA since step 4a, so "predicate exists" is a
+    // question about one project's rows and nothing else.
+    //
+    // Shaped to fail for the right reason. Dropping the `projectId` filter kills 18
+    // tests already, but every one of them dies on a foreign-key 500 (the leaked
+    // row belongs to another project, so `relationship_definition_id` is refused) —
+    // round-trip and permission assertions, not a claim about tenancy. This one
+    // states the claim itself.
+    it("refuses a predicate defined only in ANOTHER project, and still allows it in its own", async () => {
+      const session = await registerAndLogin("rel-vocab-tenant");
+      const author = await createProject(session.accessToken, "Author of haunts");
+      const borrower = await createProject(session.accessToken, "Borrower");
+
+      // Author-coined on purpose: absent from the 19 seeded defaults, so nothing
+      // but this fixture can put it in a project. The character->character
+      // signature matters — without it a leak would be refused by the pair matrix
+      // instead, and the 400 below would prove nothing about isolation.
+      await prisma.relationshipDefinition.create({
+        data: {
+          projectId: author,
+          predicate: "haunts",
+          objectRequired: true,
+          directionality: "directional",
+          inverseLabel: "haunted_by",
+          signatures: {
+            create: [
+              { subjectEntityType: "character", objectEntityType: "character" },
+            ],
+          },
+        },
+      });
+
+      // POSITIVE CONTROL, and it comes first deliberately: in its OWN project the
+      // predicate is usable. Without this half, the 400 further down could equally
+      // mean the fixture never worked, and the test would be a false control of
+      // exactly the kind T-5 was raised about.
+      const heir = await createCharacter(session.accessToken, author, "The heir");
+      const drowned = await createCharacter(
+        session.accessToken,
+        author,
+        "The drowned girl",
+      );
+
+      expect(
+        (
+          await createRelationship(session.accessToken, author, {
+            sourceEntityType: "character",
+            sourceEntityId: heir,
+            targetEntityType: "character",
+            targetEntityId: drowned,
+            relationType: "haunts",
+          })
+        ).status,
+      ).toBe(201);
+
+      // The isolation claim: same predicate, same entity types, other project.
+      const aria = await createCharacter(session.accessToken, borrower, "Aria");
+      const cael = await createCharacter(session.accessToken, borrower, "Cael");
+
+      const borrowed = await createRelationship(session.accessToken, borrower, {
+        sourceEntityType: "character",
+        sourceEntityId: aria,
+        targetEntityType: "character",
+        targetEntityId: cael,
+        relationType: "haunts",
+      });
+
+      expect(borrowed.status).toBe(400);
+      expect((await readError(borrowed)).message).toMatch(/Unknown relation type/i);
+
+      // And nothing was written on the way to that 400 — neither the fact nor its
+      // fold. A leak that failed late (foreign key) instead of early (vocabulary)
+      // could still have left an assertion behind.
+      expect(
+        await prisma.transitionEffect.count({ where: { projectId: borrower } }),
+      ).toBe(0);
+      expect(
+        await prisma.contentRelationship.count({ where: { projectId: borrower } }),
+      ).toBe(0);
+    });
+
     it("answers 400 for a pair the registry does not allow", async () => {
       // `member_of` is directional and declared source-first as
       // character -> faction; faction -> character is a different claim, not the

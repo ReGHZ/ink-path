@@ -1,3 +1,4 @@
+import { CONTENT_CREATED, CONTENT_DELETED, CONTENT_UPDATED } from "../../../../../shared/application/events/routingKeys.js";
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
@@ -245,7 +246,7 @@ export class SceneService {
           );
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.created",
+            eventType: CONTENT_CREATED,
             eventVersion: 1,
             aggregateType: "scene",
             aggregateId: scene.id,
@@ -259,7 +260,7 @@ export class SceneService {
               revisionNumber: scene.version,
               changedByUserId: input.requestingUserId,
             },
-            routingKey: "content.created",
+            routingKey: CONTENT_CREATED,
             exchange: "saas.events",
           });
         },
@@ -400,7 +401,7 @@ export class SceneService {
           await repositories.contentRevisions.insert(revision);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.deleted",
+            eventType: CONTENT_DELETED,
             eventVersion: 1,
             aggregateType: "scene",
             aggregateId: scene.id,
@@ -414,7 +415,7 @@ export class SceneService {
               revisionNumber: scene.version + 1,
               changedByUserId: input.requestingUserId,
             },
-            routingKey: "content.deleted",
+            routingKey: CONTENT_DELETED,
             exchange: "saas.events",
           });
           await repositories.entity.delete(scene.id, scene.version);
@@ -466,7 +467,7 @@ export class SceneService {
           await repositories.entity.update(sceneToPersist);
           await outboxEvent.insert({
             id: this.idGenerator.generate(),
-            eventType: "content.updated",
+            eventType: CONTENT_UPDATED,
             eventVersion: 1,
             aggregateType: "scene",
             aggregateId: scene.id,
@@ -480,7 +481,7 @@ export class SceneService {
               revisionNumber: oldVersion + 1,
               changedByUserId: requestingUserId,
             },
-            routingKey: "content.updated",
+            routingKey: CONTENT_UPDATED,
             exchange: "saas.events",
           });
         },
