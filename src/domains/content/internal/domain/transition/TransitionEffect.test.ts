@@ -522,9 +522,10 @@ function assertedFact(
   });
 }
 
-// A stored operation row, for the cases that need one as a TARGET. Hand-written
-// on purpose: there is no `terminateFact()` yet, and inventing one just to write
-// these tests would add a production path with no caller.
+// A stored operation row, for the cases that need one as a TARGET. Still
+// hand-written after 4b-3 added `terminateFact()`: that factory requires a parent
+// transition and an anchor, and several cases below need a PARENTLESS operation row
+// — a shape only a stored row can have.
 const operationSnapshot: TransitionEffectProperties = {
   ...relationshipSnapshot,
   id: "operation-1",
@@ -668,6 +669,168 @@ describe("TransitionEffect.retractFact", () => {
         projectId,
         target: parentedTermination,
         definition: seededDefinition("member_of"),
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+});
+
+// A fact asserted BY A NARRATIVE TRANSITION — the shape jalur 7.7 leaves behind,
+// where the effect row IS the assertion and its provenance is its parent rather
+// than a definition row.
+function narratedFact(
+  overrides: Partial<{ id: string; projectId: string }> = {},
+) {
+  const effect = TransitionEffect.create({
+    id: overrides.id ?? "narrated-1",
+    narrativeTransitionId: "transition-1",
+    projectId: overrides.projectId ?? projectId,
+    effectType: "relationship_add",
+    targetEntityType: "character",
+    targetEntityId: "character-1",
+    relationshipType: "member_of",
+    definition: seededDefinition("member_of"),
+    relatedEntityType: "faction",
+    relatedEntityId: "faction-1",
+    now,
+  });
+
+  effect.markApplied({ now });
+
+  return effect;
+}
+
+describe("TransitionEffect.terminateFact", () => {
+  it("ends a fact AT A STORY MOMENT, which is the line between it and a retraction", () => {
+    const termination = TransitionEffect.terminateFact({
+      id: "termination-1",
+      projectId,
+      narrativeTransitionId: "transition-1",
+      target: narratedFact(),
+      definition: seededDefinition("member_of"),
+      anchorEntityType: "scene",
+      anchorEntityId: "scene-9",
+      now: later,
+    });
+
+    expect(termination.effectType).toBe("terminate");
+    expect(termination.targetAssertionId).toBe("narrated-1");
+    // Read off the target, never asserted by the caller (C-1).
+    expect(termination.targetEffectType).toBe("relationship_add");
+    // VALID time — the assertion `retractFact` deliberately cannot make.
+    expect(termination.anchorEntityType).toBe("scene");
+    expect(termination.anchorEntityId).toBe("scene-9");
+    // Provenance is the parent, and the predicate is carried anyway so a reader of
+    // the log need not join to the target to learn which predicate ended.
+    expect(termination.narrativeTransitionId).toBe("transition-1");
+    expect(termination.relationshipDefinitionId).toBe(
+      seededDefinition("member_of").id,
+    );
+    expect(termination.appliedAt).toEqual(later);
+  });
+
+  it("points at the fact instead of restating it", () => {
+    const termination = TransitionEffect.terminateFact({
+      id: "termination-1",
+      projectId,
+      narrativeTransitionId: "transition-1",
+      target: narratedFact(),
+      definition: seededDefinition("member_of"),
+      anchorEntityType: "scene",
+      anchorEntityId: "scene-9",
+      now,
+    });
+
+    expect(termination.relationshipType).toBeNull();
+    expect(termination.relatedEntityType).toBeNull();
+    expect(termination.relatedEntityId).toBeNull();
+    // The subject travels, same as the retraction: the column is NOT NULL and the
+    // subject of the ended fact is the honest value.
+    expect(termination.targetEntityType).toBe("character");
+    expect(termination.targetEntityId).toBe("character-1");
+  });
+
+  // THE CROSS-PATH CASE, decided 2026-08-19 and this is where it is locked: a
+  // narrative removal may end a fact the CRUD endpoint asserted. The target has no
+  // parent, so its predicate is named by ROW rather than by name — the branch that
+  // would silently refuse the whole class if the two-way match were dropped.
+  it("terminates a PARENTLESS assertion made through CRUD", () => {
+    const termination = TransitionEffect.terminateFact({
+      id: "termination-1",
+      projectId,
+      narrativeTransitionId: "transition-1",
+      target: assertedFact(),
+      definition: seededDefinition("member_of"),
+      anchorEntityType: "chapter",
+      anchorEntityId: "chapter-2",
+      now,
+    });
+
+    expect(termination.targetAssertionId).toBe("assertion-1");
+    expect(termination.anchorEntityId).toBe("chapter-2");
+  });
+
+  it("refuses a target in another project", () => {
+    expect(() =>
+      TransitionEffect.terminateFact({
+        id: "termination-1",
+        projectId,
+        narrativeTransitionId: "transition-1",
+        target: narratedFact({ projectId: "project-2" }),
+        definition: seededDefinition("member_of"),
+        anchorEntityType: "scene",
+        anchorEntityId: "scene-9",
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  it("refuses a predicate that is not the target's", () => {
+    expect(() =>
+      TransitionEffect.terminateFact({
+        id: "termination-1",
+        projectId,
+        narrativeTransitionId: "transition-1",
+        target: narratedFact(),
+        definition: seededDefinition("appears_in"),
+        anchorEntityType: "scene",
+        anchorEntityId: "scene-9",
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  // `terminate` is defined over FACTS only (TERMINATE_TARGET_TYPES). Ending an
+  // ending has no range to end, and premis §8.3 settles it as not-an-operation.
+  it("refuses to terminate an operation row", () => {
+    const storedTermination = TransitionEffect.reconstitute(operationSnapshot);
+
+    expect(() =>
+      TransitionEffect.terminateFact({
+        id: "termination-2",
+        projectId,
+        narrativeTransitionId: "transition-1",
+        target: storedTermination,
+        definition: seededDefinition("member_of"),
+        anchorEntityType: "scene",
+        anchorEntityId: "scene-9",
+        now,
+      }),
+    ).toThrow(DomainError);
+  });
+
+  // The anchor is required by TYPE, so the case that can still happen at runtime is
+  // a blank id arriving from a drifted row.
+  it("refuses a blank anchor id", () => {
+    expect(() =>
+      TransitionEffect.terminateFact({
+        id: "termination-1",
+        projectId,
+        narrativeTransitionId: "transition-1",
+        target: narratedFact(),
+        definition: seededDefinition("member_of"),
+        anchorEntityType: "scene",
+        anchorEntityId: "   ",
         now,
       }),
     ).toThrow(DomainError);

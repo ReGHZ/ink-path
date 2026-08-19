@@ -944,14 +944,23 @@ describe("Narrative transition end-to-end", () => {
     // — the graph consumer of Phase 11 needs the cause, and no text was reindexed.
     const outbox = await prisma.outboxEvent.findMany({
       where: { projectId, aggregateId: transition.id as string },
-      select: { eventType: true, aggregateType: true },
+      select: { eventType: true, aggregateType: true, payload: true },
     });
-    expect(outbox).toEqual([
-      {
-        eventType: "narrative.effect.applied",
-        aggregateType: "narrative_transition",
-      },
-    ]);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]?.eventType).toBe("narrative.effect.applied");
+    expect(outbox[0]?.aggregateType).toBe("narrative_transition");
+
+    // 4b-3 / F-1: the event reports what reached the LOG, not only what was declared.
+    // On this path the effect row IS the assertion, and the payload says so rather
+    // than leaving a consumer to know that.
+    expect(outbox[0]?.payload).toMatchObject({
+      effectType: "relationship_add",
+      assertionId: addEffectRow.id,
+      terminationId: null,
+      targetAssertionId: null,
+      anchorEntityType: null,
+      anchorEntityId: null,
+    });
 
     // And the removal path, on a second transition: the row must be gone.
     const removal = await declareTransition(accessToken, projectId, {
@@ -978,26 +987,87 @@ describe("Narrative transition end-to-end", () => {
         .status,
     ).toBe(200);
 
-    // ⚠ KNOWN DIVERGENCE WINDOW, owned by 4b-3 (gerbang G1, T-6 + A-3). This
-    // assertion is true of the PROJECTION only, and after step 4b-2 the projection
-    // is no longer the whole truth: `applyRelationshipChange` deletes the row for
-    // `relationship_remove` WITHOUT writing any `terminate`/`retract`, so the
-    // original `relationship_add` assertion stays applied and unwithdrawn in the
-    // log. Rebuilding the projection from the log — which is exactly what
-    // `GraphProjector` does at 4b-4 — would resurrect this relationship.
+    // ── STEP 4b-3 CLOSES THE WINDOW THIS ASSERTION USED TO HIDE ─────────────
     //
-    // Read this `toBe(0)` as "the CRUD surface no longer shows it", NOT as "the
-    // fact is gone". The log side is deliberately left inconsistent until 4b-3
-    // decides which operation a narrative removal writes (`terminate`, which has a
-    // story anchor through its parent, or `retract`) — and A-3 adds the mirror
-    // case: this same path can delete a projection row born from a PARENTLESS CRUD
-    // assertion, cancelling another path's claim without naming it. Do not
-    // strengthen or copy this assertion before that decision exists.
+    // Until 4b-3 the count below was the WHOLE claim here: the projection row was
+    // deleted and nothing was written to the log, so the `relationship_add` stayed
+    // applied and unwithdrawn (gerbang G1, T-6). Rebuilding the projection from the log
+    // — what `GraphProjector` does at 4b-4 — would have resurrected this relationship.
+    //
+    // Both halves are asserted now, because either alone is satisfiable by a bug: the
+    // fold is gone AND the log says why it is gone.
     expect(
       await prisma.contentRelationship.count({
         where: { projectId, relationType: "member_of" },
       }),
     ).toBe(0);
+
+    const termination = await prisma.transitionEffect.findFirstOrThrow({
+      where: { projectId, effectType: "terminate" },
+      select: {
+        id: true,
+        targetAssertionId: true,
+        targetEffectType: true,
+        anchorEntityType: true,
+        anchorEntityId: true,
+        narrativeTransitionId: true,
+        appliedAt: true,
+      },
+    });
+
+    // It names the fact it ends — the effect row of the FIRST transition, which is the
+    // assertion on this path.
+    expect(termination.targetAssertionId).toBe(addEffectRow.id);
+    expect(termination.targetEffectType).toBe("relationship_add");
+    // And the story moment it ends at: the scene the removing transition was declared
+    // on. A `retract` would carry no anchor at all — that difference is the whole
+    // reason the two operations exist (premis §8.3).
+    expect(termination.anchorEntityType).toBe("scene");
+    expect(termination.anchorEntityId).toBe(sceneId);
+    expect(termination.narrativeTransitionId).toBe(removal.id);
+    expect(termination.appliedAt).not.toBeNull();
+
+    // The claim itself survives, still applied: this is a log, so an ending is a new
+    // row rather than an edit of the old one.
+    const asserted = await prisma.transitionEffect.findFirstOrThrow({
+      where: { id: addEffectRow.id as string },
+      select: { effectType: true, appliedAt: true },
+    });
+
+    expect(asserted.effectType).toBe("relationship_add");
+    expect(asserted.appliedAt).not.toBeNull();
+
+    // ── F-1 (gerbang 4b-3): the causality event must report the row it WROTE ──
+    //
+    // Before this, the removal's event carried `effectType: "relationship_remove"`
+    // and the declared effect's id, and nothing else — a consumer could not learn
+    // that a `terminate` row existed at all, let alone the story moment it carries.
+    // `evaluation_edges` is a valid-time fold (premis §8.4), so that moment is not
+    // decoration: it is the whole "when".
+    const removalEvent = await prisma.outboxEvent.findFirstOrThrow({
+      where: { projectId, aggregateId: removal.id as string },
+      select: { payload: true },
+    });
+
+    expect(removalEvent.payload).toMatchObject({
+      effectType: "relationship_remove",
+      // The rows written, not the intent: the terminate row and the assertion it ends.
+      terminationId: termination.id,
+      targetAssertionId: addEffectRow.id,
+      // And the story moment, carried so the projector can fold valid-time without a
+      // second read.
+      anchorEntityType: "scene",
+      anchorEntityId: sceneId,
+      assertionId: null,
+    });
+
+    // THE COPY IS PINNED TO THE ROW. The anchor now lives in two places — the
+    // `terminate` row (authoritative) and this payload (convenience) — and this is the
+    // assertion that stops them drifting apart in silence.
+    expect(removalEvent.payload).toMatchObject({
+      anchorEntityType: termination.anchorEntityType,
+      anchorEntityId: termination.anchorEntityId,
+    });
   });
 
   // DECIDED 2026-08-19 — blokir gerbang G1 (T-2 + A-3). End to end, over HTTP,

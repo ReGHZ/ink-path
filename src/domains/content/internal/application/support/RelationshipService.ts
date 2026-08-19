@@ -1,3 +1,4 @@
+import { foldAssertion } from "./relationshipProjection.js";
 import {
   CONTENT_RELATIONSHIP_ASSERTED,
   CONTENT_RELATIONSHIP_RETRACTED,
@@ -5,7 +6,6 @@ import {
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
-import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import {
   ContentRelationshipRepositoryConflictError,
   ContentRelationshipRepositoryDuplicateError,
@@ -16,6 +16,7 @@ import { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
+import type { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
 import type {
@@ -276,23 +277,14 @@ export class RelationshipService {
         now,
       });
 
-      relationship = ContentRelationship.create({
+      // THE FOLD, and since step 4b-3 it is the SAME function the narrative apply
+      // path calls (`relationshipProjection.ts`). It reads the assertion rather
+      // than this request: the projection can no longer say anything the log does
+      // not, and there is no second construction site to drift from this one.
+      relationship = foldAssertion({
         id: this.idGenerator.generate(),
-        projectId: input.projectId,
-        relationType: input.relationType,
+        assertion,
         definition,
-        source: {
-          entityType: input.sourceEntityType,
-          entityId: input.sourceEntityId,
-        },
-        target: {
-          entityType: input.targetEntityType,
-          entityId: input.targetEntityId,
-        },
-        // The fold names the fact it was folded from. Available because the
-        // assertion is built first — the order two lines above is what makes this
-        // pointer possible without a second round trip.
-        sourceAssertionId: assertion.id,
         note: input.note,
         createdByUserId: input.requestingUserId,
         now,

@@ -375,9 +375,10 @@ export class TransitionEffect {
   // change what the button MEANS while claiming to preserve it, and would produce
   // a valid-time row with a NULL anchor — a termination whose "when" no reader
   // can ever answer. Termination belongs to an action that can name a story
-  // moment (7.7's `relationship_remove` has one through its parent), which is why
-  // no `terminateFact()` is added here: there is no caller for it yet, and premis
-  // §8.3 asks the UI to offer the two as SEPARATE actions rather than guessing.
+  // moment (7.7's `relationship_remove` has one through its parent) — which is
+  // what `terminateFact()` below serves, added in step 4b-3 when that caller
+  // arrived. Premis §8.3 asks the UI to offer the two as SEPARATE actions, and
+  // that is now what the two factories are: CRUD retracts, narrative terminates.
   //
   // TAKES THE TARGET AGGREGATE, not its id. The kind of the target is the whole
   // question C-1 was about, and reading it off the row removes the one way this
@@ -473,6 +474,116 @@ export class TransitionEffect {
       // In force the moment it is written, like `assertFact()`: there is no
       // second step that could set this, and a pending row would read as
       // "someone declared this and never applied it".
+      appliedAt: props.now,
+      contentRevisionId: null,
+      createdAt: props.now,
+    });
+  }
+
+  // A FACT THAT STOPS HOLDING — "true before the anchor, ceased after it" (premis
+  // §8.3, VALID time). Step 4b-3: what applying a `relationship_remove` writes to
+  // the log instead of deleting the projection row and saying nothing.
+  //
+  // THE ANCHOR IS REQUIRED HERE, and that is the whole difference from
+  // `retractFact()`. The table allows a null anchor because a `retract` must have
+  // none; a termination without one would store a cessation whose "when" no reader
+  // can answer, and the three-valued reader (§8.2) would have to fold it as
+  // "unknown" forever. A narrative effect can always name the moment — its parent
+  // transition is declared ON a scene or chapter — so the one caller that exists
+  // has no excuse to omit it, and no caller without a moment should be using this.
+  //
+  // PROVENANCE IS THE PARENT, and the definition is carried anyway: `has_provenance`
+  // is already satisfied by `narrative_transition_id`, but storing the predicate
+  // gives an operation row the same shape whichever factory wrote it, so a reader
+  // of the log never has to join to the target just to learn which predicate ended.
+  // It is validated against the target for the same reason `retractFact()` does it —
+  // a second copy of the predicate that could disagree is worse than no copy.
+  static terminateFact(props: {
+    id: string;
+    projectId: string;
+    // Provenance AND the reason an anchor is available. Non-null by type: a
+    // parentless termination is the shape this factory exists to make impossible.
+    narrativeTransitionId: string;
+    // The fact whose valid range ends. Not narrowed to `relationship_add`:
+    // `terminate` is defined over any FACT (TERMINATE_TARGET_TYPES), and narrowing
+    // here would put the enum's future in this signature.
+    target: TransitionEffect;
+    definition: RelationshipDefinition;
+    // The story moment. Taken from the parent transition's source entity by the
+    // caller — passed in rather than read off the target, because the target's own
+    // anchor (if any) is when the fact STARTED, not when it ends.
+    anchorEntityType: NarrativeTransitionSourceType;
+    anchorEntityId: string;
+    now: Date;
+  }): TransitionEffect {
+    if (props.target.projectId !== props.projectId) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Cannot terminate an assertion belonging to another project",
+      );
+    }
+
+    // A termination of a claim that is already withdrawn is not an error to raise
+    // here — `retract` wins over `terminate` at read time (premis §8.3), and the
+    // targeting allowlist already refuses a `retract` row as the target. What this
+    // factory must refuse is the pair that would be silently meaningless.
+    if (props.target.id === props.id) {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "An effect cannot terminate itself",
+      );
+    }
+
+    // Same two-way predicate match as `retractFact()`: a target written by the
+    // narrative path names its predicate BY NAME (provenance is its parent), one
+    // written by CRUD names it by ROW. Both are legitimate targets of a narrative
+    // termination — that asymmetry is exactly the cross-path case 4b-3 settles.
+    if (props.target.relationshipDefinitionId !== null) {
+      if (props.definition.id !== props.target.relationshipDefinitionId) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          "Termination names a different predicate than the assertion it ends",
+        );
+      }
+    } else if (props.target.relationshipType !== null) {
+      if (props.definition.predicate !== props.target.relationshipType) {
+        throw new DomainError(
+          DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+          "Termination names a different predicate than the assertion it ends",
+        );
+      }
+    } else {
+      throw new DomainError(
+        DomainErrorCode.DOMAIN_VALIDATION_FAILED,
+        "Cannot terminate a row that names no predicate: there is no fact to end",
+      );
+    }
+
+    return TransitionEffect.reconstitute({
+      id: props.id,
+      narrativeTransitionId: props.narrativeTransitionId,
+      projectId: props.projectId,
+      effectType: "terminate",
+      // The subject travels with the operation, like the retraction: this column is
+      // NOT NULL, and the honest value is the subject of the fact being ended, so
+      // "every row touching this entity" returns the ending beside the claim.
+      targetEntityType: props.target.targetEntityType,
+      targetEntityId: props.target.targetEntityId,
+      fieldPath: null,
+      newValue: null,
+      // Points at the fact, never restates it.
+      relationshipType: null,
+      relationshipDefinitionId: props.definition.id,
+      relatedEntityType: null,
+      relatedEntityId: null,
+      anchorEntityType: props.anchorEntityType,
+      anchorEntityId: props.anchorEntityId,
+      targetAssertionId: props.target.id,
+      targetEffectType: props.target.effectType,
+      // Applied the moment it is written. The DECLARED intent that led here is the
+      // `relationship_remove` effect, which has its own `applied_at`; this row is
+      // the consequence, and a pending consequence would be a fact that never
+      // ended while its cause reports done.
       appliedAt: props.now,
       contentRevisionId: null,
       createdAt: props.now,

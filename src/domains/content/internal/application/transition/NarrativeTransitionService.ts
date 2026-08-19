@@ -5,16 +5,11 @@ import {
 import { AppError } from "../../../../../shared/errors/AppError.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { ErrorCode } from "../../../../../shared/errors/ErrorCode.js";
-import { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import {
   ContentRelationshipRepositoryConflictError,
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
-import {
-  canonicalizeEndpoints,
-  type RelationshipDefinition,
-} from "../../domain/support/relationshipDefinition.js";
 import { domainAttributeFieldOf } from "../../domain/transition/attributeFieldRegistry.js";
 import {
   deriveNarrativeTransitionStatus,
@@ -28,12 +23,15 @@ import {
   type TransitionEffectType,
 } from "../../domain/transition/TransitionEffect.js";
 import { ContentAttributeConflictError } from "../ports/ContentAttributeMutatorError.js";
+import { findFoldOfFact, foldAssertion } from "../support/relationshipProjection.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
 import type { OutboxEventRepository } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
+import type { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
+import type { RelationshipDefinition } from "../../domain/support/relationshipDefinition.js";
 import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
 import type { TransitionEffectRepository } from "../../domain/transition/TransitionEffectRepository.js";
 import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
@@ -855,31 +853,52 @@ export class NarrativeTransitionService {
       );
     }
 
+    // WHAT THIS APPLY ACTUALLY WROTE TO THE LOG — as opposed to what was declared.
+    // Filled by whichever branch runs and spent by the causality event below.
+    //
+    // It exists because the two branches write DIFFERENT rows (gerbang 4b-3, F-1):
+    // an add IS its own assertion, while a removal writes a separate `terminate`
+    // naming the assertion it ends. Until this, the event reported the declared
+    // `relationship_remove` and said nothing about the `terminate` — so a consumer
+    // could not learn that row existed, let alone the story moment it carries, which
+    // is the one thing a valid-time fold cannot be built without.
+    //
+    // Flat with nulls rather than two shapes: one routing key should mean one payload
+    // schema, and a consumer branching on `effectType` already knows which half to
+    // read. The LOG ROW stays authoritative — the anchor is copied here from the same
+    // values in the same transaction, and an e2e assertion pins the copy to the row so
+    // the two cannot drift apart in silence.
+    const logged: {
+      assertionId: string | null;
+      terminationId: string | null;
+      targetAssertionId: string | null;
+      anchorEntityType: string | null;
+      anchorEntityId: string | null;
+    } = {
+      assertionId: null,
+      terminationId: null,
+      targetAssertionId: null,
+      anchorEntityType: null,
+      anchorEntityId: null,
+    };
+
     if (effect.effectType === "relationship_add") {
       let relationship: ContentRelationship;
       try {
-        // Through the domain aggregate, never straight to the repository. This
-        // is the second write path into `content_relationships` the registry
-        // warned about: canonicalisation, the pair matrix and the
-        // self-relationship rule all live in create(), so going around it would
-        // let a narrative effect store a row the manual endpoint would refuse.
-        relationship = ContentRelationship.create({
+        // STEP 4b-3: the dual write is gone. This used to build the projection
+        // here, from this effect's fields, while `RelationshipService` built the
+        // same projection from its own request — two constructions of one fold.
+        // Now both call `foldAssertion()`, which reads the LOG ROW.
+        //
+        // The effect row IS the assertion on this path: it is the log entry
+        // stating the fact, and applying it is what makes the fact hold. That is
+        // why the fold is handed `effect` — no separate assertion is written, and
+        // a generated id would point at a row that does not exist for the
+        // composite foreign key to find.
+        relationship = foldAssertion({
           id: this.idGenerator.generate(),
-          projectId: effect.projectId,
-          relationType: relationshipType,
+          assertion: effect,
           definition,
-          source: {
-            entityType: effect.targetEntityType,
-            entityId: effect.targetEntityId,
-          },
-          target: { entityType: relatedEntityType, entityId: relatedEntityId },
-          // The effect row IS the assertion on this path (step 4b-2): it is the
-          // log entry stating the fact, and applying it is what makes the fact
-          // hold. No separate assertion is written, which is why this is
-          // `effect.id` rather than a generated one — a generated id would point
-          // at a row that does not exist and the composite foreign key would
-          // refuse it.
-          sourceAssertionId: effect.id,
           createdByUserId: requestingUserId,
           now,
         });
@@ -892,38 +911,28 @@ export class NarrativeTransitionService {
       } catch (error) {
         mapNarrativeTransitionError(error);
       }
+
+      // Stated even though it equals `effectId`: "this row is the assertion" is a
+      // claim about the log, and a consumer should not have to know that this path
+      // happens to conflate the two.
+      logged.assertionId = effect.id;
     } else {
-      // Decision D4. The effect stores endpoints as declared and no row id, so
-      // the row is found by its natural identity: the canonical orientation of
-      // (type, endpoints), which is what the six-column unique index keys on.
-      // `findByEntity` is reused rather than a new `findByEndpoints` — it is
-      // already indexed on both sides, and it returns the aggregate, which
-      // carries the `version` the guarded delete needs. That version is read
-      // inside this transaction and spent inside it, which is exactly the
-      // interleaving the guard protects (`ContentRelationshipRepository.ts:102-113`).
-      const { source, target } = canonicalizeEndpoints(
-        definition.directionality,
-        {
+      // Decision D4, now behind the shared fold (step 4b-3): the effect stores
+      // endpoints as declared and no row id, so the projection row is found by its
+      // natural identity — the canonical orientation of (type, endpoints), which is
+      // what the six-column unique index keys on. That identity rule lives in
+      // `relationshipProjection.ts` because it is the PROJECTION's rule, and it now
+      // has one home instead of two.
+      const existing = await findFoldOfFact(repositories.contentRelationships, {
+        projectId: effect.projectId,
+        relationType: relationshipType,
+        definition,
+        subject: {
           entityType: effect.targetEntityType,
           entityId: effect.targetEntityId,
         },
-        { entityType: relatedEntityType, entityId: relatedEntityId },
-      );
-
-      const existing = (
-        await repositories.contentRelationships.findByEntity(
-          effect.projectId,
-          effect.targetEntityType,
-          effect.targetEntityId,
-        )
-      ).find(
-        (candidate) =>
-          candidate.relationType === relationshipType &&
-          candidate.sourceEntityType === source.entityType &&
-          candidate.sourceEntityId === source.entityId &&
-          candidate.targetEntityType === target.entityType &&
-          candidate.targetEntityId === target.entityId,
-      );
+        object: { entityType: relatedEntityType, entityId: relatedEntityId },
+      });
 
       // Decision D5, the remove half: the link this effect would cut is not
       // there. Silently marking it applied would record that this transition
@@ -935,7 +944,70 @@ export class NarrativeTransitionService {
         );
       }
 
+      // ── STEP 4b-3: THE LOG ENTRY THIS PATH USED TO OMIT ──────────────────────
+      //
+      // Until now this branch deleted the projection row and wrote NOTHING to the
+      // log, so the original `relationship_add` stayed applied and unwithdrawn while
+      // its fold vanished. Rebuilding the projection from the log — which is exactly
+      // what `GraphProjector` will do at 4b-4 — would have resurrected the
+      // relationship. That was the known divergence window (gerbang G1, T-6).
+      //
+      // What it writes is `terminate`, NOT `retract`, and the choice is the one
+      // premis §8.3 left open until a caller could name a story moment: a narrated
+      // removal means the fact STOPPED HOLDING at a point in the story, not that it
+      // was never true. The anchor comes from the parent transition's source entity
+      // — the scene or chapter the author declared this beat on — which is why
+      // `terminateFact()` requires it and why this is the only path that may call it.
+      const parent = await repositories.narrativeTransitions.findById(
+        narrativeTransitionId,
+      );
+
+      // Unreachable through the foreign key, which refuses an effect whose parent is
+      // absent. Kept because a row that somehow drifted deserves an error naming the
+      // invariant rather than a null dereference.
+      if (parent === null) {
+        throw new Error(
+          `Transition effect ${effect.id} names transition ${narrativeTransitionId}, which does not exist`,
+        );
+      }
+
+      // The fact being ended is the one the PROJECTION points at — not a fact
+      // pattern this branch re-derives. Read unnarrowed (`findAssertionById`)
+      // because it may be PARENTLESS: a narrative removal is allowed to end a fact
+      // the CRUD endpoint asserted (decision 2026-08-19, the A-3 direction), and
+      // `findById` cannot see such a row by design.
+      const asserted = await repositories.transitionEffects.findAssertionById(
+        effect.projectId,
+        existing.sourceAssertionId,
+      );
+
+      if (asserted === null) {
+        throw new Error(
+          `Relationship ${existing.id} points at assertion ${existing.sourceAssertionId}, which does not exist in project ${effect.projectId}`,
+        );
+      }
+
+      let termination: TransitionEffect;
       try {
+        termination = TransitionEffect.terminateFact({
+          id: this.idGenerator.generate(),
+          projectId: effect.projectId,
+          narrativeTransitionId,
+          target: asserted,
+          definition,
+          anchorEntityType: parent.sourceEntityType,
+          anchorEntityId: parent.sourceEntityId,
+          now,
+        });
+      } catch (error) {
+        mapNarrativeTransitionError(error);
+      }
+
+      try {
+        // Log first, fold second — the same order the CRUD retraction uses. A fold
+        // removed before its operation row exists is a fact that disappeared with
+        // nothing to explain it, and inside one transaction the order costs nothing.
+        await repositories.transitionEffects.insert(termination);
         await repositories.contentRelationships.delete(
           existing.id,
           existing.version,
@@ -943,6 +1015,11 @@ export class NarrativeTransitionService {
       } catch (error) {
         mapNarrativeTransitionError(error);
       }
+
+      logged.terminationId = termination.id;
+      logged.targetAssertionId = asserted.id;
+      logged.anchorEntityType = termination.anchorEntityType;
+      logged.anchorEntityId = termination.anchorEntityId;
     }
 
     try {
@@ -987,6 +1064,12 @@ export class NarrativeTransitionService {
         relatedEntityType,
         relatedEntityId,
         appliedByUserId: requestingUserId,
+        // The rows in the log this apply is reporting. `effectId` above is the
+        // INTENT; these are what was written (4b-3, F-1). The CRUD side has carried
+        // its equivalents since 4b-2 (`retractionId` + `assertionId` on
+        // `content.relationship.retracted`) — two paths in one role should not have
+        // two different event contracts.
+        ...logged,
       },
       routingKey: NARRATIVE_EFFECT_APPLIED,
       exchange: "saas.events",

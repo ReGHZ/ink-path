@@ -411,6 +411,31 @@ function seedEffect(
   return effect;
 }
 
+// The FACT a `relationship_remove` ends. Since step 4b-3 the remove path reads it —
+// applying the removal writes a `terminate` naming this row — so a fixture with a
+// projection but no origin assertion is a state the database's foreign key would not
+// allow either.
+function seedOriginAssertion(
+  overrides: Partial<TransitionEffectProperties> = {},
+): TransitionEffect {
+  return seedEffect({
+    id: "assertion-1",
+    effectType: "relationship_add",
+    fieldPath: null,
+    newValue: null,
+    relationshipType: "member_of",
+    // The REAL definition id, not the placeholder `relationshipEffectFields` uses for
+    // declared rows: a termination matches its target's predicate by row when the
+    // target names one (`TransitionEffect.terminateFact`), so a fixture with a made-up
+    // id would fail for a reason that has nothing to do with the case under test.
+    relationshipDefinitionId: seededDefinition("member_of").id,
+    relatedEntityType: "faction",
+    relatedEntityId: "faction-1",
+    appliedAt: now,
+    ...overrides,
+  });
+}
+
 const relationshipEffectFields = {
   effectType: "relationship_add" as const,
   fieldPath: null,
@@ -1087,6 +1112,7 @@ describe("applyEffect — relationship effects", () => {
       ...relationshipEffectFields,
       effectType: "relationship_remove",
     });
+    seedOriginAssertion();
 
     const existing = ContentRelationship.create({
       id: "relationship-1",
@@ -1115,6 +1141,129 @@ describe("applyEffect — relationship effects", () => {
     ]);
   });
 
+  // ── STEP 4b-3 ───────────────────────────────────────────────────────────────
+  // Before this, applying a removal deleted the projection row and wrote NOTHING to
+  // the log: the `relationship_add` stayed applied and unwithdrawn while its fold
+  // vanished, so rebuilding the projection from the log would resurrect the
+  // relationship (gerbang G1, T-6). These are the claims that close that window.
+  it("writes a terminate that names the assertion it ends and the story moment it ends at", async () => {
+    seedTransition({ sourceEntityType: "scene", sourceEntityId: "scene-7" });
+    seedEffect({
+      ...relationshipEffectFields,
+      effectType: "relationship_remove",
+    });
+    const origin = seedOriginAssertion();
+
+    relationships.rows.push(
+      ContentRelationship.create({
+        id: "relationship-1",
+        projectId,
+        relationType: "member_of",
+        definition: seededDefinition("member_of"),
+        source: { entityType: "character", entityId: "character-1" },
+        target: { entityType: "faction", entityId: "faction-1" },
+        sourceAssertionId: origin.id,
+        createdByUserId: userId,
+        now,
+      }),
+    );
+
+    await service.applyEffect(projectId, "effect-1", {
+      requestingUserId: userId,
+      requestingMembership: writer,
+    });
+
+    const written = [...effects.rows.values()].filter(
+      (row) => row.effectType === "terminate",
+    );
+
+    expect(written).toHaveLength(1);
+    const [termination] = written;
+
+    expect(termination?.id).toBeDefined();
+
+    // `terminate`, NOT `retract`: a narrated removal means the fact stopped holding
+    // at a point in the story, not that it was never true (premis §8.3).
+    expect(termination?.targetAssertionId).toBe("assertion-1");
+    expect(termination?.targetEffectType).toBe("relationship_add");
+    // VALID time, taken from the parent transition's source entity — the beat the
+    // author declared this removal on. This is the assertion that would fail if the
+    // anchor were left null to "keep it simple".
+    expect(termination?.anchorEntityType).toBe("scene");
+    expect(termination?.anchorEntityId).toBe("scene-7");
+    expect(termination?.narrativeTransitionId).toBe("transition-1");
+    // APPLY time, not the declared row's creation time: `later` is what the service
+    // clock returns, and one apply is one instant for every row it writes.
+    expect(termination?.appliedAt).toEqual(later);
+    expect(termination?.createdAt).toEqual(later);
+
+    // The claim SURVIVES, untouched — that is what makes this a log and not a
+    // mutation. Asserting it here catches a future edit that "cleans up" the
+    // assertion along with the projection.
+    expect(effects.rows.get("assertion-1")?.effectType).toBe("relationship_add");
+    expect(effects.rows.get("assertion-1")?.appliedAt).toEqual(now);
+    // And the fold is gone, so the CRUD surface stops showing it.
+    expect(relationships.deleted).toEqual([
+      { id: "relationship-1", expectedVersion: 0 },
+    ]);
+
+    // F-1 (gerbang 4b-3): the causality event reports the row WRITTEN, not just the
+    // intent declared. Without this the event says `relationship_remove` and a
+    // consumer cannot learn the `terminate` row exists — nor the story moment it
+    // carries, which is the only "when" a valid-time fold has.
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]?.payload).toMatchObject({
+      effectType: "relationship_remove",
+      terminationId: termination?.id,
+      targetAssertionId: "assertion-1",
+      anchorEntityType: "scene",
+      anchorEntityId: "scene-7",
+      assertionId: null,
+    });
+  });
+
+  // THE CROSS-PATH DIRECTION (A-3, decided 2026-08-19): a narrative removal may end
+  // a fact the CRUD endpoint asserted. Its origin assertion is PARENTLESS, which is
+  // the shape `findById` cannot see — so this also pins that the remove path reads
+  // the log unnarrowed.
+  it("terminates a fact that CRUD asserted, not only one a transition wrote", async () => {
+    seedTransition({ sourceEntityType: "chapter", sourceEntityId: "chapter-3" });
+    seedEffect({
+      ...relationshipEffectFields,
+      effectType: "relationship_remove",
+    });
+    seedOriginAssertion({ narrativeTransitionId: null });
+
+    relationships.rows.push(
+      ContentRelationship.create({
+        id: "relationship-1",
+        projectId,
+        relationType: "member_of",
+        definition: seededDefinition("member_of"),
+        source: { entityType: "character", entityId: "character-1" },
+        target: { entityType: "faction", entityId: "faction-1" },
+        sourceAssertionId: "assertion-1",
+        createdByUserId: userId,
+        now,
+      }),
+    );
+
+    await service.applyEffect(projectId, "effect-1", {
+      requestingUserId: userId,
+      requestingMembership: writer,
+    });
+
+    const termination = [...effects.rows.values()].find(
+      (row) => row.effectType === "terminate",
+    );
+
+    expect(termination?.targetAssertionId).toBe("assertion-1");
+    // The termination belongs to the transition that narrated it, even though the
+    // fact it ends belongs to no transition at all.
+    expect(termination?.narrativeTransitionId).toBe("transition-1");
+    expect(termination?.anchorEntityId).toBe("chapter-3");
+  });
+
   // The same world-fact as the pre-check below, discovered one step later
   // because the row vanished mid-transaction. One fact, one answer — and the
   // message must not name the transition, which exists.
@@ -1123,6 +1272,7 @@ describe("applyEffect — relationship effects", () => {
       ...relationshipEffectFields,
       effectType: "relationship_remove",
     });
+    seedOriginAssertion();
 
     relationships.rows.push(
       ContentRelationship.create({
