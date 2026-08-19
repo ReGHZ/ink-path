@@ -106,6 +106,40 @@ services:
       qdrant:
         condition: service_started
 
+  # Step 4b-4 stage C. Own service for the same reason embedding-worker has one:
+  # unrelated failure modes and independent scaling (see src/graphProjectorWorker.ts
+  # for why sharing the `worker` process was rejected). No Qdrant dependency — this
+  # consumer only ever touches Postgres and RabbitMQ.
+  graph-projector-worker:
+    profiles: ["graph-projector-worker"]
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    container_name: ink-path-graph-projector-worker
+    command: pnpm graph-projector-worker:dev
+    working_dir: /workspace
+    init: true
+    tty: true
+    stdin_open: true
+    volumes:
+      - ..:/workspace:cached
+      - node_modules:/workspace/node_modules
+      - pnpm_store:/home/node/.local/share/pnpm/store
+      - zsh_history:/home/node/.cache/zsh
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ink_path
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+      JWT_SECRET: dev-only-change-me
+      JWT_REFRESH_SECRET: dev-only-refresh-change-me
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   outbox-recovery-worker:
     profiles: ["outbox-recovery-worker"]
     build:

@@ -7,6 +7,7 @@ import { PrismaProjectRepository } from "../../src/domains/project/internal/infr
 import { User } from "../../src/domains/user/internal/domain/User.js";
 import { PrismaUserRepository } from "../../src/domains/user/internal/infrastructure/PrismaUserRepository.js";
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -50,6 +51,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   // Assertions before definitions before projects: every one of those FKs is
   // onDelete: Restrict, so deleting in the other order fails rather than
   // cascading.
+  await deleteEvaluationFold(client, [projectId, otherProjectId]);
   await client.transitionEffect.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });

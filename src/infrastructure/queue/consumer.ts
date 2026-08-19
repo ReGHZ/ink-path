@@ -21,7 +21,24 @@ type RabbitMqConsumerOptions<Payload = unknown> = {
   exchange?: string;
   prefetch?: number;
   queue: string;
-  routingKeyPattern: string;
+  // ONE pattern or MANY (step 4b-4, stage C). It stayed singular while every
+  // consumer needed one binding; `GraphProjector` needs two —
+  // `content.relationship.*` and `narrative.effect.*` — because the two prefixes are
+  // what the producers guarantee and `content.#` would also deliver every entity
+  // text change in the system (`shared/application/events/routingKeys.ts`,
+  // GRAPH_PROJECTOR_BINDINGS).
+  //
+  // Widened rather than replaced: `string` keeps every existing caller and every
+  // existing test untouched, and a queue with exactly one binding is still the
+  // common case, not a degenerate array.
+  //
+  // NON-EMPTY by type, not by a runtime check. A queue bound to nothing is the worst
+  // shape this option can take — it is created, it is consumed from, it reports
+  // healthy, and no message ever arrives — and every pattern in this codebase is a
+  // module constant, so `tsc` can refuse the empty case outright. A constructor throw
+  // would instead be a branch guarding a state the type system already makes
+  // unreachable, testable only by casting one into existence.
+  routingKeyPattern: string | readonly [string, ...string[]];
   handleMessage: RabbitMqMessageHandler<Payload>;
   // If set, a message that ends up nacked (retries exhausted, or a non-retryable
   // failure) lands in a durable queue bound to this exchange instead of being
@@ -78,7 +95,7 @@ export class RabbitMqConsumer<Payload = unknown> implements Consumer {
 
   private readonly retryBaseDelayMs: number;
 
-  private readonly routingKeyPattern: string;
+  private readonly routingKeyPatterns: readonly string[];
 
   constructor(
     private readonly rabbitmq: RabbitMqManager,
@@ -92,7 +109,10 @@ export class RabbitMqConsumer<Payload = unknown> implements Consumer {
     this.prefetch = options.prefetch;
     this.queue = options.queue;
     this.retryBaseDelayMs = options.retryBaseDelayMs ?? 1_000;
-    this.routingKeyPattern = options.routingKeyPattern;
+    this.routingKeyPatterns =
+      typeof options.routingKeyPattern === "string"
+        ? [options.routingKeyPattern]
+        : options.routingKeyPattern;
   }
 
   async start(): Promise<void> {
@@ -126,11 +146,14 @@ export class RabbitMqConsumer<Payload = unknown> implements Consumer {
         durable: true,
         arguments: queueArguments,
       });
-      await channel.bindQueue(
-        this.queue,
-        this.exchange,
-        this.routingKeyPattern,
-      );
+      // One bind per pattern. `bindQueue` is idempotent on the broker, so a
+      // reconnect re-binding all of them costs nothing, and a partial failure
+      // leaves the queue bound to the prefixes that did land — which is why the
+      // loop is here and not a single call with a joined string: AMQP has no
+      // syntax for "either of these two patterns" in one binding.
+      for (const pattern of this.routingKeyPatterns) {
+        await channel.bindQueue(this.queue, this.exchange, pattern);
+      }
 
       if (this.prefetch !== undefined) {
         await channel.prefetch(this.prefetch);

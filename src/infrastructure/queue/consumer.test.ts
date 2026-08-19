@@ -52,6 +52,11 @@ function makeStubRabbitMqManager() {
 
   return {
     rabbitmq,
+    // Exposed so the binding tests below can read what the consumer actually asked
+    // the broker for. A binding is invisible from the outside — a queue bound to the
+    // wrong pattern (or to nothing) looks identical to an idle one — so the calls
+    // themselves are the only observable.
+    bindQueue: fakeAmqpChannel.bindQueue,
     deliverMessage: (message: ConsumeMessage) => deliver?.(message),
   };
 }
@@ -95,5 +100,60 @@ describe("RabbitMqConsumer — post-shutdown delivery race", () => {
     }
 
     expect(unhandledRejections).toEqual([]);
+  });
+});
+
+describe("RabbitMqConsumer — routing key patterns", () => {
+  it("binds the queue once per pattern when given several", async () => {
+    const { rabbitmq, bindQueue } = makeStubRabbitMqManager();
+    const consumer = createRabbitMqConsumer(rabbitmq, {
+      queue: "test-two-bindings",
+      // The `GraphProjector` shape (step 4b-4, stage C): two prefixes, because AMQP
+      // has no way to express "either of these" in ONE binding and `content.#` would
+      // swallow every entity lifecycle event in the system.
+      routingKeyPattern: ["content.relationship.*", "narrative.effect.*"],
+      handleMessage: () => Promise.resolve(),
+    });
+
+    await consumer.start();
+
+    expect(bindQueue).toHaveBeenCalledTimes(2);
+    expect(bindQueue).toHaveBeenNthCalledWith(
+      1,
+      "test-two-bindings",
+      expect.any(String),
+      "content.relationship.*",
+    );
+    expect(bindQueue).toHaveBeenNthCalledWith(
+      2,
+      "test-two-bindings",
+      expect.any(String),
+      "narrative.effect.*",
+    );
+
+    await consumer.stop();
+  });
+
+  it("still binds exactly once for a single pattern given as a string", async () => {
+    const { rabbitmq, bindQueue } = makeStubRabbitMqManager();
+    const consumer = createRabbitMqConsumer(rabbitmq, {
+      queue: "test-one-binding",
+      routingKeyPattern: "content.*",
+      handleMessage: () => Promise.resolve(),
+    });
+
+    await consumer.start();
+
+    // The widening must not turn every existing consumer into an array of one with a
+    // second bind, or a reconnect would double-bind the embedding worker's queue.
+    expect(bindQueue).toHaveBeenCalledTimes(1);
+    expect(bindQueue).toHaveBeenNthCalledWith(
+      1,
+      "test-one-binding",
+      expect.any(String),
+      "content.*",
+    );
+
+    await consumer.stop();
   });
 });

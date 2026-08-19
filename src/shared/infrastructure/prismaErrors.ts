@@ -176,3 +176,69 @@ export function matchesUniqueConstraint(
 
     return actual.every((column) => expected.has(column));
 }
+
+// DATABASE-level transients: the same statement, run again, can succeed. Added for the
+// graph projector (step 4b-4, stage C), which must tell "retry this message" apart from
+// "this message will never work" — but the knowledge is Prisma's, not any one domain's,
+// which is why it sits here beside the other code-reading helpers.
+//
+// WHAT IS DELIBERATELY NOT HERE, and each omission is a policy that belongs to a
+// caller rather than to the database:
+//
+//   · P2002 (unique violation). `isUniqueViolation` above already owns that code, and
+//     whether a duplicate is transient depends entirely on WHOSE unique key it is: for
+//     the CRUD surface it is a deterministic, user-facing duplicate
+//     (`ContentRelationshipRepositoryDuplicateError`); for a fold whose only unique
+//     keys are identity keys it would have converged on anyway, it means a concurrent
+//     writer got there first. A caller wanting the second reading composes the two
+//     helpers, as `PrismaEvaluationGraphRepository` does.
+//   · P2003 (foreign key). For a fold it means the log or the vocabulary disagrees with
+//     what is being folded, and no number of attempts changes that.
+//   · `PrismaClientValidationError` — a malformed query, i.e. a code bug.
+//
+// Not shared with `isRetryableEmbeddingWorkerError` either, and that is a difference in
+// POLICY rather than duplication left lying around: that classifier answers `false` for
+// every `PrismaClientKnownRequestError` on purpose (see its closing comment — failing
+// fast beat holding a prefetch slot through a full backoff during an outage). Bringing
+// it onto this helper would change that decision for a slice this step does not own.
+const TRANSIENT_PRISMA_CODES = new Set([
+    // Cannot reach the database server / connection timed out / server closed it.
+    "P1001",
+    "P1002",
+    "P1017",
+    // Transaction failed to commit: Postgres serialization failure or deadlock
+    // (`40001` / `40P01`). Two concurrent folds touching one endpoint row are exactly
+    // this case.
+    "P2034",
+    // Timed out waiting for a connection from the pool. NOT a data problem at all — the
+    // statement never reached Postgres — and the queue-driven callers are exactly the ones
+    // that can cause it: a consumer with prefetch N runs up to N handlers at once against a
+    // pool that is smaller than N unless someone did the arithmetic. Dead-lettering a fact
+    // because the pool was briefly busy would be the wrong answer to the right signal.
+    "P2024",
+]);
+
+export function isTransientDatabaseError(error: unknown): boolean {
+    // Read by SHAPE, like every other helper in this file — no `instanceof
+    // Prisma.*`. This module has no Prisma import on purpose, and the two error
+    // classes without a `code` are matched by `name` for the same reason.
+    if (typeof error !== "object" || error === null) {
+        return false;
+    }
+
+    const name = (error as { name?: unknown }).name;
+
+    // The client could not connect at all (the statement never ran), and Prisma's
+    // escape hatch for errors it could not map — in practice a connection reset
+    // mid-query, or a Postgres error with no assigned code.
+    if (
+        name === "PrismaClientInitializationError" ||
+        name === "PrismaClientUnknownRequestError"
+    ) {
+        return true;
+    }
+
+    const code = (error as { code?: unknown }).code;
+
+    return typeof code === "string" && TRANSIENT_PRISMA_CODES.has(code);
+}

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp, type App } from "../../src/app.js";
 import { createAppContainer } from "../../src/infrastructure/container.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -174,6 +175,7 @@ beforeEach(async () => {
       // twelve narrative-transition routes into this file's sweeps — none of
       // them writes a row today, and that is exactly the state in which a
       // cleanup silently stops covering the surface it is asked about.
+      await deleteEvaluationFold(prisma, projectIds);
       await prisma.transitionEffect.deleteMany({
         where: { projectId: { in: projectIds } },
       });

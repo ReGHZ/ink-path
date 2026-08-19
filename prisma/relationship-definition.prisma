@@ -89,6 +89,11 @@ model RelationshipDefinition {
   // Restrict in this schema.
   relationships ContentRelationship[]
 
+  // The DIEGETIC fold (step 4b-4), beside the CRUD one above. Both name the
+  // predicate by symbol + composite key, which is the reason this back-relation
+  // exists at all: two folds over one log, one vocabulary.
+  evaluationEdges EvaluationEdge[]
+
   @@unique([projectId, predicate])
   @@unique([id, projectId])
   @@index([projectId])

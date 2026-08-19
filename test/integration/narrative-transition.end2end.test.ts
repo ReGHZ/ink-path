@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
 import { createAppContainer } from "../../src/infrastructure/container.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 import { seedProjectVocabulary } from "../helpers/relationshipVocabulary.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
@@ -392,6 +393,7 @@ beforeEach(async () => {
     await prisma.contentRelationship.deleteMany({
       where: { projectId: { in: projectIds } },
     });
+    await deleteEvaluationFold(prisma, projectIds);
     await prisma.transitionEffect.deleteMany({
       where: { projectId: { in: projectIds } },
     });
@@ -426,6 +428,7 @@ beforeEach(async () => {
   await prisma.contentRelationship.deleteMany({
     where: { projectId: { in: projectIds } },
   });
+  await deleteEvaluationFold(prisma, projectIds);
   await prisma.transitionEffect.deleteMany({
     where: { projectId: { in: projectIds } },
   });

@@ -14,6 +14,7 @@ import { PrismaProjectRepository } from "../../src/domains/project/internal/infr
 import { User } from "../../src/domains/user/internal/domain/User.js";
 import { PrismaUserRepository } from "../../src/domains/user/internal/infrastructure/PrismaUserRepository.js";
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -91,6 +92,7 @@ function gate(): Gate {
 }
 
 async function cleanDatabase(client: PrismaClient): Promise<void> {
+  await deleteEvaluationFold(client, [projectId]);
   await client.transitionEffect.deleteMany({ where: { projectId } });
   await client.narrativeTransition.deleteMany({ where: { projectId } });
   await client.project.deleteMany({ where: { id: projectId } });

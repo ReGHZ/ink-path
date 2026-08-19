@@ -255,9 +255,70 @@ model EvaluationEdge {
   metadata         Json     @default("{}")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
+  // Step 4b-4 (stage A). PROVENANCE: the assertion this edge is a fold of.
+  //
+  // The same column `content_relationships` gained in 4b-2, for the same reason
+  // and with the same key shape — but the two folds do NOT behave alike, and the
+  // difference is the whole point of adding it here
+  // (`03-database-design/15_validation_tables.md` §ADDENDUM 2026-08-19 butir 1):
+  //
+  //   `retract`   → the row is DELETED. The claim counts as never made, at every
+  //                 cut, so there is nothing left to fold.
+  //   `terminate` → the row STAYS. The fact held before its anchor, and a fold
+  //                 that deleted it would answer "never held" to every question
+  //                 about every earlier cut. All tests would still be green.
+  //
+  // Both operations name an ASSERTION ID (premis §8.3), so both are idempotent
+  // under retries — and neither could be matched by fact pattern, because two
+  // authors are explicitly allowed to assert the same fact and a pattern cannot
+  // tell those two assertions apart.
+  //
+  // NOT NULL, no backfill, no nullable interim step: the table has never been
+  // written by production code (verified via the graph index before this stage —
+  // zero references outside comments), so this is greenfield rather than a
+  // migration over data. Pre-deploy, zero rows (preseden D-3,
+  // `06-migration-planning/01:7`).
+  //
+  // What this column deliberately does NOT carry: the anchor. Truth-at-a-cut is
+  // computed by the executor over reachability, three-valued, and materialising a
+  // validity range here would force two values on a question whose answer can be
+  // `unknown` (§ADDENDUM butir 2).
+  sourceAssertionId String @map("source_assertion_id") @db.Uuid
+
   sourceNode EvaluationNode @relation("EvaluationEdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
   targetNode EvaluationNode @relation("EvaluationEdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
 
+  // `onDelete: Restrict`, same as the CRUD fold: an applied assertion cannot be
+  // deleted through the application at all (append-only), so this refuses the one
+  // route left — hand-run SQL — and refuses it for the right reason. An edge whose
+  // origin assertion was deleted could no longer say what fact it is a fold of.
+  //
+  // Composite `(source_assertion_id, project_id)` rather than the id alone: an
+  // edge folded from ANOTHER project's assertion is a tenancy leak the database
+  // can refuse outright, rather than one that survives until a service forgets to
+  // check.
+  sourceAssertion TransitionEffect @relation(fields: [sourceAssertionId, projectId], references: [id, projectId], onDelete: Restrict, onUpdate: Restrict)
+
+  // §ADDENDUM butir 6: the predicate reference takes the shape 4a settled on —
+  // `relationship_type text` + composite FK — and NOT a `predicate_id` column
+  // (`02-system-design/06_validation_domain.md` writes `predicate_id`; the shape
+  // in `15` wins, and both now carry a dated addendum saying so).
+  //
+  // Why it has to be here and not only on `content_relationships`: two folds over
+  // the SAME log must name a predicate the same way, or "which predicate" has two
+  // answers. `onUpdate: Restrict` is the stated price — renaming a predicate is
+  // refused while facts still reference it, exactly as in 4a.
+  definition RelationshipDefinition @relation(fields: [projectId, relationshipType], references: [projectId, predicate], onDelete: Restrict, onUpdate: Restrict)
+
+  // One edge per ASSERTION, and that is the fold's identity — not
+  // (project, source, target, predicate). Keyed on the assertion, `assert →
+  // terminate → assert again` produces two rows that both keep their own
+  // provenance, which is the interval SET premis §8.3 calls coherent; keyed on the
+  // fact, the second assert would collide with the row the terminate left behind
+  // and the re-assertion would be lost. It is also the index the composite foreign
+  // key above needs, and what makes a redelivered event an upsert instead of a
+  // duplicate.
+  @@unique([sourceAssertionId, projectId])
   @@index([projectId, sourceNodeId])
   @@index([projectId, targetNodeId])
   @@index([projectId, relationshipType])

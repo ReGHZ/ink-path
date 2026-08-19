@@ -22,6 +22,7 @@ import { PrismaUserRepository } from "../../src/domains/user/internal/infrastruc
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
 import { AppError } from "../../src/shared/errors/AppError.js";
 import { ErrorCode } from "../../src/shared/errors/ErrorCode.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 import {
   seedOriginAssertion,
   seedProjectVocabulary,
@@ -135,6 +136,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
     where: { projectId: { in: [projectId, otherProjectId] } },
   });
   // Assertions before the vocabulary they reference (onDelete: Restrict).
+  await deleteEvaluationFold(client, [projectId, otherProjectId]);
   await client.transitionEffect.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });

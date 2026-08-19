@@ -8,6 +8,7 @@ import { User } from "../../src/domains/user/internal/domain/User.js";
 import { PrismaUserRepository } from "../../src/domains/user/internal/infrastructure/PrismaUserRepository.js";
 import { PrismaEvaluationFactReader } from "../../src/domains/validation/internal/infrastructure/PrismaEvaluationFactReader.js";
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -56,6 +57,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   // Assertions before definitions before content before project: every FK on
   // this path is onDelete: Restrict, so any other order fails instead of
   // cascading, and the failure would land inside an unrelated test's fixtures.
+  await deleteEvaluationFold(client, ids);
   await client.transitionEffect.deleteMany({ where: { projectId: { in: ids } } });
   await client.narrativeTransition.deleteMany({
     where: { projectId: { in: ids } },
@@ -258,6 +260,7 @@ describe("PrismaEvaluationFactReader", () => {
       // invent an ordering the story does not have.
       expect(snapshot.assertions[0]?.anchorPosition).toBeNull();
 
+      await deleteEvaluationFold(prisma, [projectId]);
       await prisma.transitionEffect.deleteMany({ where: { projectId } });
       await prisma.event.deleteMany({ where: { id: event.id } });
     });

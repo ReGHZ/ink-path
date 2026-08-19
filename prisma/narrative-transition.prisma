@@ -144,6 +144,12 @@ model TransitionEffect {
   // and one the database applies to hand-run SQL too.
   relationshipProjections ContentRelationship[]
 
+  // The diegetic fold folded FROM this assertion (step 4b-4), Restrict on that
+  // side for the same append-only reason. Unlike the CRUD projection above, a
+  // `terminate` does NOT remove these rows — see
+  // `EvaluationEdge.sourceAssertionId` in `validation.prisma`.
+  evaluationEdges EvaluationEdge[]
+
   // Exists only as the target of the self-referencing foreign key above. It
   // carries `effect_type` so a referencing row can name its target's KIND and be
   // held to it by the key itself — the one thing a CHECK cannot do, since a

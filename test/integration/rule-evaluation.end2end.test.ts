@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { seedRelationshipDefinitions } from "../../src/domains/content/internal/infrastructure/support/PrismaRelationshipDefinitionSeeder.js";
 import { createAppContainer } from "../../src/infrastructure/container.js";
+import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -370,6 +371,7 @@ beforeEach(async () => {
     // Assertions before definitions before content: every FK on this path is
     // onDelete: Restrict, so any other order fails instead of cascading, and
     // the failure would surface inside an unrelated test's fixtures.
+    await deleteEvaluationFold(prisma, projectIds);
     await prisma.transitionEffect.deleteMany({
       where: { projectId: { in: projectIds } },
     });
