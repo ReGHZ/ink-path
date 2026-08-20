@@ -1,5 +1,9 @@
 import { NarrativeTransitionMapper } from "./NarrativeTransitionMapper.js";
-import { NarrativeTransitionRepositoryNotFoundError } from "../../domain/transition/NarrativeTransitionRepositoryError.js";
+import { isForeignKeyViolation } from "../../../../../shared/infrastructure/prismaErrors.js";
+import {
+  NarrativeTransitionRepositoryChildSurvivedError,
+  NarrativeTransitionRepositoryNotFoundError,
+} from "../../domain/transition/NarrativeTransitionRepositoryError.js";
 
 import type { PrismaClient } from "../../../../../generated/prisma/client.js";
 import type {
@@ -27,29 +31,6 @@ export class PrismaNarrativeTransitionRepository
     });
 
     return row ? NarrativeTransitionMapper.toDomain(row) : null;
-  }
-
-  async findByIdForUpdate(id: string): Promise<NarrativeTransition | null> {
-    // Two statements: the raw one takes the lock, the typed one maps the row.
-    // Same split as `PrismaTransitionEffectRepository.findByIdForUpdate`, and
-    // for the same reason — mapping raw snake_case columns by hand would
-    // duplicate the mapper and drift from it.
-    //
-    // No SKIP LOCKED: a second structural caller must WAIT and then see the
-    // world the first one left, which for a deleted transition means finding no
-    // row and answering 404.
-    const locked = await this.client.$queryRaw<Array<{ id: string }>>`
-      SELECT id
-      FROM narrative_transitions
-      WHERE id = ${id}::uuid
-      FOR UPDATE
-    `;
-
-    if (locked.length === 0) {
-      return null;
-    }
-
-    return this.findById(id);
   }
 
   async findByProjectId(projectId: string): Promise<NarrativeTransition[]> {
@@ -113,17 +94,30 @@ export class PrismaNarrativeTransitionRepository
     // no second meaning to split out, so the follow-up lookup the relationship
     // repository performs would answer a question nobody asked.
     //
-    // A P2003 here is a Restrict violation from a surviving child effect and is
-    // deliberately NOT translated. Two things must be true for it to be
-    // unreachable, and BOTH are the caller's: the children are deleted in this
-    // same transaction first (`16:138`), and the aggregate-root lock is held so
-    // no new child can be born between the two statements
-    // (`../../domain/transition/NarrativeTransitionRepository.ts` findByIdForUpdate
-    // — the second half was missing until the 7.7 gate). Hitting it therefore
-    // means one of those was skipped: a bug that must surface raw.
-    const result = await this.client.narrativeTransition.deleteMany({
-      where: { id },
-    });
+    // A P2003 here is a Restrict violation from a surviving child effect. Until
+    // step 4b-5 it was deliberately NOT translated: the aggregate-root lock made
+    // it unreachable, so hitting it meant a caller had skipped something and the
+    // raw error was the signal.
+    //
+    // 4b-5 removed that lock on purpose and put the FK in its place, so this is
+    // now a legitimate outcome of a race — a child born after the delete read its
+    // list, or applied while it worked. Translated to a NAMED error rather than
+    // mapped here, because "which status code" is the application's decision and
+    // this class of failure already has an answer there (409, the same sentence
+    // the per-child guard gives). Left raw, it answers 500 — measured at 4b-5
+    // langkah 2, mutan M3.
+    let result;
+    try {
+      result = await this.client.narrativeTransition.deleteMany({
+        where: { id },
+      });
+    } catch (error) {
+      if (isForeignKeyViolation(error)) {
+        throw new NarrativeTransitionRepositoryChildSurvivedError();
+      }
+
+      throw error;
+    }
 
     if (result.count === 0) {
       throw new NarrativeTransitionRepositoryNotFoundError();

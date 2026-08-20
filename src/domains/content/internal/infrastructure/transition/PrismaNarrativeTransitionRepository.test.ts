@@ -111,31 +111,6 @@ function buildTransition(): NarrativeTransition {
 }
 
 describe("PrismaNarrativeTransitionRepository", () => {
-  // The aggregate-root lock added at the 7.7 gate. A version of this method that
-  // read the row without `FOR UPDATE` behaves identically in every test that is
-  // not concurrent — which is every test we can write — so the statement itself
-  // is what has to be asserted.
-  it("takes an aggregate root lock before reading the transition", async () => {
-    const { repository, calls } = buildRepository();
-
-    const transition = await repository.findByIdForUpdate("transition-1");
-
-    expect(calls.raw).toHaveLength(1);
-    expect(calls.raw[0]).toContain("FOR UPDATE");
-    expect(calls.raw[0]).toContain("FROM narrative_transitions");
-    // SKIP LOCKED would let a second structural caller conclude the transition
-    // does not exist while it is merely busy.
-    expect(calls.raw[0]).not.toContain("SKIP LOCKED");
-    expect(transition?.id).toBe("transition-1");
-  });
-
-  it("answers null without a second read when the transition is gone", async () => {
-    const { repository, calls } = buildRepository({ lockedRows: [] });
-
-    expect(await repository.findByIdForUpdate("transition-1")).toBeNull();
-    expect(calls.findUnique).toBe(0);
-  });
-
   it("orders project lists newest first with a total tie-break", async () => {
     const { repository, calls } = buildRepository();
 

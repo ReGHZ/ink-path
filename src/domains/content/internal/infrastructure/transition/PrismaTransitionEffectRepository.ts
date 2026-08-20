@@ -3,7 +3,11 @@ import { NarrativeTransitionRepositoryNotFoundError } from "../../domain/transit
 
 import type { PrismaClient } from "../../../../../generated/prisma/client.js";
 import type { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
-import type { TransitionEffectRepository } from "../../domain/transition/TransitionEffectRepository.js";
+import type {
+  TransitionEffectClaim,
+  TransitionEffectDeletion,
+  TransitionEffectRepository,
+} from "../../domain/transition/TransitionEffectRepository.js";
 
 // `$queryRaw` is part of the contract, not an escape hatch: Prisma has no
 // first-class `FOR UPDATE`, and the lock is the whole mechanism apply relies on.
@@ -50,32 +54,66 @@ export class PrismaTransitionEffectRepository
     return row ? TransitionEffectMapper.toDomain(row) : null;
   }
 
-  async findByIdForUpdate(id: string): Promise<TransitionEffect | null> {
-    // Two statements rather than one raw SELECT of every column: the raw query
-    // takes the lock, the typed read maps the row. Mapping snake_case raw
-    // columns by hand would duplicate TransitionEffectMapper and drift from it
-    // the first time a column is added. Same shape the outbox dispatcher uses
-    // for its claim (`src/infrastructure/outbox/outboxRepository.ts:21-31`),
-    // minus SKIP LOCKED — here the second caller must WAIT and then discover
-    // that `applied_at` is set, which is precisely the idempotency re-check.
-    //
-    // Outside a transaction this call still succeeds and still returns the row,
-    // but the lock is released the instant the statement returns and the
-    // guarantee is gone with no error to notice. That is why the port says it
-    // must run inside one and why the unit of work is the only thing that builds
-    // this repository.
-    const locked = await this.client.$queryRaw<Array<{ id: string }>>`
-      SELECT id
-      FROM transition_effects
-      WHERE id = ${id}::uuid
-      FOR UPDATE
-    `;
+  async claimForApply(
+    projectId: string,
+    id: string,
+    now: Date,
+  ): Promise<TransitionEffectClaim> {
+    // `updateMany` and not `update`: `update` needs a unique WHERE and would
+    // reject `appliedAt: null`, which is the whole point — the predicate has to
+    // be part of the statement that takes the lock.
+    const claimed = await this.client.transitionEffect.updateMany({
+      where: { id, projectId, appliedAt: null },
+      data: { appliedAt: now },
+    });
 
-    if (locked.length === 0) {
-      return null;
+    const row = await this.client.transitionEffect.findFirst({
+      where: { id, projectId },
+    });
+
+    if (row === null) {
+      return { status: "missing" };
     }
 
-    return this.findById(id);
+    if (claimed.count === 0) {
+      // The read above ran AFTER the update returned zero rows, so under READ
+      // COMMITTED it sees the rival's commit — the same fresh-snapshot rule that
+      // made the update skip the row in the first place.
+      return { status: "already-applied", effect: TransitionEffectMapper.toDomain(row) };
+    }
+
+    // Pre-claim shape, as the port promises: `applied_at` is on disk but the
+    // aggregate handed back is still pending, so the service walks the same
+    // `markApplied()` path it always did and the final `update()` writes the same
+    // instant plus the revision id. Rebuilt from the row rather than read again
+    // because a second read would see our own claim.
+    return {
+      status: "claimed",
+      effect: TransitionEffectMapper.toDomain({
+        ...row,
+        appliedAt: null,
+        contentRevisionId: null,
+      }),
+    };
+  }
+
+  async deleteIfPending(
+    projectId: string,
+    id: string,
+  ): Promise<TransitionEffectDeletion> {
+    const deleted = await this.client.transitionEffect.deleteMany({
+      where: { id, projectId, appliedAt: null },
+    });
+
+    if (deleted.count > 0) {
+      return "deleted";
+    }
+
+    // Zero rows has two meanings and they are opposite answers to the caller, so
+    // the adapter resolves it here rather than handing the ambiguity upwards.
+    const survivor = await this.findAssertionById(projectId, id);
+
+    return survivor === null ? "missing" : "applied";
   }
 
   async findByTransitionId(transitionId: string): Promise<TransitionEffect[]> {
@@ -114,36 +152,19 @@ export class PrismaTransitionEffectRepository
     }
   }
 
-  async delete(id: string): Promise<void> {
-    const result = await this.client.transitionEffect.deleteMany({
-      where: { id },
-    });
-
-    if (result.count === 0) {
-      throw new NarrativeTransitionRepositoryNotFoundError();
-    }
-  }
-
-  async deleteByTransitionId(transitionId: string): Promise<void> {
-    // No count check: a transition with zero effects is a legitimate thing to
-    // delete, so "no rows removed" is a normal outcome here, unlike delete(id)
-    // where it means the caller named a row that is not there.
-    await this.client.transitionEffect.deleteMany({
-      where: { narrativeTransitionId: transitionId },
-    });
-  }
 }
 
 // The POOLED instance, and the service uses it for READS ONLY. Every write to
-// `transition_effects` — insert included — goes through the unit of work: the
-// insert runs under the aggregate-root lock so a child cannot be born inside
-// `deleteTransition`'s guard window, and the rest run under this row's own
-// `FOR UPDATE`.
+// `transition_effects` goes through the unit of work: since step 4b-5 each of
+// them carries its own predicate (`claimForApply`, `deleteIfPending`), and the
+// lock that predicate takes exists only for the length of the transaction the
+// unit of work opens.
 //
 // It is deliberately still the same class rather than a narrow read-only one.
-// Half of this surface is meaningless on a pooled client — `findByIdForUpdate`
-// most obviously — but a second class would have to duplicate every read method
-// to keep the writes out of reach, and two classes over one table is how the two
+// Half of this surface is meaningless on a pooled client — `claimForApply` most
+// obviously, since the lock its statement takes lives only as long as the
+// transaction — but a second class would have to duplicate every read method to
+// keep the writes out of reach, and two classes over one table is how the two
 // drift apart. The port documents the constraint and the unit of work is what
 // satisfies it.
 export function createTransitionEffectRepository({

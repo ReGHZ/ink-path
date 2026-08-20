@@ -1,5 +1,16 @@
 import type { TransitionEffect } from "./TransitionEffect.js";
 
+// Three outcomes rather than a boolean plus a follow-up read at every call site:
+// "nobody has this row" and "somebody applied it first" are different answers to
+// the caller (404 vs idempotent success), and deciding which one it is requires a
+// read the adapter has already done.
+export type TransitionEffectClaim =
+  | { status: "claimed"; effect: TransitionEffect }
+  | { status: "already-applied"; effect: TransitionEffect }
+  | { status: "missing" };
+
+export type TransitionEffectDeletion = "deleted" | "applied" | "missing";
+
 export type TransitionEffectRepository = {
   // Unscoped read, then the service compares `projectId` — same 404-not-403 rule
   // as everywhere else in this domain. The effect carries its own `project_id`
@@ -24,22 +35,41 @@ export type TransitionEffectRepository = {
     id: string,
   ): Promise<TransitionEffect | null>;
 
-  // The apply path's first statement, and the only pessimistic lock in Phase 7.
-  // `SELECT ... FOR UPDATE` on the effect row, then re-read `applied_at` inside
-  // the same transaction (`flow_10:101,115`, `16:154`). Without it two
-  // concurrent applies both see `applied_at IS NULL` and each writes its own
-  // ContentRevision, or mutates the graph twice.
+  // Step 4b-5. The apply path's FIRST statement, and the replacement for the
+  // pessimistic read lock below: the predicate travels INSIDE the write, so the
+  // row lock is taken by the statement that changes the row and the predicate is
+  // re-evaluated against the committed version after any wait (READ COMMITTED,
+  // EvalPlanQual). One statement, therefore no distance between "we looked" and
+  // "we wrote" for a human to forget to close.
   //
-  // `06_concurrency_control_policy.md` reserves pessimistic locks for rare,
-  // critical operations and names Narrative Transition apply as one of them —
-  // which is also why 7.4b, whose delete guard is neither rare nor critical,
-  // deliberately went the other way and accepted the race.
+  // This is NOT the retracted claim that a unique constraint could stand in for
+  // the lock (B-1, `notes/premis-symbolic-rule-engine.md` §8.1): a constraint
+  // makes nobody wait and has no order, whereas a conditional write waits in the
+  // row's own lock queue exactly as `FOR UPDATE` did.
   //
-  // MUST be called inside a transaction: outside one, Postgres releases the lock
-  // the moment the statement returns and the guarantee above evaporates
-  // silently, with no error to notice. The adapter is therefore built over the
-  // transaction client, never the pooled one.
-  findByIdForUpdate(id: string): Promise<TransitionEffect | null>;
+  // Sound here only because `applied_at` is MONOTONE — append-only, and a
+  // reversal adds a fact rather than clearing the column
+  // (`notes/jangan-diregresi.md:65`). The day it can be reset, the post-failure
+  // read below stops being stable and this shape goes with it.
+  //
+  // `claimed` hands the row back in its PRE-CLAIM shape on purpose: the row on
+  // disk already carries the claim, but the aggregate stays pending so
+  // `markApplied()` remains the single place that decides an effect is applied,
+  // with the same `now` the claim used.
+  claimForApply(
+    projectId: string,
+    id: string,
+    now: Date,
+  ): Promise<TransitionEffectClaim>;
+
+  // The delete twin of the claim, step 4b-5. `applied` is the answer only after
+  // the delete has WAITED for whatever holds that row: zero rows removed means
+  // the predicate failed against the committed version, not that the caller
+  // named a row nobody has.
+  deleteIfPending(
+    projectId: string,
+    id: string,
+  ): Promise<TransitionEffectDeletion>;
 
   // Every effect of one transition, in `createdAt` asc with `id` asc as
   // tie-break. Backed by `@@index([narrativeTransitionId])`
@@ -61,28 +91,11 @@ export type TransitionEffectRepository = {
   // (Flow 10 has no update endpoint for effects, only add and delete).
   //
   // Unguarded by version, and that is not the oversight it looks like: this
-  // table has no `version` column, and it does not need one, because the write
-  // only ever happens inside the transaction that already holds the row lock
-  // from findByIdForUpdate(). The lock IS the serialisation. Calling this
-  // outside that transaction loses the guarantee — see the note above.
+  // table has no `version` column and does not need one, because since step 4b-5
+  // the write only ever happens inside the transaction whose `claimForApply()`
+  // already holds this row's lock. The CLAIM is the serialisation. Calling this
+  // outside that transaction loses the guarantee.
   update(transitionEffect: TransitionEffect): Promise<void>;
 
-  // Pending effects only; the caller must have checked `isApplied` first
-  // (`05_append_only_invariants.md:52-59`). Nothing in the database enforces
-  // that — `applied_at` is an ordinary nullable timestamp with no trigger — so
-  // this method will happily delete applied history if handed the wrong id.
-  //
-  // Throws NarrativeTransitionRepositoryNotFoundError when the row is already
-  // gone (P2025).
-  delete(id: string): Promise<void>;
 
-  // The child half of deleting a fully-pending transition, run in the same
-  // transaction as the parent delete (`16:138`). One statement rather than a
-  // loop over delete(): the loop would need a second round-trip per effect and
-  // would have to invent a policy for "one child was already gone" that the
-  // parent delete does not care about.
-  //
-  // Same caveat as delete(): it does not look at `applied_at`. The guard belongs
-  // to the caller, which has already read the children to derive the status.
-  deleteByTransitionId(transitionId: string): Promise<void>;
 };

@@ -13,11 +13,12 @@ import type { TransitionEffectRepository } from "../../domain/transition/Transit
 // nine repositories into every Character update that needs one.
 //
 // Everything below is built over the SAME transaction client. That is not a
-// convenience: `TransitionEffectRepository.findByIdForUpdate()` takes a row lock
-// that only lasts as long as the transaction, and every write that follows it —
-// the entity mutation, the relationship insert or delete, `applied_at`, the
-// outbox row — is serialised by that one lock. A repository built over the
-// pooled client here would silently escape it.
+// convenience: `TransitionEffectRepository.claimForApply()` (step 4b-5) takes
+// its row lock as part of the conditional write itself, and that lock only
+// lasts as long as the transaction, and every write that follows it — the
+// entity mutation, the relationship insert or delete, `applied_at`, the outbox
+// row — is serialised by that one claim. A repository built over the pooled
+// client here would silently escape it.
 export type NarrativeTransitionRepositories = {
   narrativeTransitions: NarrativeTransitionRepository;
   transitionEffects: TransitionEffectRepository;

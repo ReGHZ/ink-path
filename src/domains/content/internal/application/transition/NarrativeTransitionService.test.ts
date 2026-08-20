@@ -26,7 +26,11 @@ import type { ProjectMembership } from "../../../../../shared/application/ports/
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
 import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
-import type { TransitionEffectRepository } from "../../domain/transition/TransitionEffectRepository.js";
+import type {
+  TransitionEffectClaim,
+  TransitionEffectDeletion,
+  TransitionEffectRepository,
+} from "../../domain/transition/TransitionEffectRepository.js";
 import type {
   AppliedAttributeChange,
   ApplyAttributeChangeInput,
@@ -62,7 +66,6 @@ class FakeNarrativeTransitionRepository
   implements NarrativeTransitionRepository
 {
   rows = new Map<string, NarrativeTransitionProperties>();
-  locked: string[] = [];
   deleted: string[] = [];
 
   save(transition: NarrativeTransition): void {
@@ -75,12 +78,6 @@ class FakeNarrativeTransitionRepository
     return Promise.resolve(
       row ? NarrativeTransition.reconstitute({ ...row }) : null,
     );
-  }
-
-  findByIdForUpdate(id: string): Promise<NarrativeTransition | null> {
-    this.locked.push(id);
-
-    return this.findById(id);
   }
 
   findByProjectId(searchProjectId: string): Promise<NarrativeTransition[]> {
@@ -130,10 +127,9 @@ class FakeNarrativeTransitionRepository
 
 class FakeTransitionEffectRepository implements TransitionEffectRepository {
   rows = new Map<string, TransitionEffectProperties>();
-  locked: string[] = [];
+  claimed: string[] = [];
   updated: string[] = [];
   deleted: string[] = [];
-  deletedByTransition: string[] = [];
 
   save(effect: TransitionEffect): void {
     this.rows.set(effect.id, effect.toSnapshot());
@@ -162,10 +158,60 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
     );
   }
 
-  findByIdForUpdate(id: string): Promise<TransitionEffect | null> {
-    this.locked.push(id);
+  // Step 4b-5. Models the ADAPTER's contract, not a convenience: the claim is
+  // refused when `applied_at` is already set, and the effect handed back on
+  // success is the PRE-CLAIM aggregate — so the service still walks
+  // `markApplied()` and a test can still see it do so.
+  claimForApply(
+    projectId: string,
+    id: string,
+    now: Date,
+  ): Promise<TransitionEffectClaim> {
+    this.claimed.push(id);
 
-    return this.findById(id);
+    const row = this.rows.get(id);
+
+    if (row?.projectId !== projectId) {
+      return Promise.resolve({ status: "missing" });
+    }
+
+    if (row.appliedAt !== null) {
+      return Promise.resolve({
+        status: "already-applied",
+        effect: TransitionEffect.reconstitute({ ...row }),
+      });
+    }
+
+    this.rows.set(id, { ...row, appliedAt: now });
+
+    return Promise.resolve({
+      status: "claimed",
+      effect: TransitionEffect.reconstitute({
+        ...row,
+        appliedAt: null,
+        contentRevisionId: null,
+      }),
+    });
+  }
+
+  deleteIfPending(
+    projectId: string,
+    id: string,
+  ): Promise<TransitionEffectDeletion> {
+    const row = this.rows.get(id);
+
+    if (row?.projectId !== projectId) {
+      return Promise.resolve("missing");
+    }
+
+    if (row.appliedAt !== null) {
+      return Promise.resolve("applied");
+    }
+
+    this.deleted.push(id);
+    this.rows.delete(id);
+
+    return Promise.resolve("deleted");
   }
 
   findByTransitionId(transitionId: string): Promise<TransitionEffect[]> {
@@ -189,24 +235,6 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
     return Promise.resolve();
   }
 
-  delete(id: string): Promise<void> {
-    this.deleted.push(id);
-    this.rows.delete(id);
-
-    return Promise.resolve();
-  }
-
-  deleteByTransitionId(transitionId: string): Promise<void> {
-    this.deletedByTransition.push(transitionId);
-
-    for (const [id, row] of this.rows) {
-      if (row.narrativeTransitionId === transitionId) {
-        this.rows.delete(id);
-      }
-    }
-
-    return Promise.resolve();
-  }
 }
 
 class FakeContentRelationshipRepository
@@ -323,22 +351,43 @@ beforeEach(() => {
   };
 
   const unitOfWork: NarrativeTransitionUnitOfWork = {
-    transaction: (work) =>
-      work(
-        {
-          narrativeTransitions: transitions,
-          transitionEffects: effects,
-          contentRelationships: relationships,
-          contentAttributes: mutator,
-        },
-        {
-          insert: (event) => {
-            outbox.push(event);
+    // Rollback, modelled — and since step 4b-5 that is load-bearing rather than
+    // fidelity for its own sake: the apply path now WRITES before it can fail
+    // (the claim lands first), so a fake that kept those writes after a throw
+    // would let "writes nothing" assertions pass while the row had in fact
+    // changed. The real unit of work rolls back; a fake that does not is a
+    // control that reports the wrong colour.
+    transaction: async (work) => {
+      const effectRows = new Map(effects.rows);
+      const transitionRows = new Map(transitions.rows);
+      const relationshipRows = [...relationships.rows];
+      const outboxLength = outbox.length;
 
-            return Promise.resolve();
+      try {
+        return await work(
+          {
+            narrativeTransitions: transitions,
+            transitionEffects: effects,
+            contentRelationships: relationships,
+            contentAttributes: mutator,
           },
-        },
-      ),
+          {
+            insert: (event) => {
+              outbox.push(event);
+
+              return Promise.resolve();
+            },
+          },
+        );
+      } catch (error) {
+        effects.rows = effectRows;
+        transitions.rows = transitionRows;
+        relationships.rows = relationshipRows;
+        outbox.length = outboxLength;
+
+        throw error;
+      }
+    },
   };
 
   service = new NarrativeTransitionService(
@@ -697,7 +746,14 @@ describe("addEffect", () => {
   // set of children it inspected is the set its blanket delete removes — a child
   // inserted in that window could be applied by a third request and then
   // destroyed as an applied fact.
-  it("holds the aggregate root lock while inserting the child", async () => {
+  // Step 4b-5 removed the aggregate-root lock this used to assert, and the port
+  // no longer has the method — so what is left to pin here is that the child does
+  // get inserted. What used to be claimed for the lock is now held by the FK and
+  // by the INSERT's own key-share lock on the parent row, neither of which a fake
+  // can observe; the invariant itself lives in the three-party integration test
+  // (`test/integration/apply-delete-serialization.integration.test.ts`, T7). This
+  // unit suite never bound it — mutant M2 proved that by surviving.
+  it("inserts the child after reading its parent", async () => {
     await service.addEffect(projectId, "transition-1", {
       requestingUserId: userId,
       requestingMembership: writer,
@@ -708,7 +764,7 @@ describe("addEffect", () => {
       newValue: "mentor",
     });
 
-    expect(transitions.locked).toEqual(["transition-1"]);
+    expect(effects.rows.size).toBe(1);
   });
 
   it("refuses a reviewer", async () => {
@@ -819,7 +875,10 @@ describe("deleteEffect", () => {
 
   // The guard reads the row under a lock, not with a plain SELECT: a concurrent
   // apply must not be able to commit between the check and the delete.
-  it("locks the row before deleting a pending effect", async () => {
+  // Step 4b-5: one predicate-carrying statement instead of lock-then-check, so
+  // the guard cannot be separated from the delete even in principle. The 409 twin
+  // below is what proves the predicate is there.
+  it("removes a pending effect with a single guarded statement", async () => {
     seedTransition();
     seedEffect();
 
@@ -828,7 +887,6 @@ describe("deleteEffect", () => {
       requestingMembership: writer,
     });
 
-    expect(effects.locked).toEqual(["effect-1"]);
     expect(effects.deleted).toEqual(["effect-1"]);
   });
 
@@ -858,7 +916,11 @@ describe("deleteTransition", () => {
       }),
     ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
 
-    expect(effects.deletedByTransition).toEqual([]);
+    // Asserted as STATE, not as a call log: since step 4b-5 the pending sibling
+    // IS deleted before the applied one is reached, and what makes "deletes
+    // nothing" true is the rollback that follows the 409 — which a call log
+    // cannot see and a row count can.
+    expect(effects.rows.size).toBe(2);
     expect(transitions.deleted).toEqual([]);
   });
 
@@ -872,13 +934,14 @@ describe("deleteTransition", () => {
       requestingMembership: writer,
     });
 
-    // Root first, then every child, then one cascade statement, then the parent.
-    // The root lock is what keeps a concurrent addEffect out of the window; the
-    // child locks are what make a concurrent apply visible; the FK is Restrict,
-    // so the delete order cannot be reversed.
-    expect(transitions.locked).toEqual(["transition-1"]);
-    expect(effects.locked).toEqual(["effect-1", "effect-2"]);
-    expect(effects.deletedByTransition).toEqual(["transition-1"]);
+    // Step 4b-5: every child removed by its OWN guarded statement, in the list's
+    // order, then the parent. The order is the property, not a side effect —
+    // bulk apply claims rows in exactly this sequence, so the two paths take row
+    // locks in the same order and cannot deadlock. The blanket
+    // `deleteByTransitionId` was removed from the port rather than merely left
+    // unused: it locks in scan order, so reintroducing it has to be a visible
+    // act rather than a convenient call.
+    expect(effects.deleted).toEqual(["effect-1", "effect-2"]);
     expect(transitions.deleted).toEqual(["transition-1"]);
   });
 
@@ -955,13 +1018,18 @@ describe("applyEffect — attribute_change", () => {
     });
   });
 
-  it("locks the effect row before touching the entity", async () => {
+  // Step 4b-5: the claim is the first statement, and "first" is the invariant —
+  // the entity must not be touched by a caller that did not win the claim.
+  // Asserted in both directions: the winner claims and then mutates, and the
+  // loser (below, already-applied) never reaches the mutator at all.
+  it("claims the effect before touching the entity", async () => {
     await service.applyEffect(projectId, "effect-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
 
-    expect(effects.locked).toEqual(["effect-1"]);
+    expect(effects.claimed).toEqual(["effect-1"]);
+    expect(mutator.calls).toHaveLength(1);
   });
 
   // Decision D5 for attributes: the world already holds the intended value.

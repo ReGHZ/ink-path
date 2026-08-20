@@ -15,15 +15,35 @@ export class NarrativeTransitionRepositoryNotFoundError extends Error {
   }
 }
 
-// THREE ERRORS THAT DELIBERATELY DO NOT EXIST HERE, so that 7.7 does not add
-// them out of symmetry with the relationship errors next door:
+// Step 4b-5. The FK refused to delete a transition because a child effect
+// survived — applied while the delete was working, or born after the delete read
+// its list. Named after the FACT rather than after Postgres's code, because the
+// service answers it with the same sentence its own per-child guard uses: one
+// condition must not have two status codes depending on which of two racing paths
+// noticed it (the shape gate 7.7 rejected, measured again at 4b-5 mutan M3).
+//
+// It exists now and did not before for a concrete reason: until 4b-5 the
+// aggregate-root lock made this unreachable, so the adapter deliberately let it
+// surface raw as a bug signal. The replacement mechanism makes it a legitimate
+// outcome of a race, so it needs a name and an answer.
+export class NarrativeTransitionRepositoryChildSurvivedError extends Error {
+  constructor() {
+    super("Narrative transition still has a child effect");
+    this.name = "NarrativeTransitionRepositoryChildSurvivedError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+// TWO ERRORS THAT DELIBERATELY DO NOT EXIST HERE, so that 7.7 does not add them
+// out of symmetry with the relationship errors next door. A third one used to
+// live in this list — see the note below the pair.
 //
 // No `...ConflictError`. Neither `narrative_transitions` nor
 // `transition_effects` has a `version` column
 // (`prisma/narrative-transition.prisma:13-60`), so no write is version-guarded
 // and no update can match zero rows for a reason other than "gone". Apply is
-// serialised by a row lock instead (`TransitionEffectRepository.findByIdForUpdate`),
-// which produces waiting, not conflict.
+// serialised by a claim on the row instead (`TransitionEffectRepository.claimForApply`,
+// step 4b-5), which produces waiting, not conflict.
 //
 // No `...DuplicateError`. There is no unique index on either table beyond the
 // primary key — nothing here is deduplicated the way
@@ -33,9 +53,11 @@ export class NarrativeTransitionRepositoryNotFoundError extends Error {
 // first is caught at apply time by the drift rule (decision D5) rather than by
 // an index.
 //
-// No `...ReferencedError`. The inbound FK that could block a delete —
-// `transition_effects.narrative_transition_id`, `onDelete: Restrict` — is
-// handled by deleting children first inside the same transaction
-// (`16:138`). A Restrict violation therefore means the caller skipped the
-// append-only guard or split the two deletes across transactions: a bug to
-// surface raw, not a condition to translate into an HTTP status.
+// `...ReferencedError` used to belong on this list, and does not any more:
+// `NarrativeTransitionRepositoryChildSurvivedError` above IS that error. Until
+// step 4b-5 the aggregate-root lock made a surviving child unreachable at
+// delete time, so a P2003 here could only mean a caller had skipped the
+// append-only guard, and it was left raw on purpose as that bug signal. 4b-5
+// removed the lock and put the FK in its place, which turned the same P2003
+// into a legitimate outcome of a race rather than a caller bug — so it now
+// gets a name and a translated status instead of surfacing raw.

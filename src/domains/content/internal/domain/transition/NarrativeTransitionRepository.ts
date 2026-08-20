@@ -10,30 +10,6 @@ export type NarrativeTransitionRepository = {
   // 403 — the API must not confirm that another tenant's row exists.
   findById(id: string): Promise<NarrativeTransition | null>;
 
-  // `SELECT ... FOR UPDATE` on the transition row. This is the AGGREGATE ROOT
-  // lock, and it protects something the per-effect locks cannot: the SET of
-  // children.
-  //
-  // The hole it closes, found at the 7.7 gate: deleting a transition locks every
-  // effect it reads and then issues one blanket `DELETE ... WHERE
-  // narrative_transition_id = ?`. A concurrent `addEffect` needs no lock at all,
-  // so a child born after that read is never inspected — and if it is applied in
-  // between, the blanket statement destroys an applied fact
-  // (`05-implementation-policy/05_append_only_invariants.md:53-60`), leaving an
-  // orphan ContentRevision and outbox event behind. Waiting on a row lock cannot
-  // help there: the row did not exist when the locks were taken.
-  //
-  // Both structural operations therefore take this lock — deleteTransition and
-  // addEffect — which serialises "which effects exist" against "delete them
-  // all". Apply deliberately does NOT take it: it changes an effect's state, not
-  // the set, and making every apply queue behind the root would serialise a
-  // transition's whole fan-out for no invariant.
-  //
-  // MUST run inside a transaction, same as
-  // `TransitionEffectRepository.findByIdForUpdate` — outside one the lock is
-  // released the moment the statement returns, silently.
-  findByIdForUpdate(id: string): Promise<NarrativeTransition | null>;
-
   // Project-scoped list. Scoping lives HERE rather than in the caller, for the
   // same reason it does on the relationship list reads: the wrong tenant has to
   // receive an empty list, not a comparison the caller could forget to make.

@@ -201,14 +201,40 @@ export function matchesUniqueConstraint(
 // every `PrismaClientKnownRequestError` on purpose (see its closing comment — failing
 // fast beat holding a prefetch slot through a full backoff during an outage). Bringing
 // it onto this helper would change that decision for a slice this step does not own.
+// SQLSTATEs that mean "the statement never had a fair chance", read from the
+// DRIVER error rather than from a Prisma code — and that indirection is the whole
+// point of this set existing beside the one below.
+//
+// MEASURED, not assumed (`test/integration/deadlock-classification.integration.test.ts`,
+// step 4b-5 langkah 7): with the pg driver adapter a real deadlock does NOT arrive
+// as `P2034`. It arrives as `DriverAdapterError` with NO `code` of its own and the
+// SQLSTATE buried in `cause` — so the version of this file that matched Prisma
+// codes only answered `false` for every genuine deadlock. That was not a
+// theoretical gap: the fold and reader paths decide retry-vs-dead-letter from this
+// function, so a projector message that deadlocked was dead-lettered instead of
+// retried.
+//
+// Deliberately NOT "every DriverAdapterError is transient": a CHECK constraint
+// violation arrives in exactly the same wrapper, and retrying that forever is the
+// opposite of the right answer. The SQLSTATE is what separates them.
+const TRANSIENT_POSTGRES_SQLSTATES = new Set([
+    // 40001 serialization_failure — SERIALIZABLE/REPEATABLE READ conflict.
+    "40001",
+    // 40P01 deadlock_detected — two writers took the same locks in opposite
+    // order and Postgres killed this one. Nothing was committed, so repeating the
+    // whole transaction is the documented answer.
+    "40P01",
+]);
+
 const TRANSIENT_PRISMA_CODES = new Set([
     // Cannot reach the database server / connection timed out / server closed it.
     "P1001",
     "P1002",
     "P1017",
-    // Transaction failed to commit: Postgres serialization failure or deadlock
-    // (`40001` / `40P01`). Two concurrent folds touching one endpoint row are exactly
-    // this case.
+    // Transaction failed to commit: Prisma's OWN mapping of a serialization
+    // failure or deadlock. Kept, but it is not the route a deadlock actually
+    // takes under the pg driver adapter — that one is
+    // `TRANSIENT_POSTGRES_SQLSTATES` above, measured rather than assumed.
     "P2034",
     // Timed out waiting for a connection from the pool. NOT a data problem at all — the
     // statement never reached Postgres — and the queue-driven callers are exactly the ones
@@ -236,6 +262,24 @@ export function isTransientDatabaseError(error: unknown): boolean {
         name === "PrismaClientUnknownRequestError"
     ) {
         return true;
+    }
+
+    // The driver's own wrapper, which carries no `code` at the top level. Read by
+    // NAME for the same reason as the two classes above: this module imports
+    // nothing from Prisma on purpose.
+    if (name === "DriverAdapterError") {
+        const cause = (error as { cause?: unknown }).cause;
+
+        if (typeof cause !== "object" || cause === null) {
+            return false;
+        }
+
+        const sqlState = (cause as { code?: unknown }).code;
+
+        return (
+            typeof sqlState === "string" &&
+            TRANSIENT_POSTGRES_SQLSTATES.has(sqlState)
+        );
     }
 
     const code = (error as { code?: unknown }).code;

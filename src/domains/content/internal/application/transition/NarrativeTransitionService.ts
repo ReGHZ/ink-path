@@ -17,7 +17,10 @@ import {
   type NarrativeTransitionSourceType,
   type NarrativeTransitionStatus,
 } from "../../domain/transition/NarrativeTransition.js";
-import { NarrativeTransitionRepositoryNotFoundError } from "../../domain/transition/NarrativeTransitionRepositoryError.js";
+import {
+  NarrativeTransitionRepositoryChildSurvivedError,
+  NarrativeTransitionRepositoryNotFoundError,
+} from "../../domain/transition/NarrativeTransitionRepositoryError.js";
 import {
   TransitionEffect,
   type TransitionEffectType,
@@ -153,6 +156,19 @@ function mapNarrativeTransitionError(error: unknown): never {
   // gate: one condition answered with two different status codes depending on
   // which of two racing paths noticed it, and a message that named the
   // transition — which exists — as the missing thing.
+  // Step 4b-5 made this REACHABLE by design. The parent delete leans on the FK
+  // to refuse while a child survives — a child born after the delete read its
+  // list, or applied while it was working — and that is the same world-fact the
+  // per-child guard answers a few lines up in `deleteTransition`. One condition,
+  // one status code, one sentence: without this branch the race answers 500 while
+  // the guard answers 409 (measured at step 4b-5 langkah 2, mutan M3).
+  if (error instanceof NarrativeTransitionRepositoryChildSurvivedError) {
+    throw new AppError(
+      ErrorCode.CONFLICT,
+      "Transition has applied effects and cannot be deleted — declare a reversal instead",
+    );
+  }
+
   if (error instanceof ContentRelationshipRepositoryNotFoundError) {
     throw new AppError(
       ErrorCode.CONFLICT,
@@ -354,16 +370,21 @@ export class NarrativeTransitionService {
 
     await this.narrativeTransitionUnitOfWork.transaction(
       async (repositories) => {
-        // The AGGREGATE ROOT lock, taken before anything is read. Without it the
-        // guard below is blind to a child born after its read: `addEffect` used
-        // to need no lock at all, so an effect could be inserted AND applied
-        // between this read and the blanket delete, and the blanket delete would
-        // then destroy an applied fact. Waiting on the child locks cannot help —
-        // the row did not exist when they were taken. Found at the 7.7 gate.
+        // Step 4b-5. No aggregate-root lock any more, and the guard below is no
+        // longer blind without it — the reason is split in two, and both halves
+        // have to be true:
+        //
+        //   A child ALREADY here cannot slip through, because each is removed by
+        //   a predicate-carrying delete that waits for any apply in flight and
+        //   then sees what it committed.
+        //
+        //   A child born AFTER this list was read cannot be destroyed, because
+        //   nothing here destroys a row it did not name: the parent delete is
+        //   refused by the FK while any child survives (`Restrict`), and that
+        //   refusal is translated, not raw (gate 7.7's failure with the pieces
+        //   swapped).
         const transition =
-          await repositories.narrativeTransitions.findByIdForUpdate(
-            transitionId,
-          );
+          await repositories.narrativeTransitions.findById(transitionId);
 
         if (transition?.projectId !== projectId) {
           throw new AppError(
@@ -375,18 +396,19 @@ export class NarrativeTransitionService {
         const effects =
           await repositories.transitionEffects.findByTransitionId(transitionId);
 
-        // Each child is LOCKED too, and the root lock does not make this
-        // redundant: apply deliberately does NOT take the root lock, so an apply
-        // of an existing effect can still be in flight. This is what makes it
-        // wait and then be seen. Locking in the list's own order (createdAt asc,
-        // id tie-break) is the same order bulk apply walks, so the two cannot
-        // deadlock against each other.
+        // Per id in the LIST'S OWN ORDER (createdAt asc, id tie-break), not one
+        // blanket statement. Bulk apply claims its rows in exactly that order, so
+        // the two paths take row locks in the same sequence and cannot deadlock
+        // against each other. A blanket `DELETE ... WHERE narrative_transition_id`
+        // would lock in scan order, which is unspecified — the anti-deadlock
+        // property would be dropped silently rather than decided.
         for (const effect of effects) {
-          const locked = await repositories.transitionEffects.findByIdForUpdate(
+          const outcome = await repositories.transitionEffects.deleteIfPending(
+            projectId,
             effect.id,
           );
 
-          if (locked?.isApplied === true) {
+          if (outcome === "applied") {
             throw new AppError(
               ErrorCode.CONFLICT,
               "Transition has applied effects and cannot be deleted — declare a reversal instead",
@@ -395,13 +417,6 @@ export class NarrativeTransitionService {
         }
 
         try {
-          // One blanket statement rather than a delete per locked id, and that
-          // is only safe BECAUSE the root lock is held: no child can be born
-          // between the guard above and this line, so "every child" and "every
-          // child we inspected" are the same set.
-          await repositories.transitionEffects.deleteByTransitionId(
-            transitionId,
-          );
           await repositories.narrativeTransitions.delete(transitionId);
         } catch (error) {
           mapNarrativeTransitionError(error);
@@ -496,18 +511,16 @@ export class NarrativeTransitionService {
       }
     }
 
-    // In a transaction, under the AGGREGATE ROOT lock, even though the write
-    // itself is a single insert. The lock is not protecting the insert — it is
-    // protecting `deleteTransition`, which must be able to trust that the set of
-    // children it inspected is the set it deletes. Without this, a child could
-    // be inserted between that guard and its blanket delete, applied by a third
-    // request, and destroyed as an applied fact. Found at the 7.7 gate.
+    // Still a transaction, no longer a lock. What the root lock used to buy here
+    // — `deleteTransition` being able to trust that the children it inspected are
+    // the children it deletes — is bought differently since step 4b-5: that path
+    // deletes only rows it named, and the FK refuses the parent while any child
+    // survives. The INSERT's own `FOR KEY SHARE` on the parent row is what makes
+    // the two orderings meet, and it is taken by the write itself.
     await this.narrativeTransitionUnitOfWork.transaction(
       async (repositories) => {
         const transition =
-          await repositories.narrativeTransitions.findByIdForUpdate(
-            transitionId,
-          );
+          await repositories.narrativeTransitions.findById(transitionId);
 
         if (transition?.projectId !== projectId) {
           throw new AppError(
@@ -536,27 +549,25 @@ export class NarrativeTransitionService {
 
     await this.narrativeTransitionUnitOfWork.transaction(
       async (repositories) => {
-        // Locked, not merely read: the guard below and a concurrent apply are
-        // deciding the same row's fate, and the lock is what makes one of them
-        // wait instead of both winning.
-        const effect =
-          await repositories.transitionEffects.findByIdForUpdate(effectId);
+        // Step 4b-5. The guard and the delete are ONE statement, so a concurrent
+        // apply cannot land between them: the delete waits in the row's lock
+        // queue and then re-reads the predicate against what that apply
+        // committed. "Zero rows removed" is never reported as success — the
+        // adapter says which of the two reasons it was.
+        const outcome = await repositories.transitionEffects.deleteIfPending(
+          projectId,
+          effectId,
+        );
 
-        if (effect?.projectId !== projectId) {
+        if (outcome === "missing") {
           throw new AppError(ErrorCode.NOT_FOUND, "Transition effect not found");
         }
 
-        if (effect.isApplied) {
+        if (outcome === "applied") {
           throw new AppError(
             ErrorCode.CONFLICT,
             "Applied effect cannot be deleted — declare a reversal instead",
           );
-        }
-
-        try {
-          await repositories.transitionEffects.delete(effectId);
-        } catch (error) {
-          mapNarrativeTransitionError(error);
         }
       },
     );
@@ -674,24 +685,35 @@ export class NarrativeTransitionService {
     requestingUserId: string,
     definitions: ReadonlyMap<string, RelationshipDefinition>,
   ): Promise<TransitionEffectDetail> {
-    const effect =
-      await repositories.transitionEffects.findByIdForUpdate(effectId);
+    // ONE clock read per action, and it happens here because the claim itself
+    // needs the instant: the same `now` stamps `applied_at` on disk and, further
+    // down, the aggregate's `markApplied()`. Two reads could straddle a tick.
+    const now = this.clock.now();
 
-    if (effect?.projectId !== projectId) {
+    // Step 4b-5. The predicate rides inside the write, so this single statement
+    // both takes the row lock and decides whether this caller is the one applying
+    // the effect. It replaces `findByIdForUpdate` + a separate `applied_at` check
+    // — the pair whose distance was the thing a reader had to remember.
+    const claim = await repositories.transitionEffects.claimForApply(
+      projectId,
+      effectId,
+      now,
+    );
+
+    if (claim.status === "missing") {
       throw new AppError(ErrorCode.NOT_FOUND, "Transition effect not found");
     }
 
-    // The idempotency re-check REQUIRED by `flow_10:101,115`, and the reason the
-    // lock above is not decoration: two concurrent applies both saw pending
-    // before either locked, and this is where the loser finds out. Returning
-    // success rather than 409 is deliberate — the effect is applied, which is
-    // what the caller asked for; a second ContentRevision is what must not
-    // happen.
-    if (effect.isApplied) {
-      return toEffectDetail(effect);
+    // The idempotency answer REQUIRED by `flow_10:101,115`: two concurrent
+    // applies both saw pending, the loser waited in the row's lock queue, and
+    // this is where it finds out. Success rather than 409 is deliberate — the
+    // effect IS applied, which is what the caller asked for; a second
+    // ContentRevision is what must not happen.
+    if (claim.status === "already-applied") {
+      return toEffectDetail(claim.effect);
     }
 
-    const now = this.clock.now();
+    const effect = claim.effect;
 
     if (effect.effectType === "attribute_change") {
       await this.applyAttributeChange(

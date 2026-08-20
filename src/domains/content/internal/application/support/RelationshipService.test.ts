@@ -229,11 +229,15 @@ function createUnitOfWork(
                       assertion.id === id && assertion.projectId === projectId,
                   ) ?? null,
                 ),
-              findByIdForUpdate: () => Promise.resolve(null),
+              // Step 4b-5. RelationshipService never applies or deletes an
+              // assertion, so both answer the "nobody has this row" branch —
+              // present to satisfy the port, and deliberately not a working
+              // model: a test that starts needing one is a test whose subject
+              // moved into the apply path.
+              claimForApply: () => Promise.resolve({ status: "missing" }),
+              deleteIfPending: () => Promise.resolve("missing"),
               findByTransitionId: () => Promise.resolve([]),
               update: () => Promise.resolve(),
-              delete: () => Promise.resolve(),
-              deleteByTransitionId: () => Promise.resolve(),
             },
             contentRelationships: relationships,
           },
