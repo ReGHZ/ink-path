@@ -1,0 +1,42 @@
+{
+  // Type-checks what `tsconfig.json` cannot see. That config has
+  // `rootDir: "src"`, so `pnpm typecheck` has never looked at `test/` at all —
+  // and `tsconfig.eslint.json` widens the scope for the linter's parser without
+  // anybody ever running `tsc` over it. The gap is not theoretical: the port
+  // change in step 4b-5 surfaced instantly in the fakes under `src/**/*.test.ts`
+  // and would have surfaced in NO file under `test/`.
+  //
+  // What this exists to catch, stated so the flag decision below can be judged
+  // against it: CONTRACT DRIFT (a fake that no longer satisfies the port, a test
+  // calling a method that was deleted) and dead imports.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+
+    // The one flag relaxed for test scope, and the reason is purpose rather than
+    // convenience. In `test/` this rule fires 291 times on one shape — `rows[0].id`
+    // after a query — and what it warns about there ("the array may be empty") is
+    // something a test reports by FAILING, loudly, on the very next line. In `src/`
+    // the same warning is about a production crash, which is why it stays on
+    // there. Keeping it on here would cost ~291 hand-edits to buy a check the
+    // suite already performs, and would have kept the contract-drift check —
+    // the one that catches real bugs — switched off for another slice.
+    //
+    // If a test ever needs the strict reading back, narrow it in that file
+    // (`const row = rows.at(0); expect(row).toBeDefined();`) rather than flipping
+    // this back on for everything.
+    //
+    // ⚠ HAZARD, MEASURED 2026-08-20 — and the reason `typecheck:test` chains the
+    // strict pass instead of standing alone. Test files import `src/`, so those
+    // modules are part of THIS program too and are therefore checked with the flag
+    // OFF. Probed deliberately: an unguarded `rows[0].id` planted in
+    // `PrismaTransitionEffectRepository` was caught by `tsc --noEmit` (strict, src
+    // only) and NOT caught here. So this config can never be the only checker, and
+    // the script makes that impossible rather than trusting a reader of this
+    // comment: `typecheck:test` = strict pass THEN this one.
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

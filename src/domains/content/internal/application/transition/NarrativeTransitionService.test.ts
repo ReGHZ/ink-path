@@ -318,6 +318,7 @@ let mutator: FakeContentAttributeMutator;
 let outbox: OutboxEvent[];
 let locations: Map<string, string>;
 let generated: number;
+let clockReads: number;
 let service: NarrativeTransitionService;
 
 function locate(entityType: ContentEntityType, entityId: string): string {
@@ -325,6 +326,7 @@ function locate(entityType: ContentEntityType, entityId: string): string {
 }
 
 beforeEach(() => {
+  clockReads = 0;
   transitions = new FakeNarrativeTransitionRepository();
   effects = new FakeTransitionEffectRepository();
   relationships = new FakeContentRelationshipRepository();
@@ -391,7 +393,25 @@ beforeEach(() => {
   };
 
   service = new NarrativeTransitionService(
-    { now: () => later },
+    // ADVANCING, not constant — the penjaga `const now` owed since G1-P (P-3).
+    // A constant clock cannot tell one clock read from two: both stamp the same
+    // instant, so an apply that read the clock twice was indistinguishable from
+    // one that read it once, and "one clock read per action" was a claim with no
+    // test behind it. Here every call returns a later instant, so a second read
+    // leaves a DIFFERENT timestamp on the row than on its revision.
+    //
+    // `later` stays the FIRST value, so every existing assertion expecting
+    // `later` keeps its meaning and gains one: that the value came from the
+    // action's first and only clock read.
+    {
+      now: () => {
+        const reading = new Date(later.getTime() + clockReads * 1000);
+
+        clockReads += 1;
+
+        return reading;
+      },
+    },
     {
       generate: () => {
         generated += 1;
@@ -1016,6 +1036,28 @@ describe("applyEffect — attribute_change", () => {
         changedByUserId: userId,
       },
     });
+  });
+
+  // The penjaga `const now` itself (G1-P syarat P-3). One action, ONE clock read:
+  // the instant that stamps `applied_at` must be the same instant the entity
+  // mutation and its revision carry, or an apply can straddle a tick and produce a
+  // fact whose provenance is dated after the fact itself.
+  //
+  // Asserted two ways on purpose. The COUNT catches a second read even when both
+  // readings happen to be equal; the EQUALITY catches a second read whose value
+  // reached a different column. Either alone would leave a hole the other closes.
+  it("reads the clock exactly once per apply, and stamps that one instant everywhere", async () => {
+    await service.applyEffect(projectId, "effect-1", {
+      requestingUserId: userId,
+      requestingMembership: writer,
+    });
+
+    expect(clockReads).toBe(1);
+
+    const stamped = effects.rows.get("effect-1")?.appliedAt;
+
+    expect(stamped).toEqual(later);
+    expect(mutator.calls[0]?.now).toEqual(stamped);
   });
 
   // Step 4b-5: the claim is the first statement, and "first" is the invariant —

@@ -1399,6 +1399,10 @@ describe("Narrative transition end-to-end", () => {
           targetEntityType: "faction",
           targetEntityId: factionId,
           relationType: "member_of",
+          // The CRUD path's own column, and the reason it is set here: `note`
+          // belongs to whoever wrote the row by hand, and the fold must never be
+          // able to blank it. Asserted after the 409 below.
+          note: "Sworn in by hand, not by this transition",
         },
       });
       expect(manual.status).toBe(201);
@@ -1437,6 +1441,25 @@ describe("Narrative transition end-to-end", () => {
         select: { appliedAt: true },
       });
       expect(stillPending?.appliedAt).toBeNull();
+
+      // The `note` GUARD (owed since G1 §4 butir 4, due at 4b-4). `note` is a
+      // projection column the CRUD path owns; the fold has no business writing it,
+      // and the failure mode is silent — an apply that "won" would blank a
+      // sentence the author wrote and nothing would report it. Checked as STATE on
+      // the surviving row, not as a call that was not made: the row is the thing
+      // the author would notice.
+      const survivors = await prisma.contentRelationship.findMany({
+        where: {
+          projectId,
+          relationType: "member_of",
+          sourceEntityId: characterId,
+          targetEntityId: factionId,
+        },
+        select: { note: true, sourceAssertionId: true },
+      });
+
+      expect(survivors).toHaveLength(1);
+      expect(survivors[0]?.note).toBe("Sworn in by hand, not by this transition");
     });
 
     it("refuses an attribute change the entity already satisfies", async () => {

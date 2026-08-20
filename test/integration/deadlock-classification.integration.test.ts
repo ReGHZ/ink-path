@@ -1,7 +1,12 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
-import { isTransientDatabaseError } from "../../src/shared/infrastructure/prismaErrors.js";
+import {
+  isForeignKeyViolation,
+  isTransientDatabaseError,
+  isUniqueViolation,
+  matchesUniqueConstraint,
+} from "../../src/shared/infrastructure/prismaErrors.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
@@ -22,6 +27,12 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 //
 // So this file does not test our code first. It makes Postgres produce a REAL
 // deadlock and looks at what actually arrives.
+//
+// It has since grown past its name: it now binds all THREE classifiers in
+// `prismaErrors.ts` to real database failures, because the finding was never "one
+// code was missing" but "the shape was assumed rather than measured". The filename
+// stays as it is on purpose — gerbang #12 (`quality-gate/gerbang-mutu-4b-5-2026-08-20.md`)
+// cites this path, and a verdict document is not edited to match later work.
 //
 // FIXTURE ID BLOCK 023 — owner/project ids end in `...0000000023NN`, entity ids
 // use the `6c6c6c6c` prefix. Both unused when this file was written (blocks
@@ -160,6 +171,71 @@ async function forceDeadlock(): Promise<unknown> {
 
   return rejected[0].reason;
 }
+
+// The same measurement applied to the OTHER two classifiers in that module, and
+// the reason it belongs here rather than in a wish-list: the deadlock finding was
+// not "one code was missing", it was "the shape was assumed instead of measured".
+// `isUniqueViolation` and `isForeignKeyViolation` carry comments claiming they were
+// verified with a temporary script that no longer exists — the same standing as
+// `P2034` had. These two tests turn that claim into something the suite re-checks
+// on every run, and they are cheap because the harness that produces real database
+// errors is already here.
+//
+// They also record a genuinely different answer: unlike a deadlock, these two DO
+// arrive as Prisma-mapped errors carrying a `code`. That asymmetry is the finding,
+// and it is why the fix for deadlocks could not simply be "add a code to the set".
+describe("the other classifiers, bound to real database errors", () => {
+  it("recognises a real unique violation, and which index it fired on", async () => {
+    const error = await prisma.character
+      .create({
+        data: {
+          // Same primary key as a row `beforeEach` already inserted.
+          id: firstCharacterId,
+          projectId,
+          createdByUserId: ownerUserId,
+          name: "Li Wei again",
+        },
+      })
+      .then(
+        () => null,
+        (error_: unknown) => error_,
+      );
+
+    expect(isUniqueViolation(error)).toBe(true);
+    // Not transient: the same statement will fail the same way forever, and the
+    // fold paths branch on exactly this difference.
+    expect(isTransientDatabaseError(error)).toBe(false);
+    // The column-level reading the relationship adapter depends on to tell "this
+    // fact already exists" (a user-facing 409) from "primary key collision" (a
+    // different answer entirely).
+    expect(matchesUniqueConstraint(error, ["id"])).toBe(true);
+    expect(matchesUniqueConstraint(error, ["project_id", "name"])).toBe(false);
+  });
+
+  it("recognises a real foreign key violation", async () => {
+    const error = await prisma.character
+      .create({
+        data: {
+          id: "6c6c6c6c-0000-4000-8000-0000000000f1",
+          // A project that does not exist — `characters.project_id` is Restrict.
+          projectId: "6c6c6c6c-0000-4000-8000-0000000000f2",
+          createdByUserId: ownerUserId,
+          name: "Orphan",
+        },
+      })
+      .then(
+        () => null,
+        (error_: unknown) => error_,
+      );
+
+    expect(isForeignKeyViolation(error)).toBe(true);
+    expect(isTransientDatabaseError(error)).toBe(false);
+    // The narrative-transition delete path translates this into a 409 by name
+    // (step 4b-5), so a change in this shape would silently turn that answer back
+    // into a 500 — the exact regression the deadlock finding was.
+    expect(isUniqueViolation(error)).toBe(false);
+  });
+});
 
 describe("a real Postgres deadlock, as this codebase actually receives it", () => {
   // The SHAPE, asserted rather than printed. It is documentation and canary at
