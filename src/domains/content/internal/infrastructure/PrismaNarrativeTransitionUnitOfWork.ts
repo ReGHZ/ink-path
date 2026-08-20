@@ -71,10 +71,15 @@ export class PrismaNarrativeTransitionUnitOfWork
         );
       },
       // READ COMMITTED, the same level every content transaction runs at. The
-      // apply path does not rely on the isolation level for its correctness —
-      // it relies on the explicit `FOR UPDATE` row lock, which is why raising
-      // the level here would buy nothing and cost serialisation failures on
-      // unrelated writes.
+      // apply path does not rely on the isolation level for its correctness — it
+      // relies on the row lock its own conditional writes take (`claimForApply`,
+      // `deleteIfPending`: the predicate rides inside the statement, so the loser
+      // waits in the row's lock queue and then re-reads what the winner
+      // committed). Raising the level would buy nothing and cost serialisation
+      // failures on unrelated writes.
+      //
+      // Said `FOR UPDATE` until gerbang G2 (G2-2) — a justification for this
+      // isolation level resting on a lock step 4b-5 removed.
       { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
     );
   }

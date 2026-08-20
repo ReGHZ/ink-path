@@ -38,7 +38,6 @@ const row: PrismaTransitionEffect = {
 };
 
 type Calls = {
-  raw: string[];
   findUnique: number;
   findFirst: unknown[];
   findMany: unknown[];
@@ -47,11 +46,8 @@ type Calls = {
   deleteMany: unknown[];
 };
 
-function buildRepository(
-  options: { count?: number; lockedRows?: Array<{ id: string }> } = {},
-) {
+function buildRepository(options: { count?: number } = {}) {
   const calls: Calls = {
-    raw: [],
     findUnique: 0,
     findFirst: [],
     findMany: [],
@@ -60,15 +56,12 @@ function buildRepository(
     deleteMany: [],
   };
 
+  // No `$queryRaw` fake since gerbang G2 (G2-2). It existed to let a test assert
+  // the statement really said `FOR UPDATE`; that assertion died with the mechanism
+  // at step 4b-5, and the predicate that replaced it is pinned behaviourally
+  // instead (`test/integration/transition-effect-tenancy.integration.test.ts` and
+  // `apply-delete-serialization.integration.test.ts`).
   const client = {
-    // Template-tag call: the fake receives the string fragments, which is
-    // exactly what the assertion below needs — that the statement really does
-    // say FOR UPDATE.
-    $queryRaw: (fragments: TemplateStringsArray) => {
-      calls.raw.push(fragments.join("?"));
-
-      return Promise.resolve(options.lockedRows ?? [{ id: "effect-1" }]);
-    },
     transitionEffect: {
       findUnique: () => {
         calls.findUnique += 1;

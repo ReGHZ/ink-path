@@ -105,8 +105,14 @@ export const TransitionEffectMapper = {
   },
 
   // The only two mutable columns in the table, and the write only ever happens
-  // inside the transaction that holds this row's `FOR UPDATE` lock — which is
-  // why there is no version guard to add.
+  // inside the transaction whose `claimForApply()` already took this row's lock —
+  // which is why there is no version guard to add. Step 4b-5 changed the MECHANISM
+  // of that lock, not the argument: the claim is a conditional write
+  // (`WHERE id = … AND applied_at IS NULL`), so a rival that lost the claim never
+  // reaches this update, and the winner holds the row until it commits. Before
+  // 4b-5 the same sentence said `FOR UPDATE`; it was corrected at gerbang G2
+  // (G2-2) because it was justifying the ABSENCE of optimistic locking with a
+  // lock that had been deleted.
   toUpdatePersistence(
     transitionEffect: TransitionEffect,
   ): Prisma.TransitionEffectUncheckedUpdateManyInput {

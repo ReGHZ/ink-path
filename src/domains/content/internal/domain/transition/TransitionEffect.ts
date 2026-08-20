@@ -43,9 +43,11 @@ import {
 // APPEND-ONLY. `applied_at` goes null → timestamp exactly once and never back
 // (`05-implementation-policy/05_append_only_invariants.md:52-64`). markApplied()
 // below refuses the second call, but that refusal is a backstop, not the
-// mechanism: an already-applied effect must be detected by the service under the
-// `FOR UPDATE` lock and answered as an idempotent no-op, never by catching this
-// error (`flow_10:101,115`).
+// mechanism: an already-applied effect must be detected by the CLAIM the service
+// takes — `claimForApply` answers `already-applied` when its conditional write
+// matched no row — and answered as an idempotent no-op, never by catching this
+// error (`flow_10:101,115`). Named the `FOR UPDATE` lock until gerbang G2 (G2-2);
+// step 4b-5 replaced the read-lock-then-check pair with the conditional write.
 export const TRANSITION_EFFECT_TYPES = [
   "attribute_change",
   "relationship_add",

@@ -12,12 +12,16 @@ import type {
 } from "../../domain/transition/NarrativeTransition.js";
 import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
 
-// `$queryRaw` for the same reason the effect adapter needs it: Prisma has no
-// first-class `FOR UPDATE`, and the aggregate-root lock is what keeps a
-// concurrent `addEffect` from slipping a child past a delete's guard.
+// `$queryRaw` is gone from this type for the same reason it left the effect
+// adapter at step 4b-5: it carried the aggregate-root `SELECT ... FOR UPDATE`, and
+// that lock was removed on purpose. What keeps a concurrent `addEffect` from
+// slipping a child past a delete's guard now is stated in `delete()` below — the
+// per-child predicate plus the FK refusing the parent while any child survives.
+// Keeping the raw-SQL door open would leave the old mechanism reachable while the
+// comment describing it was gone (gerbang G2, temuan G2-2).
 export type NarrativeTransitionDatabase = Pick<
   PrismaClient,
-  "narrativeTransition" | "$queryRaw"
+  "narrativeTransition"
 >;
 
 export class PrismaNarrativeTransitionRepository

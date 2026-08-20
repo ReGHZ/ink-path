@@ -9,14 +9,16 @@ import type {
   TransitionEffectRepository,
 } from "../../domain/transition/TransitionEffectRepository.js";
 
-// `$queryRaw` is part of the contract, not an escape hatch: Prisma has no
-// first-class `FOR UPDATE`, and the lock is the whole mechanism apply relies on.
 // A `Prisma.TransactionClient` satisfies this shape structurally, which is how
 // the unit of work hands its transaction in.
-export type TransitionEffectDatabase = Pick<
-  PrismaClient,
-  "transitionEffect" | "$queryRaw"
->;
+//
+// `$queryRaw` was part of this type until step 4b-5 and its removal is the point:
+// it existed only for `SELECT ... FOR UPDATE`, and no statement here reads a lock
+// separately any more. `claimForApply` and `deleteIfPending` carry their predicate
+// INSIDE the write, so the statement that decides is the statement that locks.
+// Deleted rather than left unused — a raw-SQL door on a type with no raw SQL is a
+// capability nobody is guarding (gerbang G2, temuan G2-2).
+export type TransitionEffectDatabase = Pick<PrismaClient, "transitionEffect">;
 
 export class PrismaTransitionEffectRepository
   implements TransitionEffectRepository

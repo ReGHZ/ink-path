@@ -240,10 +240,11 @@ export class NarrativeTransitionController {
 
   // POST, and 200 rather than 201: apply creates no resource of its own — it
   // mutates the target entity and fills `applied_at` on a row that already
-  // exists. It is also idempotent by construction (`FOR UPDATE` + re-check under
-  // the lock, `flow_10:101,115`), so a repeat returns the same applied effect
-  // instead of failing, and a caller that retries after a dropped connection
-  // gets the truth rather than a conflict.
+  // exists. It is also idempotent by construction (the claim is a conditional
+  // write, so a second caller matches no row and is told `already-applied`,
+  // `flow_10:101,115`), so a repeat returns the same applied effect instead of
+  // failing, and a caller that retries after a dropped connection gets the truth
+  // rather than a conflict. Read `FOR UPDATE` + re-check until gerbang G2 (G2-2).
   async applyEffect(c: Context<AppEnvironment>) {
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);

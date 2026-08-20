@@ -16,6 +16,7 @@ import { PrismaUserRepository } from "../../src/domains/user/internal/infrastruc
 import { createAppContainer } from "../../src/infrastructure/container.js";
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
 import { ErrorCode } from "../../src/shared/errors/ErrorCode.js";
+import { isTransientDatabaseError } from "../../src/shared/infrastructure/prismaErrors.js";
 import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { NarrativeTransitionUnitOfWork } from "../../src/domains/content/internal/application/ports/NarrativeTransitionUnitOfWork.js";
@@ -193,6 +194,66 @@ function interceptingService(
   };
 
   return serviceOver(containerB, unitOfWork);
+}
+
+// Parks a service in the MIDDLE of a multi-row loop: right after the first row is
+// processed, while its lock on that row is held and the rest of the loop has not
+// run. Neither existing wrapper can express that — `holdingService` parks after the
+// whole body, `interceptingService` before the loop starts — and the lock-ORDER
+// property only exists between the first and second row.
+function interceptingAfterFirst(
+  client: PrismaClient,
+  container: typeof containerA,
+  method: "claimForApply" | "deleteIfPending",
+): {
+  service: NarrativeTransitionService;
+  reachedFirst: Promise<void>;
+  release: () => void;
+} {
+  const inner = createNarrativeTransitionUnitOfWork({ prisma: client });
+  const reached = gate();
+  const release = gate();
+  let calls = 0;
+
+  const unitOfWork: NarrativeTransitionUnitOfWork = {
+    transaction: (work) =>
+      inner.transaction(async (repositories, outboxEvents) => {
+        const transitionEffects = new Proxy(repositories.transitionEffects, {
+          get(target, property, receiver) {
+            if (property === method) {
+              return async (...args: unknown[]) => {
+                const result = await (
+                  target[method] as (...inner: unknown[]) => Promise<unknown>
+                ).apply(target, args);
+
+                calls += 1;
+
+                if (calls === 1) {
+                  reached.open();
+                  await release.opened;
+                }
+
+                return result;
+              };
+            }
+
+            const value: unknown = Reflect.get(target, property, receiver);
+
+            return typeof value === "function"
+              ? (value as (...args: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        });
+
+        return work({ ...repositories, transitionEffects }, outboxEvents);
+      }),
+  };
+
+  return {
+    service: serviceOver(container, unitOfWork),
+    reachedFirst: reached.opened,
+    release: release.open,
+  };
 }
 
 // Connection A: same service, but its transaction parks after the body and
@@ -686,6 +747,144 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
       // Nothing was applied, so the delete was free to succeed.
       expect(outcome).toBe("deleted");
     }
+  });
+
+  // T8. Closes G2-4 (`quality-gate/gerbang-mutu-g2-2026-08-20.md`). The comment at
+  // `NarrativeTransitionService.ts:399-404` claims bulk apply and transition delete
+  // "take row locks in the same sequence and cannot deadlock against each other".
+  // Until now that was pinned only by an assertion over Prisma's ARGUMENTS
+  // (`orderBy` in the adapter unit test) — statement shape, not behaviour, which is
+  // the exact complaint the deleted `for-update-lock` file wrote about itself.
+  //
+  // Two rows are the minimum that can express an order, so this needs its own
+  // transition with two pending effects, and they target DIFFERENT characters: two
+  // attribute changes on one entity would make the second apply fail on "already
+  // holds the intended value" and the test would be measuring D5 instead of lock
+  // order.
+  //
+  // Choreography that works under BOTH orderings, which is why the gate on B is
+  // raced rather than awaited: with the orders aligned, B blocks on its very first
+  // delete and never reaches its gate; with them reversed, B sails past the first
+  // row and parks — and only then can the cycle form.
+  it("does not deadlock when a bulk apply and a transition delete run head-on", async () => {
+    const orderedTransitionId = "6b6b6b6b-0000-4000-8000-000000000003";
+    const firstEffectId = "6b6b6b6b-0000-4000-8000-000000000021";
+    const secondEffectId = "6b6b6b6b-0000-4000-8000-000000000022";
+
+    await transitions.insert(
+      NarrativeTransition.create({
+        id: orderedTransitionId,
+        projectId,
+        sourceEntityType: "chapter",
+        sourceEntityId: chapterId,
+        title: "Dua efek, satu urutan",
+        description: null,
+        declaredByUserId: ownerUserId,
+        reversesTransitionId: null,
+        now: BASE,
+      }),
+    );
+
+    await prisma.transitionEffect.createMany({
+      data: [
+        {
+          id: firstEffectId,
+          narrativeTransitionId: orderedTransitionId,
+          projectId,
+          effectType: "attribute_change",
+          targetEntityType: "character",
+          targetEntityId: characterId,
+          fieldPath: "archetype",
+          newValue: "mentor",
+          // Explicit and distinct: `createdAt asc, id asc` IS the order under test,
+          // so two rows sharing a timestamp would leave it decided by the id
+          // tie-break and hide what this test is about.
+          createdAt: BASE,
+        },
+        {
+          id: secondEffectId,
+          narrativeTransitionId: orderedTransitionId,
+          projectId,
+          effectType: "attribute_change",
+          targetEntityType: "character",
+          targetEntityId: otherCharacterId,
+          fieldPath: "archetype",
+          newValue: "rival",
+          createdAt: new Date(BASE.getTime() + 1000),
+        },
+      ],
+    });
+
+    // A claims the FIRST row and holds it, mid-loop.
+    const applier = interceptingAfterFirst(prisma, containerA, "claimForApply");
+    const applying = applier.service.applyTransition(
+      projectId,
+      orderedTransitionId,
+      writer,
+    );
+
+    await applier.reachedFirst;
+
+    // B walks the same list. Aligned orders → it blocks here, on the row A holds.
+    // Reversed → it deletes the OTHER row and parks, which is what would let the
+    // cycle close.
+    const deleter = interceptingAfterFirst(
+      rival,
+      containerB,
+      "deleteIfPending",
+    );
+    const deleting = deleter.service.deleteTransition(
+      projectId,
+      orderedTransitionId,
+      writer,
+    );
+
+    await Promise.race([
+      deleter.reachedFirst,
+      new Promise((resolve) => setTimeout(resolve, CHANCE_TO_RUN_MS)),
+    ]);
+
+    applier.release();
+    deleter.release();
+
+    const [appliedOutcome, deletedOutcome] = await Promise.allSettled([
+      applying,
+      deleting,
+    ]);
+
+    // THE discriminating assertion. A deadlock is not a slow test or a lost race:
+    // Postgres kills one side outright, and the classifier says so by SQLSTATE
+    // (`deadlock-classification.integration.test.ts` proves that shape is real).
+    // Reverse either loop and one of these two becomes a killed victim.
+    for (const outcome of [appliedOutcome, deletedOutcome]) {
+      if (outcome.status === "rejected") {
+        expect(isTransientDatabaseError(outcome.reason)).toBe(false);
+        expect(String(outcome.reason)).not.toMatch(/deadlock/i);
+      }
+    }
+
+    // And the outcome is the ordinary serialised one: the writer that got there
+    // first finishes, the structural caller is refused with the sentence it would
+    // have given anyway.
+    expect(appliedOutcome.status).toBe("fulfilled");
+    expect(deletedOutcome.status).toBe("rejected");
+
+    if (deletedOutcome.status === "rejected") {
+      expect(deletedOutcome.reason).toMatchObject({
+        code: ErrorCode.CONFLICT,
+      });
+    }
+
+    const survivors = await prisma.transitionEffect.findMany({
+      where: { narrativeTransitionId: orderedTransitionId },
+      select: { id: true, appliedAt: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // All-or-nothing (decision D9): a bulk apply that half-committed would show up
+    // here as one applied row and one pending.
+    expect(survivors).toHaveLength(2);
+    expect(survivors.every((row) => row.appliedAt !== null)).toBe(true);
   });
 
   // T6. The control for the controls. If unrelated work also blocked, T1/T3/T4/T5

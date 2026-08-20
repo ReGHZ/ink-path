@@ -30,7 +30,6 @@ const row: PrismaNarrativeTransition = {
 };
 
 type Calls = {
-  raw: string[];
   findUnique: number;
   findMany: unknown[];
   create: unknown[];
@@ -42,11 +41,9 @@ function buildRepository(
   options: {
     count?: number;
     rows?: PrismaNarrativeTransition[];
-    lockedRows?: Array<{ id: string }>;
   } = {},
 ) {
   const calls: Calls = {
-    raw: [],
     findUnique: 0,
     findMany: [],
     create: [],
@@ -54,12 +51,10 @@ function buildRepository(
     deleteMany: [],
   };
 
+  // No `$queryRaw` fake since gerbang G2 (G2-2): the adapter's `Pick<>` no longer
+  // includes it, so a fake that provided it was satisfying a capability the
+  // production type had already dropped.
   const client = {
-    $queryRaw: (fragments: TemplateStringsArray) => {
-      calls.raw.push(fragments.join("?"));
-
-      return Promise.resolve(options.lockedRows ?? [{ id: "transition-1" }]);
-    },
     narrativeTransition: {
       findUnique: () => {
         calls.findUnique += 1;
