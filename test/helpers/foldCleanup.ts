@@ -2,7 +2,7 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
 // The order the FOLDS and the LOG have to be deleted in, in one place.
 //
-// FIVE levels since step 4b-4, and the order is not a preference — every foreign
+// SIX levels since step 4b-4, and the order is not a preference — every foreign
 // key on this path is `onDelete: Restrict`, so a wrong order fails instead of
 // cascading, and the failure lands inside whatever fixture the test was setting up
 // next. It has already cost one debugging session at four levels: the message
@@ -19,7 +19,7 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 //
 // Projections in FRONT of the log, which is the opposite of the order that was
 // correct before 4b-2. Content entities, the project and the user stay with the
-// caller: those differ per file, while the four rows above are the same shape
+// caller: those differ per file, while the six rows above are the same shape
 // everywhere and are exactly the ones whose order is easy to get wrong.
 //
 // `projectId` as a plain filter rather than through the `project` relation, for
