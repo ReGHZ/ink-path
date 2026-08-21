@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { NarrativeTransitionDtoMapper } from "./NarrativeTransitionDtoMapper.js";
 import {
   narrativeTransitionResponseSchema,
-  transitionEffectResponseSchema,
+  assertionResponseSchema,
 } from "../../dto/transition/transitionResponseSchema.js";
 
 import type { ProjectMembership } from "../../../../../../shared/application/ports/ProjectMembership.js";
 import type {
   NarrativeTransitionDetail,
-  TransitionEffectDetail,
+  AssertionDetail,
 } from "../../../application/transition/NarrativeTransitionService.js";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -21,11 +21,11 @@ const REVISION_ID = "55555555-5555-4555-8555-555555555555";
 
 const writer: ProjectMembership = { role: "writer", canDelete: true };
 
-const appliedAttributeEffect: TransitionEffectDetail = {
+const appliedAttributeAssertion: AssertionDetail = {
   id: "66666666-6666-4666-8666-666666666666",
   narrativeTransitionId: TRANSITION_ID,
   projectId: PROJECT_ID,
-  effectType: "attribute_change",
+  operation: "attribute_change",
   targetEntityType: "character",
   targetEntityId: CHARACTER_ID,
   fieldPath: "archetype",
@@ -38,11 +38,11 @@ const appliedAttributeEffect: TransitionEffectDetail = {
   createdAt: new Date("2026-08-17T09:00:00.000Z"),
 };
 
-const pendingRelationshipEffect: TransitionEffectDetail = {
+const pendingRelationshipAssertion: AssertionDetail = {
   id: "77777777-7777-4777-8777-777777777777",
   narrativeTransitionId: TRANSITION_ID,
   projectId: PROJECT_ID,
-  effectType: "relationship_remove",
+  operation: "relationship_remove",
   targetEntityType: "character",
   targetEntityId: CHARACTER_ID,
   fieldPath: null,
@@ -65,7 +65,7 @@ const transitionDetail: NarrativeTransitionDetail = {
   declaredByUserId: USER_ID,
   reversesTransitionId: null,
   status: "partially_applied",
-  effects: [appliedAttributeEffect, pendingRelationshipEffect],
+  assertions: [appliedAttributeAssertion, pendingRelationshipAssertion],
   createdAt: new Date("2026-08-17T09:00:00.000Z"),
   updatedAt: new Date("2026-08-17T10:00:00.000Z"),
 };
@@ -156,7 +156,7 @@ describe("NarrativeTransitionDtoMapper.toAddEffectInput", () => {
   it("maps the attribute variant without any relationship field", () => {
     const input = NarrativeTransitionDtoMapper.toAddEffectInput(
       {
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: CHARACTER_ID,
         fieldPath: "archetype",
@@ -169,7 +169,7 @@ describe("NarrativeTransitionDtoMapper.toAddEffectInput", () => {
     expect(input).toEqual({
       requestingUserId: USER_ID,
       requestingMembership: writer,
-      effectType: "attribute_change",
+      operation: "attribute_change",
       targetEntityType: "character",
       targetEntityId: CHARACTER_ID,
       fieldPath: "archetype",
@@ -181,10 +181,10 @@ describe("NarrativeTransitionDtoMapper.toAddEffectInput", () => {
   });
 
   it("maps both relationship variants without any attribute field", () => {
-    for (const effectType of ["relationship_add", "relationship_remove"] as const) {
+    for (const operation of ["relationship_add", "relationship_remove"] as const) {
       const input = NarrativeTransitionDtoMapper.toAddEffectInput(
         {
-          effectType,
+          operation,
           targetEntityType: "character",
           targetEntityId: CHARACTER_ID,
           relationshipType: "member_of",
@@ -198,7 +198,7 @@ describe("NarrativeTransitionDtoMapper.toAddEffectInput", () => {
       expect(input).toEqual({
         requestingUserId: USER_ID,
         requestingMembership: writer,
-        effectType,
+        operation,
         targetEntityType: "character",
         targetEntityId: CHARACTER_ID,
         relationshipType: "member_of",
@@ -220,28 +220,28 @@ describe("NarrativeTransitionDtoMapper.toMutateTransitionInput", () => {
 });
 
 describe("NarrativeTransitionDtoMapper response mapping", () => {
-  it("maps an effect field for field, including the provenance pair", () => {
+  it("maps an assertion field for field, including the provenance pair", () => {
     const response =
-      NarrativeTransitionDtoMapper.toTransitionEffectResponse(
-        appliedAttributeEffect,
+      NarrativeTransitionDtoMapper.toAssertionResponse(
+        appliedAttributeAssertion,
       );
 
-    expect(response).toEqual(appliedAttributeEffect);
-    expect(transitionEffectResponseSchema.parse(response)).toEqual(response);
+    expect(response).toEqual(appliedAttributeAssertion);
+    expect(assertionResponseSchema.parse(response)).toEqual(response);
   });
 
-  it("maps a transition with its effects and passes its own response schema", () => {
+  it("maps a transition with its assertions and passes its own response schema", () => {
     const response =
       NarrativeTransitionDtoMapper.toNarrativeTransitionResponse(
         transitionDetail,
       );
 
     expect(response.status).toBe("partially_applied");
-    expect(response.effects).toHaveLength(2);
-    expect(response.effects[0]?.appliedAt).toEqual(
-      appliedAttributeEffect.appliedAt,
+    expect(response.assertions).toHaveLength(2);
+    expect(response.assertions[0]?.appliedAt).toEqual(
+      appliedAttributeAssertion.appliedAt,
     );
-    expect(response.effects[1]?.appliedAt).toBeNull();
+    expect(response.assertions[1]?.appliedAt).toBeNull();
     // `.strict()` plus a total field list: a field dropped by the mapper fails
     // the parse here rather than reaching a client as a missing key.
     expect(narrativeTransitionResponseSchema.parse(response)).toEqual(response);
@@ -253,7 +253,7 @@ describe("NarrativeTransitionDtoMapper response mapping", () => {
       id: "99999999-9999-4999-8999-999999999999",
       title: "The retreat",
       status: "declared",
-      effects: [],
+      assertions: [],
     };
 
     const response =
@@ -266,7 +266,7 @@ describe("NarrativeTransitionDtoMapper response mapping", () => {
       "The duel at the bridge",
       "The retreat",
     ]);
-    expect(response.narrativeTransitions[1]?.effects).toEqual([]);
+    expect(response.narrativeTransitions[1]?.assertions).toEqual([]);
   });
 
   it("returns an empty list as an empty array, never as an absent key", () => {

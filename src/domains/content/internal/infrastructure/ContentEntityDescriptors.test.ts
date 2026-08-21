@@ -23,7 +23,7 @@ import { writableAttributeFieldsOf } from "../domain/transition/attributeFieldRe
 // A phantom entry is not cosmetic drift. The header of
 // `../domain/transition/attributeFieldRegistry.ts` states the stake: `field_path`
 // is TEXT with no CHECK, so the allowlist is the only thing standing between
-// "declare an effect" and a write primitive for any column of any table. An
+// "declare an assertion" and a write primitive for any column of any table. An
 // entry that exists in the allowlist and nowhere else is exactly what 7.7's
 // mutator dispatch will try to dereference.
 //

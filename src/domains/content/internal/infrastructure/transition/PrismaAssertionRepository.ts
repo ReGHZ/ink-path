@@ -1,13 +1,13 @@
-import { TransitionEffectMapper } from "./TransitionEffectMapper.js";
+import { AssertionMapper } from "./AssertionMapper.js";
 import { NarrativeTransitionRepositoryNotFoundError } from "../../domain/transition/NarrativeTransitionRepositoryError.js";
 
 import type { PrismaClient } from "../../../../../generated/prisma/client.js";
-import type { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
+import type { Assertion } from "../../domain/transition/Assertion.js";
 import type {
-  TransitionEffectClaim,
-  TransitionEffectDeletion,
-  TransitionEffectRepository,
-} from "../../domain/transition/TransitionEffectRepository.js";
+  AssertionClaim,
+  AssertionDeletion,
+  AssertionRepository,
+} from "../../domain/transition/AssertionRepository.js";
 
 // A `Prisma.TransactionClient` satisfies this shape structurally, which is how
 // the unit of work hands its transaction in.
@@ -18,27 +18,27 @@ import type {
 // INSIDE the write, so the statement that decides is the statement that locks.
 // Deleted rather than left unused — a raw-SQL door on a type with no raw SQL is a
 // capability nobody is guarding (gerbang G2, temuan G2-2).
-export type TransitionEffectDatabase = Pick<PrismaClient, "transitionEffect">;
+export type AssertionDatabase = Pick<PrismaClient, "assertion">;
 
-export class PrismaTransitionEffectRepository
-  implements TransitionEffectRepository
+export class PrismaAssertionRepository
+  implements AssertionRepository
 {
-  constructor(private readonly client: TransitionEffectDatabase) {}
+  constructor(private readonly client: AssertionDatabase) {}
 
   // `narrativeTransitionId: { not: null }` narrows the TABLE to this AGGREGATE.
-  // Since the 2026-08-18 migration `transition_effects` is also the assertion
+  // Since the 2026-08-18 migration `assertions` is also the assertion
   // log, so it holds rows that belong to no transition at all. An assertion id
-  // handed to this method must answer "no such transition effect" — which is
+  // handed to this method must answer "no such transition assertion" — which is
   // the truth, and a 404 — instead of reaching a mapper that would reject it
   // with "Narrative transition id is required", a reason that is wrong for a row
   // designed not to have one. findUnique cannot carry the extra predicate,
   // hence findFirst on a unique column.
-  async findById(id: string): Promise<TransitionEffect | null> {
-    const row = await this.client.transitionEffect.findFirst({
+  async findById(id: string): Promise<Assertion | null> {
+    const row = await this.client.assertion.findFirst({
       where: { id, narrativeTransitionId: { not: null } },
     });
 
-    return row ? TransitionEffectMapper.toDomain(row) : null;
+    return row ? AssertionMapper.toDomain(row) : null;
   }
 
   // The unnarrowed twin, step 4b-2. `findUnique` on the primary key with
@@ -48,28 +48,28 @@ export class PrismaTransitionEffectRepository
   async findAssertionById(
     projectId: string,
     id: string,
-  ): Promise<TransitionEffect | null> {
-    const row = await this.client.transitionEffect.findFirst({
+  ): Promise<Assertion | null> {
+    const row = await this.client.assertion.findFirst({
       where: { id, projectId },
     });
 
-    return row ? TransitionEffectMapper.toDomain(row) : null;
+    return row ? AssertionMapper.toDomain(row) : null;
   }
 
   async claimForApply(
     projectId: string,
     id: string,
     now: Date,
-  ): Promise<TransitionEffectClaim> {
+  ): Promise<AssertionClaim> {
     // `updateMany` and not `update`: `update` needs a unique WHERE and would
     // reject `appliedAt: null`, which is the whole point — the predicate has to
     // be part of the statement that takes the lock.
-    const claimed = await this.client.transitionEffect.updateMany({
+    const claimed = await this.client.assertion.updateMany({
       where: { id, projectId, appliedAt: null },
       data: { appliedAt: now },
     });
 
-    const row = await this.client.transitionEffect.findFirst({
+    const row = await this.client.assertion.findFirst({
       where: { id, projectId },
     });
 
@@ -81,7 +81,7 @@ export class PrismaTransitionEffectRepository
       // The read above ran AFTER the update returned zero rows, so under READ
       // COMMITTED it sees the rival's commit — the same fresh-snapshot rule that
       // made the update skip the row in the first place.
-      return { status: "already-applied", effect: TransitionEffectMapper.toDomain(row) };
+      return { status: "already-applied", assertion: AssertionMapper.toDomain(row) };
     }
 
     // Pre-claim shape, as the port promises: `applied_at` is on disk but the
@@ -91,7 +91,7 @@ export class PrismaTransitionEffectRepository
     // because a second read would see our own claim.
     return {
       status: "claimed",
-      effect: TransitionEffectMapper.toDomain({
+      assertion: AssertionMapper.toDomain({
         ...row,
         appliedAt: null,
         contentRevisionId: null,
@@ -102,8 +102,8 @@ export class PrismaTransitionEffectRepository
   async deleteIfPending(
     projectId: string,
     id: string,
-  ): Promise<TransitionEffectDeletion> {
-    const deleted = await this.client.transitionEffect.deleteMany({
+  ): Promise<AssertionDeletion> {
+    const deleted = await this.client.assertion.deleteMany({
       where: { id, projectId, appliedAt: null },
     });
 
@@ -118,8 +118,8 @@ export class PrismaTransitionEffectRepository
     return survivor === null ? "missing" : "applied";
   }
 
-  async findByTransitionId(transitionId: string): Promise<TransitionEffect[]> {
-    const rows = await this.client.transitionEffect.findMany({
+  async findByTransitionId(transitionId: string): Promise<Assertion[]> {
+    const rows = await this.client.assertion.findMany({
       where: { narrativeTransitionId: transitionId },
       // Contract of the port: creation order, `id` asc as tie-break. Both bulk
       // apply and the delete guard walk this list to take their row locks, so a
@@ -127,26 +127,26 @@ export class PrismaTransitionEffectRepository
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
-    return rows.map((row) => TransitionEffectMapper.toDomain(row));
+    return rows.map((row) => AssertionMapper.toDomain(row));
   }
 
-  async insert(transitionEffect: TransitionEffect): Promise<void> {
+  async insert(assertion: Assertion): Promise<void> {
     // No P2003 translation for `narrative_transition_id`: the service loaded the
-    // parent transition before building this effect, so a violation means the
+    // parent transition before building this assertion, so a violation means the
     // parent was deleted mid-request — rare, and a raw 500 is the honest answer
-    // rather than a 404 that implies the effect was the missing thing.
-    await this.client.transitionEffect.create({
+    // rather than a 404 that implies the assertion was the missing thing.
+    await this.client.assertion.create({
       data: {
-        id: transitionEffect.id,
-        ...TransitionEffectMapper.toPersistence(transitionEffect),
+        id: assertion.id,
+        ...AssertionMapper.toPersistence(assertion),
       },
     });
   }
 
-  async update(transitionEffect: TransitionEffect): Promise<void> {
-    const result = await this.client.transitionEffect.updateMany({
-      where: { id: transitionEffect.id },
-      data: TransitionEffectMapper.toUpdatePersistence(transitionEffect),
+  async update(assertion: Assertion): Promise<void> {
+    const result = await this.client.assertion.updateMany({
+      where: { id: assertion.id },
+      data: AssertionMapper.toUpdatePersistence(assertion),
     });
 
     if (result.count === 0) {
@@ -157,7 +157,7 @@ export class PrismaTransitionEffectRepository
 }
 
 // The POOLED instance, and the service uses it for READS ONLY. Every write to
-// `transition_effects` goes through the unit of work: since step 4b-5 each of
+// `assertions` goes through the unit of work: since step 4b-5 each of
 // them carries its own predicate (`claimForApply`, `deleteIfPending`), and the
 // lock that predicate takes exists only for the length of the transaction the
 // unit of work opens.
@@ -169,10 +169,10 @@ export class PrismaTransitionEffectRepository
 // keep the writes out of reach, and two classes over one table is how the two
 // drift apart. The port documents the constraint and the unit of work is what
 // satisfies it.
-export function createTransitionEffectRepository({
+export function createAssertionRepository({
   prisma,
 }: {
   prisma: PrismaClient;
-}): TransitionEffectRepository {
-  return new PrismaTransitionEffectRepository(prisma);
+}): AssertionRepository {
+  return new PrismaAssertionRepository(prisma);
 }

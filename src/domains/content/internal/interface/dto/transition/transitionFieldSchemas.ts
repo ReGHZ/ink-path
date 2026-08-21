@@ -43,19 +43,19 @@ export const narrativeTransitionIdSchema = z.uuid();
 // (`attributeFieldRegistry.ts`), so a flat enum could not express the rule at
 // all; a cross-product enum could, and would still be wrong, because the
 // domain's rejection enumerates the writable fields for the target type
-// (`TransitionEffect.ts:134-140`) and a Zod enum would answer the identical
+// (`Assertion.ts:134-140`) and a Zod enum would answer the identical
 // mistake with a different, less useful message. Same reasoning as
 // `relationTypeSchema`: rule 1 belongs to the domain, and closing the set here
 // would make the registry unenforceable from any entry point that skips Zod.
 export const transitionFieldPathSchema = z.string();
 
 // Blankness is rejected WITHOUT trimming, and that pairing is load-bearing.
-// `TransitionEffect.create()` stores `new_value` verbatim on purpose — the
+// `Assertion.create()` stores `new_value` verbatim on purpose — the
 // target aggregate's own `updateDetails()` decides what trimming means for its
-// field (`TransitionEffect.ts:155-159`) — so a `.trim()` here would store an
+// field (`Assertion.ts:155-159`) — so a `.trim()` here would store an
 // intent that differs from what apply eventually writes. A blank value is still
-// a 400: "clear this field" is not expressible through an effect (`16:112-113`),
-// and the domain refuses it too (`TransitionEffect.ts:346-352`).
+// a 400: "clear this field" is not expressible through an assertion (`16:112-113`),
+// and the domain refuses it too (`Assertion.ts:346-352`).
 export const transitionNewValueSchema = z
   .string()
   .min(1)

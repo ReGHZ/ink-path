@@ -112,7 +112,7 @@ function applyInput(overrides: Record<string, unknown> = {}) {
 // registry ALLOWS actually has a setter is a relationship between two tables,
 // and only this can hold it. Without it, a field could pass the allowlist at
 // declare time and blow up with a raw 500 at apply time — after the writer
-// believed the effect was accepted.
+// believed the assertion was accepted.
 describe("attribute allowlist vs write dispatch", () => {
   it("has a setter for every writable field of every entity type", () => {
     const missing: string[] = [];
@@ -202,7 +202,7 @@ describe("createContentAttributeMutator", () => {
   });
 
   // Decision D5 for attributes. Nothing may be written, because there is no
-  // revision for the effect to point at and an applied attribute change without
+  // revision for the assertion to point at and an applied attribute change without
   // one is a row the domain refuses to build.
   it("writes nothing when the entity already holds the intended value", async () => {
     const { mutator, writes } = buildMutator({});

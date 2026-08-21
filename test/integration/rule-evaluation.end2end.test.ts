@@ -207,12 +207,12 @@ async function assertFact(
     anchor?: { type: "chapter" | "scene" | "event"; id: string };
   } = {},
 ): Promise<string> {
-  const created = await prisma.transitionEffect.create({
+  const created = await prisma.assertion.create({
     data: {
       projectId,
       narrativeTransitionId: null,
       relationshipDefinitionId: definitionId,
-      effectType: "relationship_add",
+      operation: "relationship_add",
       targetEntityType: "character",
       targetEntityId: subjectId,
       relatedEntityType: options.objectId === undefined ? null : "scene",
@@ -372,7 +372,7 @@ beforeEach(async () => {
     // onDelete: Restrict, so any other order fails instead of cascading, and
     // the failure would surface inside an unrelated test's fixtures.
     await deleteEvaluationFold(prisma, projectIds);
-    await prisma.transitionEffect.deleteMany({
+    await prisma.assertion.deleteMany({
       where: { projectId: { in: projectIds } },
     });
     await prisma.relationshipDefinition.deleteMany({

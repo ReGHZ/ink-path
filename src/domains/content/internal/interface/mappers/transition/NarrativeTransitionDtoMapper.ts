@@ -4,7 +4,7 @@ import type {
   DeclareTransitionInput,
   MutateTransitionInput,
   NarrativeTransitionDetail,
-  TransitionEffectDetail,
+  AssertionDetail,
   UpdateTransitionDetailsInput,
 } from "../../../application/transition/NarrativeTransitionService.js";
 import type { AddEffectRequestDto } from "../../dto/transition/addEffectSchema.js";
@@ -12,7 +12,7 @@ import type { DeclareTransitionRequestDto } from "../../dto/transition/declareTr
 import type {
   NarrativeTransitionListResponseDto,
   NarrativeTransitionResponseDto,
-  TransitionEffectResponseDto,
+  AssertionResponseDto,
 } from "../../dto/transition/transitionResponseSchema.js";
 import type { UpdateTransitionRequestDto } from "../../dto/transition/updateTransitionSchema.js";
 
@@ -73,11 +73,11 @@ export const NarrativeTransitionDtoMapper = {
     requestingUserId: string,
     requestingMembership: ProjectMembership,
   ): AddEffectInput {
-    if (dto.effectType === "attribute_change") {
+    if (dto.operation === "attribute_change") {
       return {
         requestingUserId,
         requestingMembership,
-        effectType: dto.effectType,
+        operation: dto.operation,
         targetEntityType: dto.targetEntityType,
         targetEntityId: dto.targetEntityId,
         fieldPath: dto.fieldPath,
@@ -88,7 +88,7 @@ export const NarrativeTransitionDtoMapper = {
     return {
       requestingUserId,
       requestingMembership,
-      effectType: dto.effectType,
+      operation: dto.operation,
       targetEntityType: dto.targetEntityType,
       targetEntityId: dto.targetEntityId,
       relationshipType: dto.relationshipType,
@@ -99,9 +99,9 @@ export const NarrativeTransitionDtoMapper = {
 
   // No DTO parameter, for the same reason `toDeleteRelationshipInput` has none:
   // delete and apply carry no body. Apply in particular takes NOTHING from the
-  // caller — what it will do was fixed when the effect was declared, and letting
+  // caller — what it will do was fixed when the assertion was declared, and letting
   // a request adjust it at apply time would make the stored intent a suggestion
-  // (`TransitionEffect.ts:33-39`: `new_value` is the intent, not a claim).
+  // (`Assertion.ts:33-39`: `new_value` is the intent, not a claim).
   toMutateTransitionInput(
     requestingUserId: string,
     requestingMembership: ProjectMembership,
@@ -109,14 +109,14 @@ export const NarrativeTransitionDtoMapper = {
     return { requestingUserId, requestingMembership };
   },
 
-  toTransitionEffectResponse(
-    detail: TransitionEffectDetail,
-  ): TransitionEffectResponseDto {
+  toAssertionResponse(
+    detail: AssertionDetail,
+  ): AssertionResponseDto {
     return {
       id: detail.id,
       narrativeTransitionId: detail.narrativeTransitionId,
       projectId: detail.projectId,
-      effectType: detail.effectType,
+      operation: detail.operation,
       targetEntityType: detail.targetEntityType,
       targetEntityId: detail.targetEntityId,
       fieldPath: detail.fieldPath,
@@ -143,8 +143,8 @@ export const NarrativeTransitionDtoMapper = {
       declaredByUserId: detail.declaredByUserId,
       reversesTransitionId: detail.reversesTransitionId,
       status: detail.status,
-      effects: detail.effects.map((effect) =>
-        NarrativeTransitionDtoMapper.toTransitionEffectResponse(effect),
+      assertions: detail.assertions.map((assertion) =>
+        NarrativeTransitionDtoMapper.toAssertionResponse(assertion),
       ),
       createdAt: detail.createdAt,
       updatedAt: detail.updatedAt,

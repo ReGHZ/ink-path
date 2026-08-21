@@ -13,7 +13,7 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 //   2. `evaluation_nodes`      → the edges' endpoints (Cascade, but explicit here
 //                                so a leftover node is never mistaken for state)
 //   3. `content_relationships` → points at the assertion (4b-2, Restrict)
-//   4. `transition_effects`    → the log itself; points at definitions
+//   4. `assertions`    → the log itself; points at definitions
 //   5. `narrative_transitions` → the log's optional parent
 //   6. `relationship_definitions` → the vocabulary both folds name
 //
@@ -23,12 +23,12 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 // everywhere and are exactly the ones whose order is easy to get wrong.
 //
 // `projectId` as a plain filter rather than through the `project` relation, for
-// `transition_effects` in particular — the relation form has been the slower and
+// `assertions` in particular — the relation form has been the slower and
 // more surprising one here.
 // The FRONT of that order on its own, for the files that already own their own tail.
 //
 // Exported instead of copy-pasted into each of them (S-4 of the 4b-4 gate): eight existing
-// files delete `transition_effects` with their own filters, and every one of them now has a
+// files delete `assertions` with their own filters, and every one of them now has a
 // `RESTRICT` foreign key pointing at those rows from `evaluation_edges`. They are safe only
 // while nothing else writes the diegetic fold — the moment the projector runs in one test,
 // the FK fails in a DIFFERENT file's fixtures, which is precisely the debugging session the
@@ -54,7 +54,7 @@ export async function deleteFoldsAndAssertions(
   await client.contentRelationship.deleteMany({
     where: { projectId: { in: ids } },
   });
-  await client.transitionEffect.deleteMany({
+  await client.assertion.deleteMany({
     where: { projectId: { in: ids } },
   });
   await client.narrativeTransition.deleteMany({

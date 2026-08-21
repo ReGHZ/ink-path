@@ -11,7 +11,7 @@ import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
 
-// The 2026-08-18 migration turned `transition_effects` into the assertion log
+// The 2026-08-18 migration turned `assertions` into the assertion log
 // (`notes/premis-symbolic-rule-engine.md` §8b step 2). Making
 // `narrative_transition_id` nullable removed the one thing that guaranteed every
 // row had a provenance and a story anchor, so four CHECK constraints took over.
@@ -52,7 +52,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   // onDelete: Restrict, so deleting in the other order fails rather than
   // cascading.
   await deleteEvaluationFold(client, [projectId, otherProjectId]);
-  await client.transitionEffect.deleteMany({
+  await client.assertion.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });
   await client.narrativeTransition.deleteMany({
@@ -146,11 +146,11 @@ afterAll(async () => {
 type AssertionOverrides = Partial<{
   narrativeTransitionId: string | null;
   relationshipDefinitionId: string | null;
-  effectType: "attribute_change" | "relationship_add" | "terminate" | "retract";
+  operation: "attribute_change" | "relationship_add" | "terminate" | "retract";
   anchorEntityType: "chapter" | "scene" | "event" | null;
   anchorEntityId: string | null;
   targetAssertionId: string | null;
-  targetEffectType:
+  targetOperation:
     | "attribute_change"
     | "relationship_add"
     | "terminate"
@@ -166,20 +166,20 @@ function assertionRow(overrides: AssertionOverrides = {}) {
     projectId,
     narrativeTransitionId: null,
     relationshipDefinitionId: deadDefinitionId,
-    effectType: "relationship_add" as const,
+    operation: "relationship_add" as const,
     targetEntityType: "character" as const,
     targetEntityId: characterId,
     anchorEntityType: "chapter" as const,
     anchorEntityId: chapterId,
     targetAssertionId: null,
-    targetEffectType: null,
+    targetOperation: null,
     createdAt: now,
     ...overrides,
   };
 }
 
 async function seedAssertion(id?: string): Promise<string> {
-  const created = await prisma.transitionEffect.create({
+  const created = await prisma.assertion.create({
     data: assertionRow(id === undefined ? {} : { id }),
   });
 
@@ -187,11 +187,11 @@ async function seedAssertion(id?: string): Promise<string> {
 }
 
 async function seedTerminate(): Promise<string> {
-  const created = await prisma.transitionEffect.create({
+  const created = await prisma.assertion.create({
     data: assertionRow({
-      effectType: "terminate",
+      operation: "terminate",
       targetAssertionId: await seedAssertion(),
-      targetEffectType: "relationship_add",
+      targetOperation: "relationship_add",
     }),
   });
 
@@ -203,7 +203,7 @@ describe("assertion log constraints", () => {
   // impossible: `narrative_transition_id` was NOT NULL, there was no column to
   // name the predicate, and no column to carry the story anchor.
   it("accepts a unary assertion with no parent transition", async () => {
-    const created = await prisma.transitionEffect.create({
+    const created = await prisma.assertion.create({
       data: assertionRow(),
     });
 
@@ -213,14 +213,14 @@ describe("assertion log constraints", () => {
     expect(created.relatedEntityId).toBeNull();
   });
 
-  it("still accepts a Phase 7 effect that has a parent and no predicate", async () => {
-    const created = await prisma.transitionEffect.create({
+  it("still accepts a Phase 7 assertion that has a parent and no predicate", async () => {
+    const created = await prisma.assertion.create({
       data: assertionRow({
         narrativeTransitionId: transitionId,
         relationshipDefinitionId: null,
         anchorEntityType: null,
         anchorEntityId: null,
-        effectType: "attribute_change",
+        operation: "attribute_change",
       }),
     });
 
@@ -229,30 +229,30 @@ describe("assertion log constraints", () => {
 
   it("refuses a row with neither a parent nor a predicate", async () => {
     await expect(
-      prisma.transitionEffect.create({
+      prisma.assertion.create({
         data: assertionRow({ relationshipDefinitionId: null }),
       }),
-    ).rejects.toThrow(/transition_effects_has_provenance/);
+    ).rejects.toThrow(/assertions_has_provenance/);
   });
 
   it("refuses half an anchor, in either half", async () => {
     await expect(
-      prisma.transitionEffect.create({
+      prisma.assertion.create({
         data: assertionRow({ anchorEntityId: null }),
       }),
-    ).rejects.toThrow(/transition_effects_anchor_complete/);
+    ).rejects.toThrow(/assertions_anchor_complete/);
 
     await expect(
-      prisma.transitionEffect.create({
+      prisma.assertion.create({
         data: assertionRow({ anchorEntityType: null }),
       }),
-    ).rejects.toThrow(/transition_effects_anchor_complete/);
+    ).rejects.toThrow(/assertions_anchor_complete/);
   });
 
   it("accepts an assertion with no anchor at all", async () => {
     // "Holds with no time information" is a different answer from "holds at
     // every cut", and the log has to be able to say it.
-    const created = await prisma.transitionEffect.create({
+    const created = await prisma.assertion.create({
       data: assertionRow({ anchorEntityType: null, anchorEntityId: null }),
     });
 
@@ -262,18 +262,18 @@ describe("assertion log constraints", () => {
   describe("terminate / retract must name the assertion they act on", () => {
     it("refuses a terminate with no target", async () => {
       await expect(
-        prisma.transitionEffect.create({
-          data: assertionRow({ effectType: "terminate" }),
+        prisma.assertion.create({
+          data: assertionRow({ operation: "terminate" }),
         }),
-      ).rejects.toThrow(/transition_effects_target_matches_operation/);
+      ).rejects.toThrow(/assertions_target_matches_operation/);
     });
 
     it("refuses a retract with no target", async () => {
       await expect(
-        prisma.transitionEffect.create({
-          data: assertionRow({ effectType: "retract" }),
+        prisma.assertion.create({
+          data: assertionRow({ operation: "retract" }),
         }),
-      ).rejects.toThrow(/transition_effects_target_matches_operation/);
+      ).rejects.toThrow(/assertions_target_matches_operation/);
     });
 
     // The other half of the equivalence. Without it the constraint would only
@@ -283,25 +283,25 @@ describe("assertion log constraints", () => {
       const targetId = await seedAssertion();
 
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           // The kind is stated too, so the row is well formed in every OTHER
           // dimension and only one constraint can be the one that refuses it.
           data: assertionRow({
             targetAssertionId: targetId,
-            targetEffectType: "relationship_add",
+            targetOperation: "relationship_add",
           }),
         }),
-      ).rejects.toThrow(/transition_effects_target_matches_operation/);
+      ).rejects.toThrow(/assertions_target_matches_operation/);
     });
 
     it("accepts a terminate that names its target", async () => {
       const targetId = await seedAssertion();
 
-      const created = await prisma.transitionEffect.create({
+      const created = await prisma.assertion.create({
         data: assertionRow({
-          effectType: "terminate",
+          operation: "terminate",
           targetAssertionId: targetId,
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         }),
       });
 
@@ -312,34 +312,34 @@ describe("assertion log constraints", () => {
       const id = "68686868-0000-4000-8000-0000000000ff";
 
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           data: assertionRow({
             id,
-            effectType: "terminate",
+            operation: "terminate",
             targetAssertionId: id,
-            targetEffectType: "relationship_add",
+            targetOperation: "relationship_add",
           }),
         }),
-      ).rejects.toThrow(/transition_effects_target_not_self/);
+      ).rejects.toThrow(/assertions_target_not_self/);
     });
 
     it("refuses a terminate whose target lives in another project", async () => {
       const targetId = await seedAssertion();
 
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           data: {
             ...assertionRow({
-              effectType: "terminate",
+              operation: "terminate",
               targetAssertionId: targetId,
-              targetEffectType: "relationship_add",
+              targetOperation: "relationship_add",
               relationshipDefinitionId: otherProjectDefinitionId,
             }),
             projectId: otherProjectId,
           },
         }),
       ).rejects.toThrow(
-        /transition_effects_target_assertion_id_project_id_target_e_fkey/,
+        /assertions_target_assertion_id_project_id_target_operation_fkey/,
       );
     });
   });
@@ -353,47 +353,47 @@ describe("assertion log constraints", () => {
   describe("an operation's target is checked by KIND, not just existence", () => {
     it("refuses a target whose kind goes unstated", async () => {
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           data: assertionRow({
-            effectType: "terminate",
+            operation: "terminate",
             targetAssertionId: await seedAssertion(),
-            targetEffectType: null,
+            targetOperation: null,
           }),
         }),
-      ).rejects.toThrow(/transition_effects_target_kind_complete/);
+      ).rejects.toThrow(/assertions_target_kind_complete/);
     });
 
-    // The load-bearing one. `target_effect_type` is denormalised, so the whole
+    // The load-bearing one. `target_operation` is denormalised, so the whole
     // design rests on it being unable to lie — and it is the FOREIGN KEY, not a
     // CHECK, that makes that true: a kind disagreeing with the target's real
-    // `effect_type` has no row to point at.
+    // `operation` has no row to point at.
     it("refuses a target kind that disagrees with the target row", async () => {
       const assertionId = await seedAssertion();
 
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           data: assertionRow({
-            effectType: "retract",
+            operation: "retract",
             targetAssertionId: assertionId,
             // The row really is a `relationship_add`.
-            targetEffectType: "terminate",
+            targetOperation: "terminate",
           }),
         }),
       ).rejects.toThrow(
-        /transition_effects_target_assertion_id_project_id_target_e_fkey/,
+        /assertions_target_assertion_id_project_id_target_operation_fkey/,
       );
     });
 
     it("refuses a terminate over a terminate", async () => {
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           data: assertionRow({
-            effectType: "terminate",
+            operation: "terminate",
             targetAssertionId: await seedTerminate(),
-            targetEffectType: "terminate",
+            targetOperation: "terminate",
           }),
         }),
-      ).rejects.toThrow(/transition_effects_terminate_targets_assertion/);
+      ).rejects.toThrow(/assertions_terminate_targets_assertion/);
     });
 
     // The correction path for a mistyped termination, and — the log being
@@ -401,11 +401,11 @@ describe("assertion log constraints", () => {
     it("accepts a retract over a terminate", async () => {
       const terminateId = await seedTerminate();
 
-      const created = await prisma.transitionEffect.create({
+      const created = await prisma.assertion.create({
         data: assertionRow({
-          effectType: "retract",
+          operation: "retract",
           targetAssertionId: terminateId,
-          targetEffectType: "terminate",
+          targetOperation: "terminate",
         }),
       });
 
@@ -416,37 +416,37 @@ describe("assertion log constraints", () => {
     // assertion and force every reader to resolve retractions transitively
     // rather than as a flat set.
     it("refuses a retract over a retract", async () => {
-      const retracted = await prisma.transitionEffect.create({
+      const retracted = await prisma.assertion.create({
         data: assertionRow({
-          effectType: "retract",
+          operation: "retract",
           targetAssertionId: await seedAssertion(),
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         }),
       });
 
       await expect(
-        prisma.transitionEffect.create({
+        prisma.assertion.create({
           data: assertionRow({
-            effectType: "retract",
+            operation: "retract",
             targetAssertionId: retracted.id,
-            targetEffectType: "retract",
+            targetOperation: "retract",
           }),
         }),
       ).rejects.toThrow(
-        /transition_effects_retract_targets_assertion_or_terminate/,
+        /assertions_retract_targets_assertion_or_terminate/,
       );
     });
   });
 
   it("refuses an assertion naming a predicate from another project", async () => {
     await expect(
-      prisma.transitionEffect.create({
+      prisma.assertion.create({
         data: assertionRow({
           relationshipDefinitionId: otherProjectDefinitionId,
         }),
       }),
     ).rejects.toThrow(
-      /transition_effects_relationship_definition_id_project_id_fkey/,
+      /assertions_relationship_definition_id_project_id_fkey/,
     );
   });
 });

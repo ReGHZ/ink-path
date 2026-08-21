@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { PrismaTransitionEffectRepository } from "../../src/domains/content/internal/infrastructure/transition/PrismaTransitionEffectRepository.js";
+import { PrismaAssertionRepository } from "../../src/domains/content/internal/infrastructure/transition/PrismaAssertionRepository.js";
 import { createPrismaClient } from "../../src/infrastructure/database/prisma.js";
 
 import type { PrismaClient } from "../../src/generated/prisma/client.js";
@@ -11,11 +11,11 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 // suite — 1990 tests — stayed green. Its twin `deleteIfPending` died immediately,
 // and the asymmetry has a cause worth writing down rather than patching blind:
 //
-//   `deleteEffect` has no tenancy pre-check at all, so the predicate inside
+//   `deleteAssertion` has no tenancy pre-check at all, so the predicate inside
 //   `deleteIfPending` is the only guard on that path and an e2e reaches it.
 //
-//   `applyEffect` DOES pre-check in the service (`loadPendingEffectForApply` →
-//   `loadExistingEffect(projectId, …)` → 404), so the adapter's predicate is pure
+//   `applyAssertion` DOES pre-check in the service (`loadPendingEffectForApply` →
+//   `loadExistingAssertion(projectId, …)` → 404), so the adapter's predicate is pure
 //   defense-in-depth and nothing observable from outside depends on it.
 //
 //   The unit fake is faithful (it enforces tenancy itself), so the unit suite
@@ -34,7 +34,7 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 // everything (the false-control shape T-5 was raised about).
 //
 // FIXTURE ID BLOCK 024 — owner/project ids end in `...0000000024NN`, transition and
-// effect ids use the `6d6d6d6d` prefix. Both unused when this file was written
+// assertion ids use the `6d6d6d6d` prefix. Both unused when this file was written
 // (blocks 000-023 taken; prefixes 00000000/1x/2x/3x-9x/616263/64-6c/70 claimed
 // elsewhere). Grep the block AND the prefix before adding fixtures.
 const BASE = new Date("2026-08-20T00:00:00.000Z");
@@ -57,10 +57,10 @@ const prisma: PrismaClient = createPrismaClient();
 // LOCK these statements take to be worth anything, and that property is proved
 // elsewhere (`apply-delete-serialization.integration.test.ts`). What is under test
 // here is the WHERE clause, which is the same statement in or out of a transaction.
-const effects = new PrismaTransitionEffectRepository(prisma);
+const assertions = new PrismaAssertionRepository(prisma);
 
 async function cleanDatabase(): Promise<void> {
-  await prisma.transitionEffect.deleteMany({
+  await prisma.assertion.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });
   await prisma.narrativeTransition.deleteMany({
@@ -78,7 +78,7 @@ beforeEach(async () => {
   await prisma.user.create({
     data: {
       id: ownerUserId,
-      email: "effect-tenancy-owner@example.com",
+      email: "assertion-tenancy-owner@example.com",
       passwordHash: "hashed-password",
       createdAt: BASE,
       updatedAt: BASE,
@@ -121,12 +121,12 @@ beforeEach(async () => {
 
   // Two rows so a claim and a delete never contend for the same one: each case
   // needs its target still pending when it runs.
-  await prisma.transitionEffect.createMany({
+  await prisma.assertion.createMany({
     data: [claimEffectId, deleteEffectId].map((id) => ({
       id,
       narrativeTransitionId: transitionId,
       projectId,
-      effectType: "attribute_change" as const,
+      operation: "attribute_change" as const,
       targetEntityType: "character" as const,
       targetEntityId: characterId,
       fieldPath: "archetype",
@@ -141,9 +141,9 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("transition effect adapter, project scope", () => {
-  it("refuses to claim an effect for a project that does not own it", async () => {
-    const claim = await effects.claimForApply(
+describe("transition assertion adapter, project scope", () => {
+  it("refuses to claim an assertion for a project that does not own it", async () => {
+    const claim = await assertions.claimForApply(
       otherProjectId,
       claimEffectId,
       new Date(BASE.getTime() + 1000),
@@ -153,7 +153,7 @@ describe("transition effect adapter, project scope", () => {
 
     // The row is the assertion that matters: "missing" with `applied_at` written
     // anyway would be a leak reported as a refusal.
-    const row = await prisma.transitionEffect.findUnique({
+    const row = await prisma.assertion.findUnique({
       where: { id: claimEffectId },
       select: { appliedAt: true },
     });
@@ -161,10 +161,10 @@ describe("transition effect adapter, project scope", () => {
     expect(row?.appliedAt).toBeNull();
   });
 
-  it("claims the same effect for the project that does own it", async () => {
+  it("claims the same assertion for the project that does own it", async () => {
     const claimedAt = new Date(BASE.getTime() + 2000);
 
-    const claim = await effects.claimForApply(
+    const claim = await assertions.claimForApply(
       projectId,
       claimEffectId,
       claimedAt,
@@ -172,13 +172,13 @@ describe("transition effect adapter, project scope", () => {
 
     expect(claim.status).toBe("claimed");
     // The port promises the PRE-CLAIM aggregate, so `markApplied()` stays the only
-    // thing that decides an effect is applied. Asserted here because the tenancy
+    // thing that decides an assertion is applied. Asserted here because the tenancy
     // test would otherwise be the only caller in the suite that could notice.
-    expect(claim.status === "claimed" ? claim.effect.isApplied : true).toBe(
+    expect(claim.status === "claimed" ? claim.assertion.isApplied : true).toBe(
       false,
     );
 
-    const row = await prisma.transitionEffect.findUnique({
+    const row = await prisma.assertion.findUnique({
       where: { id: claimEffectId },
       select: { appliedAt: true },
     });
@@ -186,27 +186,27 @@ describe("transition effect adapter, project scope", () => {
     expect(row?.appliedAt).toEqual(claimedAt);
   });
 
-  it("refuses to delete an effect for a project that does not own it", async () => {
-    const outcome = await effects.deleteIfPending(
+  it("refuses to delete an assertion for a project that does not own it", async () => {
+    const outcome = await assertions.deleteIfPending(
       otherProjectId,
       deleteEffectId,
     );
 
     expect(outcome).toBe("missing");
 
-    const row = await prisma.transitionEffect.findUnique({
+    const row = await prisma.assertion.findUnique({
       where: { id: deleteEffectId },
     });
 
     expect(row).not.toBeNull();
   });
 
-  it("deletes the same effect for the project that does own it", async () => {
-    const outcome = await effects.deleteIfPending(projectId, deleteEffectId);
+  it("deletes the same assertion for the project that does own it", async () => {
+    const outcome = await assertions.deleteIfPending(projectId, deleteEffectId);
 
     expect(outcome).toBe("deleted");
 
-    const row = await prisma.transitionEffect.findUnique({
+    const row = await prisma.assertion.findUnique({
       where: { id: deleteEffectId },
     });
 

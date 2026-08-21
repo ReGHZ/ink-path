@@ -49,9 +49,9 @@ function recordingController(): {
     updateTransitionDetails: (c: Context) =>
       respond(c, "updateTransitionDetails"),
     deleteTransition: (c: Context) => respond(c, "deleteTransition"),
-    addEffect: (c: Context) => respond(c, "addEffect"),
-    deleteEffect: (c: Context) => respond(c, "deleteEffect"),
-    applyEffect: (c: Context) => respond(c, "applyEffect"),
+    addAssertion: (c: Context) => respond(c, "addAssertion"),
+    deleteAssertion: (c: Context) => respond(c, "deleteAssertion"),
+    applyAssertion: (c: Context) => respond(c, "applyAssertion"),
     applyTransition: (c: Context) => respond(c, "applyTransition"),
   } as unknown as NarrativeTransitionController;
 
@@ -93,29 +93,29 @@ describe("createNarrativeTransitionRoutes", () => {
   });
 
   // The two operations that hang off the transition because they need its id:
-  // adding an effect, and applying every pending effect it has (D9).
-  it("routes the nested effect and bulk apply paths", async () => {
+  // adding an assertion, and applying every pending assertion it has (D9).
+  it("routes the nested assertion and bulk apply paths", async () => {
     const base = `/${PROJECT_ID}/narrative-transitions/${TRANSITION_ID}`;
 
-    await expect(dispatch("POST", `${base}/effects`)).resolves.toEqual({
-      handler: "addEffect",
+    await expect(dispatch("POST", `${base}/assertions`)).resolves.toEqual({
+      handler: "addAssertion",
     });
     await expect(dispatch("POST", `${base}/apply`)).resolves.toEqual({
       handler: "applyTransition",
     });
   });
 
-  // D10: an effect is addressed by its own id alone, so its URL says so. A
-  // nested `/narrative-transitions/:id/effects/:effectId` would promise a
+  // D10: an assertion is addressed by its own id alone, so its URL says so. A
+  // nested `/narrative-transitions/:id/assertions/:effectId` would promise a
   // containment check the service never performs.
-  it("routes the two per-effect operations on the flat collection", async () => {
-    const base = `/${PROJECT_ID}/transition-effects/${EFFECT_ID}`;
+  it("routes the two per-assertion operations on the flat collection", async () => {
+    const base = `/${PROJECT_ID}/assertions/${EFFECT_ID}`;
 
     await expect(dispatch("DELETE", base)).resolves.toEqual({
-      handler: "deleteEffect",
+      handler: "deleteAssertion",
     });
     await expect(dispatch("POST", `${base}/apply`)).resolves.toEqual({
-      handler: "applyEffect",
+      handler: "applyAssertion",
     });
   });
 
@@ -155,7 +155,7 @@ describe("createNarrativeTransitionRoutes", () => {
     expect(new Set(registered).size).toBe(12);
 
     // The uuid guard is a single middleware keyed on the `Id` suffix
-    // (`shared/http/projectScopedRouter.ts`); a parameter named `:effect` would
+    // (`shared/http/projectScopedRouter.ts`); a parameter named `:assertion` would
     // silently opt out of it and answer 500 for a malformed value.
     for (const route of routes.routes) {
       for (const segment of route.path.split("/")) {

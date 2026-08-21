@@ -108,7 +108,7 @@ function expectDomainError(act: () => unknown): DomainError {
 
 // One table, asserted against BOTH entry paths below. create() is the path
 // RelationshipService uses and reconstitute() is the path a persisted row comes
-// back through (and, from 7.7 onwards, the path a NarrativeTransition effect can
+// back through (and, from 7.7 onwards, the path a NarrativeTransition assertion can
 // reach); a rule that held on only one of them would be a rule with a hole.
 //
 // The message matcher is what makes these cases distinguishable at all: every

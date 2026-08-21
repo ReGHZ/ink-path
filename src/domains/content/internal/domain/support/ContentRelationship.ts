@@ -80,7 +80,7 @@ export type CreateContentRelationshipProperties = {
   source: RelationEndpoint;
   target: RelationEndpoint;
   // Required, not optional. Both write paths hold it already — one builds the
-  // assertion in the same transaction, the other IS applying the effect that
+  // assertion in the same transaction, the other IS applying the assertion that
   // serves as one — and making it optional would let a third path create a
   // projection row that cannot be unfolded, which is the state step 4b-2 ends.
   sourceAssertionId: string;

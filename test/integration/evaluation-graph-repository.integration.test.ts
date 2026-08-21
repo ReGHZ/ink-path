@@ -48,7 +48,7 @@ const assertionEnemy = "67676767-0000-4000-8000-000000000002";
 const assertionAllyAgain = "67676767-0000-4000-8000-000000000003";
 const neighbourAssertion = "67676767-0000-4000-8000-0000000000f1";
 const attributeTransition = "67676767-0000-4000-8000-0000000000f2";
-const attributeEffect = "67676767-0000-4000-8000-0000000000f3";
+const attributeAssertion = "67676767-0000-4000-8000-0000000000f3";
 
 const prisma = createPrismaClient();
 const users = new PrismaUserRepository(prisma);
@@ -68,7 +68,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
 
   // Folds and log first, in the five-level order the helper owns — the fourth-level
   // order that was correct before 4b-4 now fails on `evaluation_edges`, and it fails
-  // with a message about `transition_effects`.
+  // with a message about `assertions`.
   await deleteFoldsAndAssertions(client, ids);
   await client.project.deleteMany({ where: { id: { in: ids } } });
   await client.user.deleteMany({ where: { id: ownerUserId } });
@@ -164,7 +164,7 @@ beforeEach(async () => {
   // An `attribute_change` row: the one log row that legitimately carries neither a
   // predicate nor an object, which is what makes it the fixture for the reader's
   // null mapping. Provenance comes from a parent transition — the
-  // `transition_effects_has_provenance` CHECK wants one of the two, and an
+  // `assertions_has_provenance` CHECK wants one of the two, and an
   // attribute change has no definition to point at.
   await prisma.narrativeTransition.create({
     data: {
@@ -178,12 +178,12 @@ beforeEach(async () => {
       updatedAt: now,
     },
   });
-  await prisma.transitionEffect.create({
+  await prisma.assertion.create({
     data: {
-      id: attributeEffect,
+      id: attributeAssertion,
       projectId,
       narrativeTransitionId: attributeTransition,
-      effectType: "attribute_change",
+      operation: "attribute_change",
       targetEntityType: "character",
       targetEntityId: characterA,
       fieldPath: "name",
@@ -311,7 +311,7 @@ describe("PrismaEvaluationGraphRepository", () => {
       await graph.upsertFact(allyFact({}));
 
       const error = await captureError(
-        prisma.transitionEffect.delete({ where: { id: assertionAlly } }),
+        prisma.assertion.delete({ where: { id: assertionAlly } }),
       );
 
       // `onDelete: Restrict`. The application cannot delete an applied assertion at
@@ -321,7 +321,7 @@ describe("PrismaEvaluationGraphRepository", () => {
       // levels now, projections in front.
       expect(error).toBeInstanceOf(Error);
       expect(
-        await prisma.transitionEffect.count({ where: { id: assertionAlly } }),
+        await prisma.assertion.count({ where: { id: assertionAlly } }),
       ).toBe(1);
     });
   });
@@ -403,7 +403,7 @@ describe("PrismaAssertionLogReader", () => {
     // carries no endpoints, so these two are only available from here.
     expect(row).toEqual({
       id: assertionAlly,
-      effectType: "relationship_add",
+      operation: "relationship_add",
       relationshipType: allyOf,
       retracted: false,
       subject: { entityType: "character", entityId: characterA },
@@ -437,15 +437,15 @@ describe("PrismaAssertionLogReader", () => {
   it("maps a row with no predicate and no object to nulls, not to a half endpoint", async () => {
     const row = await assertionLog.findAssertion({
       projectId,
-      assertionId: attributeEffect,
+      assertionId: attributeAssertion,
     });
 
     // An attribute change is not a relationship fact, and the projector answers
     // `ignored` for it. What matters here is that the reader says so with nulls
     // rather than handing up an endpoint built from a null id.
     expect(row).toEqual({
-      id: attributeEffect,
-      effectType: "attribute_change",
+      id: attributeAssertion,
+      operation: "attribute_change",
       relationshipType: null,
       retracted: false,
       subject: { entityType: "character", entityId: characterA },
@@ -458,17 +458,17 @@ describe("PrismaAssertionLogReader", () => {
 // hazard is a FACT ABOUT ROWS (is there a retraction of this assertion?), so the query
 // that answers it has to be exercised where the rows live.
 async function retract(assertionId: string): Promise<string> {
-  const retraction = await prisma.transitionEffect.create({
+  const retraction = await prisma.assertion.create({
     data: {
       projectId,
       narrativeTransitionId: attributeTransition,
-      effectType: "retract",
+      operation: "retract",
       targetEntityType: "character",
       targetEntityId: characterA,
       targetAssertionId: assertionId,
       // The composite self-FK carries the target's KIND, so a retraction cannot claim to
       // act on a row of a different type than it really does (C-1).
-      targetEffectType: "relationship_add",
+      targetOperation: "relationship_add",
       appliedAt: now,
       createdAt: now,
     },
@@ -482,15 +482,15 @@ async function retract(assertionId: string): Promise<string> {
 // the reason blokir H-1 existed: every test that exercised the ordering guard wrote a
 // `retract`, so the predicate telling the two apart had nothing holding it.
 async function terminate(assertionId: string): Promise<string> {
-  const termination = await prisma.transitionEffect.create({
+  const termination = await prisma.assertion.create({
     data: {
       projectId,
       narrativeTransitionId: attributeTransition,
-      effectType: "terminate",
+      operation: "terminate",
       targetEntityType: "character",
       targetEntityId: characterA,
       targetAssertionId: assertionId,
-      targetEffectType: "relationship_add",
+      targetOperation: "relationship_add",
       // A termination is VALID-TIME: it says the fact stopped holding at a story moment,
       // so it carries the anchor its parent transition declares. `anchor_complete` refuses
       // half an anchor.

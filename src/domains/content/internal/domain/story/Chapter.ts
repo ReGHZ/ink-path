@@ -360,7 +360,7 @@ export class Chapter {
       );
     }
 
-    // publishedAt is a pure side-effect marker of the published state, not
+    // publishedAt is a pure side-assertion marker of the published state, not
     // an independent fact — it must be set if and only if status is
     // published. This also closes the reconstitute() gap: a corrupted row
     // (e.g. published with publishedAt null) is rejected here, not just

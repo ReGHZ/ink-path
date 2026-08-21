@@ -84,7 +84,7 @@ describe("handleError", () => {
 
   it("leaves an AppError's own code and status alone", async () => {
     const response = await buildApp(
-      new AppError(ErrorCode.CONFLICT, "Applied effect cannot be deleted"),
+      new AppError(ErrorCode.CONFLICT, "Applied assertion cannot be deleted"),
     ).request("/boom");
 
     expect(response.status).toBe(409);

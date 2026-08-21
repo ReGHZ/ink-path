@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { NESTED_TRANSITION_ROUTES } from "./nestedTransitionRoutes.js";
 import {
   NARRATIVE_TRANSITION_ID_PARAMETER,
-  TRANSITION_EFFECT_ID_PARAMETER,
+  ASSERTION_ID_PARAMETER,
 } from "./transitionRouteParameters.js";
 import { NARRATIVE_TRANSITION_SOURCE_TYPES } from "../../domain/transition/NarrativeTransition.js";
 
@@ -42,34 +42,34 @@ export function createNarrativeTransitionRoutes({
     (c) => narrativeTransitionController.deleteTransition(c),
   );
 
-  // Effects are declared UNDER their transition — the parent id is what the
+  // Assertions are declared UNDER their transition — the parent id is what the
   // service needs to attach the row and what it locks while attaching it
   // (7.7 aggregate-root lock).
   routes.post(
-    `/:projectId/narrative-transitions/:${NARRATIVE_TRANSITION_ID_PARAMETER}/effects`,
-    (c) => narrativeTransitionController.addEffect(c),
+    `/:projectId/narrative-transitions/:${NARRATIVE_TRANSITION_ID_PARAMETER}/assertions`,
+    (c) => narrativeTransitionController.addAssertion(c),
   );
 
-  // Bulk apply hangs off the transition it applies, next to the effects
+  // Bulk apply hangs off the transition it applies, next to the assertions
   // collection it drains (D9). It is an action on the aggregate, so it is a POST
   // on the aggregate — not a PATCH of a `status` field, which does not exist:
-  // status is derived from the effects and never stored
+  // status is derived from the assertions and never stored
   // (`NarrativeTransition.ts:38-49`).
   routes.post(
     `/:projectId/narrative-transitions/:${NARRATIVE_TRANSITION_ID_PARAMETER}/apply`,
     (c) => narrativeTransitionController.applyTransition(c),
   );
 
-  // The two per-effect operations sit on a FLAT collection instead of under
-  // their transition, because the service identifies an effect by its own id
-  // alone (D10, argued at `NarrativeTransitionController.deleteEffect`). The URL
+  // The two per-assertion operations sit on a FLAT collection instead of under
+  // their transition, because the service identifies an assertion by its own id
+  // alone (D10, argued at `NarrativeTransitionController.deleteAssertion`). The URL
   // states exactly what is checked and nothing more.
-  routes.delete(`/:projectId/transition-effects/:${TRANSITION_EFFECT_ID_PARAMETER}`, (c) =>
-    narrativeTransitionController.deleteEffect(c),
+  routes.delete(`/:projectId/assertions/:${ASSERTION_ID_PARAMETER}`, (c) =>
+    narrativeTransitionController.deleteAssertion(c),
   );
   routes.post(
-    `/:projectId/transition-effects/:${TRANSITION_EFFECT_ID_PARAMETER}/apply`,
-    (c) => narrativeTransitionController.applyEffect(c),
+    `/:projectId/assertions/:${ASSERTION_ID_PARAMETER}/apply`,
+    (c) => narrativeTransitionController.applyAssertion(c),
   );
 
   // The three nested list routes, generated from the domain's own source-type

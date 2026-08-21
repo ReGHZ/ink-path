@@ -8,7 +8,7 @@ import type {
   LoggedOperation,
 } from "../domain/AssertionLogReader.js";
 
-export type AssertionLogDatabase = Pick<PrismaClient, "transitionEffect">;
+export type AssertionLogDatabase = Pick<PrismaClient, "assertion">;
 
 export class PrismaAssertionLogReader implements AssertionLogReader {
   constructor(private readonly client: AssertionLogDatabase) {}
@@ -33,11 +33,11 @@ export class PrismaAssertionLogReader implements AssertionLogReader {
     let row;
 
     try {
-      row = await this.client.transitionEffect.findFirst({
+      row = await this.client.assertion.findFirst({
         where: { id: input.assertionId, projectId: input.projectId },
         select: {
           id: true,
-          effectType: true,
+          operation: true,
           relationshipType: true,
           targetEntityType: true,
           targetEntityId: true,
@@ -45,14 +45,14 @@ export class PrismaAssertionLogReader implements AssertionLogReader {
           relatedEntityId: true,
           // Is there a `retract` row pointing AT this assertion? Answered in the SAME
           // query, through the self-relation the log already declares
-          // (`transition_effects.target_assertion_id` → `targetedBy`), because the fold
+          // (`assertions.target_assertion_id` → `targetedBy`), because the fold
           // asks it on every assert and a second round trip would be a second failure
           // point on the hot path.
           //
           // `take: 1` — existence is the whole question, and no retract-of-a-retract can
           // exist to complicate it (premis §8.3 AMENDMENT 2026-08-18).
           targetedBy: {
-            where: { effectType: "retract" },
+            where: { operation: "retract" },
             select: { id: true },
             take: 1,
           },
@@ -70,11 +70,11 @@ export class PrismaAssertionLogReader implements AssertionLogReader {
 
     return {
       id: row.id,
-      // No mapping table for `effectType` or the entity types: the port's unions and
+      // No mapping table for `operation` or the entity types: the port's unions and
       // the Prisma enums hold the same members, so these assignments are the CHECK.
-      // A tenth `ContentEntityType` or a sixth effect type breaks `tsc` here, which
+      // A tenth `ContentEntityType` or a sixth assertion type breaks `tsc` here, which
       // is where a new log operation SHOULD have to think about the fold.
-      effectType: row.effectType,
+      operation: row.operation,
       relationshipType: row.relationshipType,
       // Not "was this row deleted" — the log is append-only. It is "the log already holds
       // a withdrawal of this claim", which is what lets the fold refuse to resurrect a
@@ -112,9 +112,9 @@ async function listOperationsImpl(
     // alone is not, because rows written inside one transaction share it. If an operation
     // that depends on position is ever replayed here, the ordering is already correct rather
     // than something to remember.
-    return await client.transitionEffect.findMany({
+    return await client.assertion.findMany({
       where: { projectId },
-      select: { id: true, effectType: true, targetAssertionId: true },
+      select: { id: true, operation: true, targetAssertionId: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   } catch (error) {

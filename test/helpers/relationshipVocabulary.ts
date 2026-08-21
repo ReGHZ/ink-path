@@ -32,12 +32,12 @@ export async function seedProjectVocabulary(
 //
 // Needed since step 4b-2 attached
 // `content_relationships(source_assertion_id, project_id)` to
-// `transition_effects(id, project_id)`: the projection names the fact it came
+// `assertions(id, project_id)`: the projection names the fact it came
 // from, so a relationship row can no longer be inserted on its own. Same reason
 // this file exists at all — the next integration test to insert one would
 // otherwise rediscover it as a foreign-key violation.
 //
-// Written with the Prisma client rather than through `TransitionEffect`: callers
+// Written with the Prisma client rather than through `Assertion`: callers
 // need a row that SATISFIES THE KEY, and going through the aggregate would drag
 // the whole declare-path signature into every fixture. The semantic pairing of a
 // projection with its assertion is proven where it belongs — `retractFact` in the
@@ -64,14 +64,14 @@ export async function seedOriginAssertion(
     );
   }
 
-  await prisma.transitionEffect.create({
+  await prisma.assertion.create({
     data: {
       id: input.id,
       // Parentless, like every assertion made through CRUD. `has_provenance` is
       // satisfied by the definition below.
       narrativeTransitionId: null,
       projectId: input.projectId,
-      effectType: "relationship_add",
+      operation: "relationship_add",
       targetEntityType: "character",
       targetEntityId: input.subjectEntityId,
       relationshipType: input.predicate,

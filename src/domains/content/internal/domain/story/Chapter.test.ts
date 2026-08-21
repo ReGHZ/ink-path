@@ -444,13 +444,13 @@ describe("Chapter", () => {
       ).toThrow(DomainError);
     });
 
-    it("rejects a published snapshot with publishedAt null (inconsistent side-effect marker)", () => {
+    it("rejects a published snapshot with publishedAt null (inconsistent side-assertion marker)", () => {
       expect(() =>
         reconstituteChapter({ status: "published", content: "Body", publishedAt: null }),
       ).toThrow(DomainError);
     });
 
-    it("rejects a non-published snapshot with publishedAt set (inconsistent side-effect marker)", () => {
+    it("rejects a non-published snapshot with publishedAt set (inconsistent side-assertion marker)", () => {
       expect(() =>
         reconstituteChapter({ status: "draft", content: "Body", publishedAt: now }),
       ).toThrow(DomainError);

@@ -169,14 +169,14 @@ beforeEach(async () => {
       await prisma.character.deleteMany({
         where: { projectId: { in: projectIds } },
       });
-      // Effects before transitions: `transition_effects.narrative_transition_id`
+      // Assertions before transitions: `assertions.narrative_transition_id`
       // is onDelete: Restrict, and a surviving transition would in turn block
       // the project delete below for the same reason. Added with 7.8, which put
       // twelve narrative-transition routes into this file's sweeps — none of
       // them writes a row today, and that is exactly the state in which a
       // cleanup silently stops covering the surface it is asked about.
       await deleteEvaluationFold(prisma, projectIds);
-      await prisma.transitionEffect.deleteMany({
+      await prisma.assertion.deleteMany({
         where: { projectId: { in: projectIds } },
       });
       await prisma.narrativeTransition.deleteMany({
@@ -249,16 +249,16 @@ describe("Project-scoped route protection", () => {
       // for the reason the relationship pair already documents: its three nested
       // lists all end in "/narrative-transitions", so a lone fragment stays green
       // with either the flat CRUD block or the whole nested loop gone. The
-      // effects surface is listed separately because it is a different
+      // assertions surface is listed separately because it is a different
       // collection, not a different verb of the same one — deleting or applying
-      // an effect is addressed by the effect's own id (D10).
+      // an assertion is addressed by the assertion's own id (D10).
       [
         "narrativeTransitionRoutes (flat item)",
         "/narrative-transitions/:narrativeTransitionId",
       ],
       [
-        "narrativeTransitionRoutes (effect item)",
-        "/transition-effects/:transitionEffectId",
+        "narrativeTransitionRoutes (assertion item)",
+        "/assertions/:assertionId",
       ],
       [
         "narrativeTransitionRoutes (nested list)",

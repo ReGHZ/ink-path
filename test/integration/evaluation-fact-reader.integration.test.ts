@@ -58,7 +58,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   // this path is onDelete: Restrict, so any other order fails instead of
   // cascading, and the failure would land inside an unrelated test's fixtures.
   await deleteEvaluationFold(client, ids);
-  await client.transitionEffect.deleteMany({ where: { projectId: { in: ids } } });
+  await client.assertion.deleteMany({ where: { projectId: { in: ids } } });
   await client.narrativeTransition.deleteMany({
     where: { projectId: { in: ids } },
   });
@@ -76,12 +76,12 @@ async function assertDead(anchor: {
   type: "chapter" | "scene" | "event";
   id: string;
 }): Promise<string> {
-  const created = await prisma.transitionEffect.create({
+  const created = await prisma.assertion.create({
     data: {
       projectId,
       narrativeTransitionId: null,
       relationshipDefinitionId: deadDefinitionId,
-      effectType: "relationship_add",
+      operation: "relationship_add",
       targetEntityType: "character",
       targetEntityId: characterId,
       anchorEntityType: anchor.type,
@@ -261,7 +261,7 @@ describe("PrismaEvaluationFactReader", () => {
       expect(snapshot.assertions[0]?.anchorPosition).toBeNull();
 
       await deleteEvaluationFold(prisma, [projectId]);
-      await prisma.transitionEffect.deleteMany({ where: { projectId } });
+      await prisma.assertion.deleteMany({ where: { projectId } });
       await prisma.event.deleteMany({ where: { id: event.id } });
     });
   });
@@ -270,16 +270,16 @@ describe("PrismaEvaluationFactReader", () => {
     it("drops a retracted assertion entirely", async () => {
       const assertionId = await assertDead({ type: "chapter", id: chapterId });
 
-      await prisma.transitionEffect.create({
+      await prisma.assertion.create({
         data: {
           projectId,
           narrativeTransitionId: null,
           relationshipDefinitionId: deadDefinitionId,
-          effectType: "retract",
+          operation: "retract",
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: assertionId,
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         },
       });
 
@@ -294,18 +294,18 @@ describe("PrismaEvaluationFactReader", () => {
     it("keeps a terminated assertion but marks it", async () => {
       const assertionId = await assertDead({ type: "chapter", id: chapterId });
 
-      await prisma.transitionEffect.create({
+      await prisma.assertion.create({
         data: {
           projectId,
           narrativeTransitionId: null,
           relationshipDefinitionId: deadDefinitionId,
-          effectType: "terminate",
+          operation: "terminate",
           targetEntityType: "character",
           targetEntityId: characterId,
           anchorEntityType: "scene",
           anchorEntityId: sceneId,
           targetAssertionId: assertionId,
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         },
       });
 
@@ -319,23 +319,23 @@ describe("PrismaEvaluationFactReader", () => {
     });
 
     // The regression that a filter on `relationship_definition_id` used to
-    // cause. `transition_effects_has_provenance` requires a parent transition
+    // cause. `assertions_has_provenance` requires a parent transition
     // OR a predicate reference — not both — so this row is entirely legal, and
     // filtering on the predicate made the termination invisible while the fact
     // it terminates stayed readable.
     it("sees a terminate that carries only a parent transition", async () => {
       const assertionId = await assertDead({ type: "chapter", id: chapterId });
 
-      await prisma.transitionEffect.create({
+      await prisma.assertion.create({
         data: {
           projectId,
           narrativeTransitionId: transitionId,
           relationshipDefinitionId: null,
-          effectType: "terminate",
+          operation: "terminate",
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: assertionId,
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         },
       });
 
@@ -348,16 +348,16 @@ describe("PrismaEvaluationFactReader", () => {
     it("does not turn a terminate row into an assertion of its own", async () => {
       const assertionId = await assertDead({ type: "chapter", id: chapterId });
 
-      await prisma.transitionEffect.create({
+      await prisma.assertion.create({
         data: {
           projectId,
           narrativeTransitionId: null,
           relationshipDefinitionId: deadDefinitionId,
-          effectType: "terminate",
+          operation: "terminate",
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: assertionId,
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         },
       });
 
@@ -382,31 +382,31 @@ describe("PrismaEvaluationFactReader", () => {
     it("un-terminates a fact when the terminate row is itself retracted", async () => {
       const assertionId = await assertDead({ type: "chapter", id: chapterId });
 
-      const termination = await prisma.transitionEffect.create({
+      const termination = await prisma.assertion.create({
         data: {
           projectId,
           narrativeTransitionId: null,
           relationshipDefinitionId: deadDefinitionId,
-          effectType: "terminate",
+          operation: "terminate",
           targetEntityType: "character",
           targetEntityId: characterId,
           anchorEntityType: "scene",
           anchorEntityId: sceneId,
           targetAssertionId: assertionId,
-          targetEffectType: "relationship_add",
+          targetOperation: "relationship_add",
         },
       });
 
-      await prisma.transitionEffect.create({
+      await prisma.assertion.create({
         data: {
           projectId,
           narrativeTransitionId: null,
           relationshipDefinitionId: deadDefinitionId,
-          effectType: "retract",
+          operation: "retract",
           targetEntityType: "character",
           targetEntityId: characterId,
           targetAssertionId: termination.id,
-          targetEffectType: "terminate",
+          targetOperation: "terminate",
         },
       });
 

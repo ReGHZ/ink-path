@@ -141,7 +141,7 @@ describe("updateTransitionSchema", () => {
 
 describe("addEffectSchema", () => {
   const attributeChange = {
-    effectType: "attribute_change",
+    operation: "attribute_change",
     targetEntityType: "character",
     targetEntityId: CHARACTER_ID,
     fieldPath: "archetype",
@@ -149,7 +149,7 @@ describe("addEffectSchema", () => {
   };
 
   const relationshipAdd = {
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetEntityType: "character",
     targetEntityId: CHARACTER_ID,
     relationshipType: "member_of",
@@ -163,7 +163,7 @@ describe("addEffectSchema", () => {
     expect(
       addEffectSchema.safeParse({
         ...relationshipAdd,
-        effectType: "relationship_remove",
+        operation: "relationship_remove",
       }).success,
     ).toBe(true);
   });
@@ -184,15 +184,15 @@ describe("addEffectSchema", () => {
     ).toBe(false);
   });
 
-  it("refuses an unknown effect type and an incomplete relationship variant", () => {
+  it("refuses an unknown assertion type and an incomplete relationship variant", () => {
     expect(
-      addEffectSchema.safeParse({ ...attributeChange, effectType: "rename" })
+      addEffectSchema.safeParse({ ...attributeChange, operation: "rename" })
         .success,
     ).toBe(false);
 
     expect(
       addEffectSchema.safeParse({
-        effectType: "relationship_add",
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: CHARACTER_ID,
         relationshipType: "member_of",
@@ -221,7 +221,7 @@ describe("addEffectSchema", () => {
 
   // `new_value` is stored verbatim by the domain, so trimming it here would
   // store an intent the writer did not type — while a blank one must still be a
-  // 400, because clearing a field is not expressible through an effect.
+  // 400, because clearing a field is not expressible through an assertion.
   it("preserves surrounding whitespace in newValue but refuses a blank one", () => {
     expect(
       addEffectSchema.parse({ ...attributeChange, newValue: "  spaced  " }),

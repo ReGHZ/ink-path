@@ -7,7 +7,7 @@ import {
 import {
   CONTENT_RELATIONSHIP_ASSERTED,
   CONTENT_RELATIONSHIP_RETRACTED,
-  NARRATIVE_EFFECT_APPLIED,
+  NARRATIVE_ASSERTION_APPLIED,
 } from "../../../../shared/application/events/routingKeys.js";
 
 import type {
@@ -40,7 +40,7 @@ const characterB = "00000000-0000-4000-8000-0000000000cb";
 
 const binaryAssertion: LoggedAssertion = {
   id: assertionId,
-  effectType: "relationship_add",
+  operation: "relationship_add",
   relationshipType: "ally_of",
   retracted: false,
   subject: { entityType: "character", entityId: characterA },
@@ -154,7 +154,7 @@ describe("GraphProjector", () => {
     it("refuses to fold an operation row dressed as an assertion", async () => {
       const { projector, folded } = harness({
         ...binaryAssertion,
-        effectType: "terminate",
+        operation: "terminate",
       });
 
       await expect(
@@ -216,7 +216,7 @@ describe("GraphProjector", () => {
     it("ignores an attribute change that reaches the fold", async () => {
       const { projector, folded } = harness({
         ...binaryAssertion,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         relationshipType: null,
         object: null,
       });
@@ -272,13 +272,13 @@ describe("GraphProjector", () => {
     });
   });
 
-  describe("narrative effect applied", () => {
-    it("folds the add half, where the effect row IS the assertion", async () => {
+  describe("narrative assertion applied", () => {
+    it("folds the add half, where the assertion row IS the assertion", async () => {
       const { projector, folded } = harness();
 
-      const outcome = await projector.handleEvent(NARRATIVE_EFFECT_APPLIED, {
+      const outcome = await projector.handleEvent(NARRATIVE_ASSERTION_APPLIED, {
         projectId,
-        effectType: "relationship_add",
+        operation: "relationship_add",
         assertionId,
       });
 
@@ -289,9 +289,9 @@ describe("GraphProjector", () => {
     it("LEAVES THE EDGE STANDING on a narrated removal", async () => {
       const { projector, folded, unfolded, lookups } = harness();
 
-      const outcome = await projector.handleEvent(NARRATIVE_EFFECT_APPLIED, {
+      const outcome = await projector.handleEvent(NARRATIVE_ASSERTION_APPLIED, {
         projectId,
-        effectType: "relationship_remove",
+        operation: "relationship_remove",
         assertionId: null,
         terminationId,
         targetAssertionId: assertionId,
@@ -319,9 +319,9 @@ describe("GraphProjector", () => {
       // unwithdrawn. A payload with no `terminationId` is that regression arriving as
       // data, and doing nothing would look identical to the correct case.
       await expect(
-        projector.handleEvent(NARRATIVE_EFFECT_APPLIED, {
+        projector.handleEvent(NARRATIVE_ASSERTION_APPLIED, {
           projectId,
-          effectType: "relationship_remove",
+          operation: "relationship_remove",
           targetAssertionId: assertionId,
         }),
       ).rejects.toThrow(/without "terminationId"/);
@@ -330,9 +330,9 @@ describe("GraphProjector", () => {
     it("ignores an attribute change, which publishes the same key", async () => {
       const { projector, folded, unfolded } = harness();
 
-      const outcome = await projector.handleEvent(NARRATIVE_EFFECT_APPLIED, {
+      const outcome = await projector.handleEvent(NARRATIVE_ASSERTION_APPLIED, {
         projectId,
-        effectType: "attribute_change",
+        operation: "attribute_change",
       });
 
       expect(outcome).toEqual({
@@ -343,13 +343,13 @@ describe("GraphProjector", () => {
       expect(unfolded).toEqual([]);
     });
 
-    it("refuses an effect type it has no fold for", async () => {
+    it("refuses an assertion type it has no fold for", async () => {
       const { projector } = harness();
 
       await expect(
-        projector.handleEvent(NARRATIVE_EFFECT_APPLIED, {
+        projector.handleEvent(NARRATIVE_ASSERTION_APPLIED, {
           projectId,
-          effectType: "retract",
+          operation: "retract",
         }),
       ).rejects.toThrow(/has no fold for/);
     });
@@ -381,24 +381,24 @@ describe("GraphProjector", () => {
 describe("GraphProjector.rebuildProject", () => {
   const assertOperation: LoggedOperation = {
     id: assertionId,
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetAssertionId: null,
   };
   const operations: LoggedOperation[] = [
     assertOperation,
     {
       id: "00000000-0000-4000-8000-0000000000b1",
-      effectType: "terminate",
+      operation: "terminate",
       targetAssertionId: assertionId,
     },
     {
       id: "00000000-0000-4000-8000-0000000000b2",
-      effectType: "attribute_change",
+      operation: "attribute_change",
       targetAssertionId: null,
     },
     {
       id: "00000000-0000-4000-8000-0000000000b3",
-      effectType: "retract",
+      operation: "retract",
       targetAssertionId: assertionId,
     },
   ];

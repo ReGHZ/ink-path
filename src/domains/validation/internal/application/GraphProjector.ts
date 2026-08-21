@@ -1,7 +1,7 @@
 import {
   CONTENT_RELATIONSHIP_ASSERTED,
   CONTENT_RELATIONSHIP_RETRACTED,
-  NARRATIVE_EFFECT_APPLIED,
+  NARRATIVE_ASSERTION_APPLIED,
 } from "../../../../shared/application/events/routingKeys.js";
 
 import type { AssertionLogReader } from "../domain/AssertionLogReader.js";
@@ -51,10 +51,10 @@ export type GraphProjectionOutcome =
 export type GraphProjectorEventPayload = {
   projectId?: string | null;
   // `content.relationship.asserted` / `.retracted`: the assertion being folded or
-  // withdrawn. `narrative.effect.applied`: non-null only on the add half, where the
-  // effect row IS the assertion.
+  // withdrawn. `narrative.assertion.applied`: non-null only on the add half, where the
+  // assertion row IS the assertion.
   assertionId?: string | null;
-  effectType?: string | null;
+  operation?: string | null;
   // Written by the narrated-removal half (4b-3). Its presence is what proves a
   // `terminate` row was actually written, which is the fact this fold relies on when
   // it deliberately does nothing.
@@ -102,11 +102,11 @@ export class GraphProjector {
       );
     }
 
-    if (routingKey === NARRATIVE_EFFECT_APPLIED) {
-      return this.handleAppliedEffect(routingKey, projectId, payload);
+    if (routingKey === NARRATIVE_ASSERTION_APPLIED) {
+      return this.handleAppliedAssertion(routingKey, projectId, payload);
     }
 
-    // The queue binds two PATTERNS, `content.relationship.*` and `narrative.effect.*`
+    // The queue binds two PATTERNS, `content.relationship.*` and `narrative.assertion.*`
     // (`GRAPH_PROJECTOR_BINDINGS`), so a new verb under either prefix starts arriving
     // here the moment a producer publishes it — no broker change needed, which is the
     // property that binding was chosen for. Throwing sends it to the DLQ, loudly.
@@ -117,15 +117,15 @@ export class GraphProjector {
     );
   }
 
-  private async handleAppliedEffect(
+  private async handleAppliedAssertion(
     routingKey: string,
     projectId: string,
     payload: GraphProjectorEventPayload,
   ): Promise<GraphProjectionOutcome> {
-    const effectType = require_(payload.effectType, "effectType", routingKey);
+    const operation = require_(payload.operation, "operation", routingKey);
 
-    if (effectType === "relationship_add") {
-      // The effect row IS the assertion on this path, and the producer states
+    if (operation === "relationship_add") {
+      // The assertion row IS the assertion on this path, and the producer states
       // `assertionId` even though it equals `effectId` for exactly this reason —
       // so a consumer need not know the two are conflated here.
       return this.fold(
@@ -134,7 +134,7 @@ export class GraphProjector {
       );
     }
 
-    if (effectType === "relationship_remove") {
+    if (operation === "relationship_remove") {
       // ── THE DECISION, AND IT IS A DELIBERATE NO-OP ────────────────────────────
       // A narrated removal writes `terminate`, NOT `retract` (4b-3, premis §8.3):
       // the fact stopped holding at a story moment, it was not withdrawn. So the
@@ -152,18 +152,18 @@ export class GraphProjector {
       return { kind: "ignored", reason: "termination_keeps_the_edge" };
     }
 
-    if (effectType === "attribute_change") {
-      // Every applied effect publishes this key (decision D6), and an attribute
+    if (operation === "attribute_change") {
+      // Every applied assertion publishes this key (decision D6), and an attribute
       // change is not a relationship fact. Named as a reason rather than dropped, so
       // "the projector saw it and had nothing to do" is distinguishable in a log from
       // "the projector never received it".
       return { kind: "ignored", reason: "not_a_relationship_fact" };
     }
 
-    // `terminate` and `retract` are ROWS the log holds, never DECLARED effect types
+    // `terminate` and `retract` are ROWS the log holds, never DECLARED assertion types
     // an apply reports. Seeing one here means the producer's contract changed.
     throw new Error(
-      `GraphProjector received effect type "${effectType}" on "${routingKey}", which it has no fold for`,
+      `GraphProjector received assertion type "${operation}" on "${routingKey}", which it has no fold for`,
     );
   }
 
@@ -199,7 +199,7 @@ export class GraphProjector {
     let operationsSkipped = 0;
 
     for (const operation of operations) {
-      if (operation.effectType !== "relationship_add") {
+      if (operation.operation !== "relationship_add") {
         operationsSkipped += 1;
         continue;
       }
@@ -246,18 +246,18 @@ export class GraphProjector {
       );
     }
 
-    if (assertion.effectType === "attribute_change") {
+    if (assertion.operation === "attribute_change") {
       return { kind: "ignored", reason: "not_a_relationship_fact" };
     }
 
     if (
-      assertion.effectType === "terminate" ||
-      assertion.effectType === "retract"
+      assertion.operation === "terminate" ||
+      assertion.operation === "retract"
     ) {
       // An `asserted` event pointing at an operation row rather than at a claim.
       // Folding it would materialise "the retraction" as a fact of the story.
       throw new Error(
-        `GraphProjector was told to fold ${sourceAssertionId}, which is a ${assertion.effectType} row, not an assertion`,
+        `GraphProjector was told to fold ${sourceAssertionId}, which is a ${assertion.operation} row, not an assertion`,
       );
     }
 

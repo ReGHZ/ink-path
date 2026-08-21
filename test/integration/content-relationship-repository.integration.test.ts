@@ -88,7 +88,7 @@ const relationshipIds = [
 //   That refusal is the guarantee, so a shared row would test around it.
 //
 //   PREDICATE — a retraction must name the predicate its target asserts, and the
-//   delete path enforces it (`TransitionEffect.retractFact`). Seeding every slot
+//   delete path enforces it (`Assertion.retractFact`). Seeding every slot
 //   as `related_to` made the stale-guard case answer 400 instead of the 409 it is
 //   about, which is how this axis was found rather than assumed.
 const FIXTURE_PREDICATES = [
@@ -137,7 +137,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   });
   // Assertions before the vocabulary they reference (onDelete: Restrict).
   await deleteEvaluationFold(client, [projectId, otherProjectId]);
-  await client.transitionEffect.deleteMany({
+  await client.assertion.deleteMany({
     where: { projectId: { in: [projectId, otherProjectId] } },
   });
   // Vocabulary before the project: `relationship_definitions` is onDelete:

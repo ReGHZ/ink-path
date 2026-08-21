@@ -20,11 +20,11 @@ import type { PrismaClient } from "../../src/generated/prisma/client.js";
 //   3. `FOR UPDATE` + the re-check under the lock behave as an idempotency
 //      guard under genuine concurrency. 7.7 could only assert that the SQL text
 //      contains `FOR UPDATE`.
-//   4. Bulk apply is all-or-nothing: a failure on the second effect rolls the
+//   4. Bulk apply is all-or-nothing: a failure on the second assertion rolls the
 //      first one back in the database, not merely in intent.
 //   5. The two binding requirements the 7.8 gate attached to this file: declare
 //      with `reversesTransitionId` filled and read the COLUMN back, and lock the
-//      NEW `addEffect` message ("Target entity not found").
+//      NEW `addAssertion` message ("Target entity not found").
 //
 // Fixtures are created through the API with server-minted ids, so this file
 // claims no fixture id block — the 016 convention exists for files that hardcode
@@ -257,7 +257,7 @@ function transitionsPath(projectId: string): string {
 }
 
 function effectsPath(projectId: string): string {
-  return `/api/v1/projects/${projectId}/transition-effects`;
+  return `/api/v1/projects/${projectId}/assertions`;
 }
 
 async function declareTransition(
@@ -276,23 +276,23 @@ async function declareTransition(
   return readData(response);
 }
 
-async function addEffect(
+async function addAssertion(
   accessToken: string,
   projectId: string,
   transitionId: string,
   body: JsonObject,
 ): Promise<JsonObject> {
   const response = await request(
-    `${transitionsPath(projectId)}/${transitionId}/effects`,
+    `${transitionsPath(projectId)}/${transitionId}/assertions`,
     { method: "POST", accessToken, body },
   );
 
-  expect(response.status, "add effect").toBe(201);
+  expect(response.status, "add assertion").toBe(201);
 
   return readData(response);
 }
 
-function applyEffect(
+function applyAssertion(
   accessToken: string,
   projectId: string,
   effectId: string,
@@ -308,7 +308,7 @@ function countRevisions(entityId: string): Promise<number> {
 }
 
 // One writer, one project, one scene to hang transitions off, and the two
-// entities every effect below acts on.
+// entities every assertion below acts on.
 type Fixture = {
   accessToken: string;
   userId: string;
@@ -323,7 +323,7 @@ async function seedFixture(name = "nt-writer"): Promise<Fixture> {
   const { accessToken, userId } = await registerAndLogin(name);
   const projectId = await createProject(accessToken, `${name} project`);
 
-  // Relationship effects write `content_relationships`, which references the
+  // Relationship assertions write `content_relationships`, which references the
   // project's predicate vocabulary by composite foreign key since step 4.
   await seedProjectVocabulary(prisma, projectId);
   const chapterId = await createChapter(accessToken, projectId, "Chapter One");
@@ -380,7 +380,7 @@ beforeEach(async () => {
 
   if (projectIds.length > 0) {
     // Children before parents throughout: `content_relationships` ->
-    // `transition_effects` -> `narrative_transitions` -> `projects` is a chain of
+    // `assertions` -> `narrative_transitions` -> `projects` is a chain of
     // onDelete: Restrict, so one surviving row at any level fails the project
     // delete rather than cascading, and the failure would surface inside an
     // unrelated test.
@@ -394,7 +394,7 @@ beforeEach(async () => {
       where: { projectId: { in: projectIds } },
     });
     await deleteEvaluationFold(prisma, projectIds);
-    await prisma.transitionEffect.deleteMany({
+    await prisma.assertion.deleteMany({
       where: { projectId: { in: projectIds } },
     });
     await prisma.narrativeTransition.deleteMany({
@@ -410,7 +410,7 @@ beforeEach(async () => {
     await prisma.contentRevision.deleteMany({
       where: { projectId: { in: projectIds } },
     });
-    // Not FK-bound to the project, but apply writes one row per applied effect
+    // Not FK-bound to the project, but apply writes one row per applied assertion
     // and the assertions below count them; leftovers from a previous run would
     // make those counts meaningless.
     await prisma.outboxEvent.deleteMany({
@@ -429,7 +429,7 @@ beforeEach(async () => {
     where: { projectId: { in: projectIds } },
   });
   await deleteEvaluationFold(prisma, projectIds);
-  await prisma.transitionEffect.deleteMany({
+  await prisma.assertion.deleteMany({
     where: { projectId: { in: projectIds } },
   });
   // Predicate vocabulary before the project: `relationship_definitions` is
@@ -505,23 +505,23 @@ describe("Narrative transition end-to-end", () => {
       title: "The duel at the bridge",
       declaredByUserId: fixture.userId,
       reversesTransitionId: null,
-      // Born with no effects, so `declared` — the empty set is NOT vacuously
+      // Born with no assertions, so `declared` — the empty set is NOT vacuously
       // "fully applied" (`NarrativeTransition.ts:47-49`).
       status: "declared",
-      effects: [],
+      assertions: [],
     });
 
-    const effect = await addEffect(accessToken, projectId, transitionId, {
-      effectType: "attribute_change",
+    const assertion = await addAssertion(accessToken, projectId, transitionId, {
+      operation: "attribute_change",
       targetEntityType: "character",
       targetEntityId: characterId,
       fieldPath: "archetype",
       newValue: "fallen hero",
     });
 
-    expect(effect).toMatchObject({
+    expect(assertion).toMatchObject({
       narrativeTransitionId: transitionId,
-      effectType: "attribute_change",
+      operation: "attribute_change",
       fieldPath: "archetype",
       newValue: "fallen hero",
       appliedAt: null,
@@ -535,7 +535,7 @@ describe("Narrative transition end-to-end", () => {
       }),
     );
     expect(afterAdd.status).toBe("declared");
-    expect((afterAdd.effects as JsonObject[]).length).toBe(1);
+    expect((afterAdd.assertions as JsonObject[]).length).toBe(1);
 
     // Relabel: the one mutable pair, and `updated_at` is expected to move.
     const relabelled = await readData(
@@ -552,10 +552,10 @@ describe("Narrative transition end-to-end", () => {
 
     const revisionsBefore = await countRevisions(characterId);
 
-    const applyResponse = await applyEffect(
+    const applyResponse = await applyAssertion(
       accessToken,
       projectId,
-      effect.id as string,
+      assertion.id as string,
     );
     expect(applyResponse.status).toBe(200);
     const applied = await readData(applyResponse);
@@ -570,7 +570,7 @@ describe("Narrative transition end-to-end", () => {
     });
     expect(character?.archetype).toBe("fallen hero");
 
-    // Exactly one new revision, and it is the one the effect points at.
+    // Exactly one new revision, and it is the one the assertion points at.
     expect(await countRevisions(characterId)).toBe(revisionsBefore + 1);
     const revision = await prisma.contentRevision.findUnique({
       where: { id: applied.contentRevisionId as string },
@@ -596,14 +596,14 @@ describe("Narrative transition end-to-end", () => {
     );
     expect(afterApply.status).toBe("fully_applied");
 
-    // Both list shapes carry the effects, because status cannot be read without
+    // Both list shapes carry the assertions, because status cannot be read without
     // them (D11).
     const byProject = await readData(
       await request(transitionsPath(projectId), { accessToken }),
     );
     const listed = byProject.narrativeTransitions as JsonObject[];
     expect(listed).toHaveLength(1);
-    expect((listed[0]?.effects as JsonObject[]).length).toBe(1);
+    expect((listed[0]?.assertions as JsonObject[]).length).toBe(1);
 
     const bySource = await readData(
       await request(
@@ -634,12 +634,12 @@ describe("Narrative transition end-to-end", () => {
     // `declared` one is a 409 (`NarrativeTransitionService.ts:997-1001`). So the
     // original is applied first — which is also the only shape in which a
     // reversal means anything.
-    const originalEffect = await addEffect(
+    const originalAssertion = await addAssertion(
       accessToken,
       projectId,
       original.id as string,
       {
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
@@ -647,7 +647,7 @@ describe("Narrative transition end-to-end", () => {
       },
     );
     expect(
-      (await applyEffect(accessToken, projectId, originalEffect.id as string))
+      (await applyAssertion(accessToken, projectId, originalAssertion.id as string))
         .status,
     ).toBe(200);
 
@@ -710,7 +710,7 @@ describe("Narrative transition end-to-end", () => {
   // test existed, everything proven about reversal stopped at declaration —
   // "a reversal can be declared", not "undoing works".
   //
-  // The second assertion is the one that will matter later: `applyOneEffect`
+  // The second assertion is the one that will matter later: `applyOneAssertion`
   // does not read `reversesTransitionId` at all, so applying a reversal is an
   // ordinary apply and no mutant of TODAY's code can break it alone. What it
   // guards is the "helpful" change of tomorrow — the one that decides an undo
@@ -725,12 +725,12 @@ describe("Narrative transition end-to-end", () => {
       sourceEntityId: sceneId,
       title: "Aria joins the Silver Hand",
     });
-    const originalEffect = await addEffect(
+    const originalAssertion = await addAssertion(
       accessToken,
       projectId,
       original.id as string,
       {
-        effectType: "relationship_add",
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -739,7 +739,7 @@ describe("Narrative transition end-to-end", () => {
       },
     );
     const appliedOriginal = await readData(
-      await applyEffect(accessToken, projectId, originalEffect.id as string),
+      await applyAssertion(accessToken, projectId, originalAssertion.id as string),
     );
     expect(
       await prisma.contentRelationship.count({ where: { projectId } }),
@@ -751,12 +751,12 @@ describe("Narrative transition end-to-end", () => {
       title: "Aria leaves the Silver Hand",
       reversesTransitionId: original.id,
     });
-    const inverse = await addEffect(
+    const inverse = await addAssertion(
       accessToken,
       projectId,
       reversal.id as string,
       {
-        effectType: "relationship_remove",
+        operation: "relationship_remove",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -766,7 +766,7 @@ describe("Narrative transition end-to-end", () => {
     );
 
     expect(
-      (await applyEffect(accessToken, projectId, inverse.id as string)).status,
+      (await applyAssertion(accessToken, projectId, inverse.id as string)).status,
     ).toBe(200);
 
     // 1. The world is back where it started, read from the table rather than
@@ -777,8 +777,8 @@ describe("Narrative transition end-to-end", () => {
 
     // 2. The original is untouched: same `applied_at`, still fully applied. A
     //    reversal ADDS a fact; it does not retract one.
-    const originalRow = await prisma.transitionEffect.findUnique({
-      where: { id: originalEffect.id as string },
+    const originalRow = await prisma.assertion.findUnique({
+      where: { id: originalAssertion.id as string },
       select: { appliedAt: true },
     });
     expect(originalRow?.appliedAt?.toISOString()).toBe(
@@ -802,7 +802,7 @@ describe("Narrative transition end-to-end", () => {
       }),
     ).toEqual([
       {
-        eventType: "narrative.effect.applied",
+        eventType: "narrative.assertion.applied",
         aggregateType: "narrative_transition",
       },
     ]);
@@ -811,7 +811,7 @@ describe("Narrative transition end-to-end", () => {
         where: {
           projectId,
           aggregateId: original.id as string,
-          eventType: "narrative.effect.applied",
+          eventType: "narrative.assertion.applied",
         },
       }),
     ).toBe(1);
@@ -876,12 +876,12 @@ describe("Narrative transition end-to-end", () => {
       title: "The Sundering is reclassified",
     });
 
-    const effect = await addEffect(
+    const assertion = await addAssertion(
       accessToken,
       projectId,
       transition.id as string,
       {
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "event",
         targetEntityId: eventId,
         fieldPath: "event_type",
@@ -889,10 +889,10 @@ describe("Narrative transition end-to-end", () => {
       },
     );
 
-    const response = await applyEffect(
+    const response = await applyAssertion(
       accessToken,
       projectId,
-      effect.id as string,
+      assertion.id as string,
     );
     expect(response.status).toBe(200);
 
@@ -900,7 +900,7 @@ describe("Narrative transition end-to-end", () => {
     expect(stored?.eventType).toBe("mythical");
   });
 
-  it("applies relationship effects through the transition path and emits a causality event", async () => {
+  it("applies relationship assertions through the transition path and emits a causality event", async () => {
     const { accessToken, projectId, sceneId, characterId, factionId } =
       await seedFixture();
 
@@ -910,12 +910,12 @@ describe("Narrative transition end-to-end", () => {
       title: "Aria joins the Silver Hand",
     });
 
-    const addEffectRow = await addEffect(
+    const addEffectRow = await addAssertion(
       accessToken,
       projectId,
       transition.id as string,
       {
-        effectType: "relationship_add",
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -925,7 +925,7 @@ describe("Narrative transition end-to-end", () => {
     );
 
     const applied = await readData(
-      await applyEffect(accessToken, projectId, addEffectRow.id as string),
+      await applyAssertion(accessToken, projectId, addEffectRow.id as string),
     );
 
     // A relationship change produces NO ContentRevision — nothing's text moved
@@ -950,14 +950,14 @@ describe("Narrative transition end-to-end", () => {
       select: { eventType: true, aggregateType: true, payload: true },
     });
     expect(outbox).toHaveLength(1);
-    expect(outbox[0]?.eventType).toBe("narrative.effect.applied");
+    expect(outbox[0]?.eventType).toBe("narrative.assertion.applied");
     expect(outbox[0]?.aggregateType).toBe("narrative_transition");
 
     // 4b-3 / F-1: the event reports what reached the LOG, not only what was declared.
-    // On this path the effect row IS the assertion, and the payload says so rather
+    // On this path the assertion row IS the assertion, and the payload says so rather
     // than leaving a consumer to know that.
     expect(outbox[0]?.payload).toMatchObject({
-      effectType: "relationship_add",
+      operation: "relationship_add",
       assertionId: addEffectRow.id,
       terminationId: null,
       targetAssertionId: null,
@@ -971,12 +971,12 @@ describe("Narrative transition end-to-end", () => {
       sourceEntityId: sceneId,
       title: "Aria leaves the Silver Hand",
     });
-    const removeEffect = await addEffect(
+    const removeAssertion = await addAssertion(
       accessToken,
       projectId,
       removal.id as string,
       {
-        effectType: "relationship_remove",
+        operation: "relationship_remove",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -986,7 +986,7 @@ describe("Narrative transition end-to-end", () => {
     );
 
     expect(
-      (await applyEffect(accessToken, projectId, removeEffect.id as string))
+      (await applyAssertion(accessToken, projectId, removeAssertion.id as string))
         .status,
     ).toBe(200);
 
@@ -1005,12 +1005,12 @@ describe("Narrative transition end-to-end", () => {
       }),
     ).toBe(0);
 
-    const termination = await prisma.transitionEffect.findFirstOrThrow({
-      where: { projectId, effectType: "terminate" },
+    const termination = await prisma.assertion.findFirstOrThrow({
+      where: { projectId, operation: "terminate" },
       select: {
         id: true,
         targetAssertionId: true,
-        targetEffectType: true,
+        targetOperation: true,
         anchorEntityType: true,
         anchorEntityId: true,
         narrativeTransitionId: true,
@@ -1018,10 +1018,10 @@ describe("Narrative transition end-to-end", () => {
       },
     });
 
-    // It names the fact it ends — the effect row of the FIRST transition, which is the
+    // It names the fact it ends — the assertion row of the FIRST transition, which is the
     // assertion on this path.
     expect(termination.targetAssertionId).toBe(addEffectRow.id);
-    expect(termination.targetEffectType).toBe("relationship_add");
+    expect(termination.targetOperation).toBe("relationship_add");
     // And the story moment it ends at: the scene the removing transition was declared
     // on. A `retract` would carry no anchor at all — that difference is the whole
     // reason the two operations exist (premis §8.3).
@@ -1032,18 +1032,18 @@ describe("Narrative transition end-to-end", () => {
 
     // The claim itself survives, still applied: this is a log, so an ending is a new
     // row rather than an edit of the old one.
-    const asserted = await prisma.transitionEffect.findFirstOrThrow({
+    const asserted = await prisma.assertion.findFirstOrThrow({
       where: { id: addEffectRow.id as string },
-      select: { effectType: true, appliedAt: true },
+      select: { operation: true, appliedAt: true },
     });
 
-    expect(asserted.effectType).toBe("relationship_add");
+    expect(asserted.operation).toBe("relationship_add");
     expect(asserted.appliedAt).not.toBeNull();
 
     // ── F-1 (gerbang 4b-3): the causality event must report the row it WROTE ──
     //
-    // Before this, the removal's event carried `effectType: "relationship_remove"`
-    // and the declared effect's id, and nothing else — a consumer could not learn
+    // Before this, the removal's event carried `operation: "relationship_remove"`
+    // and the declared assertion's id, and nothing else — a consumer could not learn
     // that a `terminate` row existed at all, let alone the story moment it carries.
     // `evaluation_edges` is a valid-time fold (premis §8.4), so that moment is not
     // decoration: it is the whole "when".
@@ -1053,7 +1053,7 @@ describe("Narrative transition end-to-end", () => {
     });
 
     expect(removalEvent.payload).toMatchObject({
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
       // The rows written, not the intent: the terminate row and the assertion it ends.
       terminationId: termination.id,
       targetAssertionId: addEffectRow.id,
@@ -1087,12 +1087,12 @@ describe("Narrative transition end-to-end", () => {
       sourceEntityId: sceneId,
       title: "Aria joins the Silver Hand",
     });
-    const effect = await addEffect(
+    const assertion = await addAssertion(
       accessToken,
       projectId,
       transition.id as string,
       {
-        effectType: "relationship_add",
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -1102,7 +1102,7 @@ describe("Narrative transition end-to-end", () => {
     );
 
     expect(
-      (await applyEffect(accessToken, projectId, effect.id as string)).status,
+      (await applyAssertion(accessToken, projectId, assertion.id as string)).status,
     ).toBe(200);
 
     // Read straight from the projection rather than through the list DTO: what
@@ -1114,8 +1114,8 @@ describe("Narrative transition end-to-end", () => {
     });
 
     // The premise of the whole finding, asserted so the test explains itself if the
-    // wiring ever changes: on this path the EFFECT ROW is the assertion.
-    expect(projected.sourceAssertionId).toBe(effect.id);
+    // wiring ever changes: on this path the ASSERTION ROW is what carries the fact.
+    expect(projected.sourceAssertionId).toBe(assertion.id);
 
     const refused = await request(
       `/api/v1/projects/${projectId}/relationships/${projected.id}`,
@@ -1127,19 +1127,19 @@ describe("Narrative transition end-to-end", () => {
 
     // Nothing moved. The projection survives, and — the assertion that actually
     // separates "refused" from "half-done" — no `retract` row was written and the
-    // transition's own effect is still applied.
+    // transition's own assertion is still applied.
     expect(
       await prisma.contentRelationship.count({
         where: { projectId, relationType: "member_of" },
       }),
     ).toBe(1);
     expect(
-      await prisma.transitionEffect.count({
-        where: { projectId, effectType: "retract" },
+      await prisma.assertion.count({
+        where: { projectId, operation: "retract" },
       }),
     ).toBe(0);
-    const stillApplied = await prisma.transitionEffect.findFirstOrThrow({
-      where: { id: effect.id as string },
+    const stillApplied = await prisma.assertion.findFirstOrThrow({
+      where: { id: assertion.id as string },
       select: { appliedAt: true, narrativeTransitionId: true },
     });
     expect(stillApplied.appliedAt).not.toBeNull();
@@ -1147,7 +1147,7 @@ describe("Narrative transition end-to-end", () => {
   });
 
   describe("idempotency and concurrency, against real row locks", () => {
-    it("answers the second apply with the same applied effect and writes one revision", async () => {
+    it("answers the second apply with the same applied assertion and writes one revision", async () => {
       const { accessToken, projectId, sceneId, characterId } =
         await seedFixture();
 
@@ -1156,12 +1156,12 @@ describe("Narrative transition end-to-end", () => {
         sourceEntityId: sceneId,
         title: "Aria falls",
       });
-      const effect = await addEffect(
+      const assertion = await addAssertion(
         accessToken,
         projectId,
         transition.id as string,
         {
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: characterId,
           fieldPath: "archetype",
@@ -1171,12 +1171,12 @@ describe("Narrative transition end-to-end", () => {
 
       const before = await countRevisions(characterId);
       const first = await readData(
-        await applyEffect(accessToken, projectId, effect.id as string),
+        await applyAssertion(accessToken, projectId, assertion.id as string),
       );
-      const secondResponse = await applyEffect(
+      const secondResponse = await applyAssertion(
         accessToken,
         projectId,
-        effect.id as string,
+        assertion.id as string,
       );
 
       expect(secondResponse.status).toBe(200);
@@ -1194,7 +1194,7 @@ describe("Narrative transition end-to-end", () => {
     // Postgres. What this does and does not prove, measured rather than assumed:
     //
     //   PROVEN — the idempotent outcome end to end. Deleting the re-check under
-    //   the lock (`applyOneEffect`) turns this test AND the bulk-apply
+    //   the lock (`applyOneAssertion`) turns this test AND the bulk-apply
     //   idempotency test red.
     //
     //   NOT PROVEN — that `FOR UPDATE` on the READ is what saves it. Deleting
@@ -1206,9 +1206,9 @@ describe("Narrative transition end-to-end", () => {
     //   either, because the UPDATE would block on it even with the read
     //   unlocked. The clause keeps two compensating controls instead: the unit
     //   assertion that the statement text carries it
-    //   (`PrismaTransitionEffectRepository.test.ts:128`) and the reasoning at
+    //   (`PrismaAssertionRepository.test.ts:128`) and the reasoning at
     //   `flow_10:101,115`. Recorded as a limit, not papered over.
-    it("survives two concurrent applies of the same effect with a single revision", async () => {
+    it("survives two concurrent applies of the same assertion with a single revision", async () => {
       const { accessToken, projectId, sceneId, characterId } =
         await seedFixture();
 
@@ -1217,12 +1217,12 @@ describe("Narrative transition end-to-end", () => {
         sourceEntityId: sceneId,
         title: "Aria falls, twice at once",
       });
-      const effect = await addEffect(
+      const assertion = await addAssertion(
         accessToken,
         projectId,
         transition.id as string,
         {
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: characterId,
           fieldPath: "archetype",
@@ -1233,8 +1233,8 @@ describe("Narrative transition end-to-end", () => {
       const before = await countRevisions(characterId);
 
       const [left, right] = await Promise.all([
-        applyEffect(accessToken, projectId, effect.id as string),
-        applyEffect(accessToken, projectId, effect.id as string),
+        applyAssertion(accessToken, projectId, assertion.id as string),
+        applyAssertion(accessToken, projectId, assertion.id as string),
       ]);
 
       expect([left.status, right.status]).toEqual([200, 200]);
@@ -1262,7 +1262,7 @@ describe("Narrative transition end-to-end", () => {
   });
 
   describe("bulk apply", () => {
-    it("applies every pending effect in one call and reports the transition as fully applied", async () => {
+    it("applies every pending assertion in one call and reports the transition as fully applied", async () => {
       const { accessToken, projectId, sceneId, characterId, factionId } =
         await seedFixture();
 
@@ -1273,15 +1273,15 @@ describe("Narrative transition end-to-end", () => {
       });
       const transitionId = transition.id as string;
 
-      await addEffect(accessToken, projectId, transitionId, {
-        effectType: "attribute_change",
+      await addAssertion(accessToken, projectId, transitionId, {
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
         newValue: "fallen hero",
       });
-      await addEffect(accessToken, projectId, transitionId, {
-        effectType: "relationship_add",
+      await addAssertion(accessToken, projectId, transitionId, {
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -1299,8 +1299,8 @@ describe("Narrative transition end-to-end", () => {
 
       expect(body.status).toBe("fully_applied");
       expect(
-        (body.effects as JsonObject[]).every(
-          (effect) => effect.appliedAt !== null,
+        (body.assertions as JsonObject[]).every(
+          (assertion) => assertion.appliedAt !== null,
         ),
       ).toBe(true);
 
@@ -1313,7 +1313,7 @@ describe("Narrative transition end-to-end", () => {
       ).toBe(1);
 
       // Idempotent at the aggregate level too: re-applying a fully applied
-      // transition is a no-op that answers 200, not a 409 (`applyOneEffect`
+      // transition is a no-op that answers 200, not a 409 (`applyOneAssertion`
       // early-return).
       const again = await request(
         `${transitionsPath(projectId)}/${transitionId}/apply`,
@@ -1325,11 +1325,11 @@ describe("Narrative transition end-to-end", () => {
       ).toBe(1);
     });
 
-    // All-or-nothing (notes §10 decision 4). The first effect is valid and the
+    // All-or-nothing (notes §10 decision 4). The first assertion is valid and the
     // second cannot be applied, so the proof is that the FIRST one's write is
     // absent from the database afterwards — a rollback in Postgres, not an
     // intention in a comment.
-    it("rolls the whole batch back when one effect cannot be applied", async () => {
+    it("rolls the whole batch back when one assertion cannot be applied", async () => {
       const { accessToken, projectId, sceneId, characterId, factionId } =
         await seedFixture();
 
@@ -1340,16 +1340,16 @@ describe("Narrative transition end-to-end", () => {
       });
       const transitionId = transition.id as string;
 
-      const good = await addEffect(accessToken, projectId, transitionId, {
-        effectType: "attribute_change",
+      const good = await addAssertion(accessToken, projectId, transitionId, {
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
         newValue: "fallen hero",
       });
       // Nothing links these two entities, so the removal has nothing to remove.
-      await addEffect(accessToken, projectId, transitionId, {
-        effectType: "relationship_remove",
+      await addAssertion(accessToken, projectId, transitionId, {
+        operation: "relationship_remove",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -1366,7 +1366,7 @@ describe("Narrative transition end-to-end", () => {
 
       expect(response.status).toBe(409);
       expect(await readError(response)).toMatchObject({
-        message: "The relationship this effect would remove does not exist",
+        message: "The relationship this assertion would remove does not exist",
       });
 
       const character = await prisma.character.findUnique({
@@ -1375,7 +1375,7 @@ describe("Narrative transition end-to-end", () => {
       expect(character?.archetype).toBe("mentor");
       expect(await countRevisions(characterId)).toBe(revisionsBefore);
 
-      const stillPending = await prisma.transitionEffect.findUnique({
+      const stillPending = await prisma.assertion.findUnique({
         where: { id: good.id as string },
         select: { appliedAt: true },
       });
@@ -1412,12 +1412,12 @@ describe("Narrative transition end-to-end", () => {
         sourceEntityId: sceneId,
         title: "Aria joins, again",
       });
-      const effect = await addEffect(
+      const assertion = await addAssertion(
         accessToken,
         projectId,
         transition.id as string,
         {
-          effectType: "relationship_add",
+          operation: "relationship_add",
           targetEntityType: "character",
           targetEntityId: characterId,
           relationshipType: "member_of",
@@ -1426,18 +1426,18 @@ describe("Narrative transition end-to-end", () => {
         },
       );
 
-      const response = await applyEffect(
+      const response = await applyAssertion(
         accessToken,
         projectId,
-        effect.id as string,
+        assertion.id as string,
       );
       expect(response.status).toBe(409);
       expect(await readError(response)).toMatchObject({
-        message: "The relationship this effect would add already exists",
+        message: "The relationship this assertion would add already exists",
       });
 
-      const stillPending = await prisma.transitionEffect.findUnique({
-        where: { id: effect.id as string },
+      const stillPending = await prisma.assertion.findUnique({
+        where: { id: assertion.id as string },
         select: { appliedAt: true },
       });
       expect(stillPending?.appliedAt).toBeNull();
@@ -1471,12 +1471,12 @@ describe("Narrative transition end-to-end", () => {
         sourceEntityId: sceneId,
         title: "A change that changes nothing",
       });
-      const effect = await addEffect(
+      const assertion = await addAssertion(
         accessToken,
         projectId,
         transition.id as string,
         {
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: characterId,
           fieldPath: "archetype",
@@ -1485,10 +1485,10 @@ describe("Narrative transition end-to-end", () => {
         },
       );
 
-      const response = await applyEffect(
+      const response = await applyAssertion(
         accessToken,
         projectId,
-        effect.id as string,
+        assertion.id as string,
       );
       expect(response.status).toBe(409);
       expect(await readError(response)).toMatchObject({
@@ -1498,7 +1498,7 @@ describe("Narrative transition end-to-end", () => {
   });
 
   describe("append-only guards", () => {
-    it("refuses to delete an applied effect or a transition that has one", async () => {
+    it("refuses to delete an applied assertion or a transition that has one", async () => {
       const { accessToken, projectId, sceneId, characterId } =
         await seedFixture();
 
@@ -1508,8 +1508,8 @@ describe("Narrative transition end-to-end", () => {
         title: "Aria falls",
       });
       const transitionId = transition.id as string;
-      const effect = await addEffect(accessToken, projectId, transitionId, {
-        effectType: "attribute_change",
+      const assertion = await addAssertion(accessToken, projectId, transitionId, {
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
@@ -1517,11 +1517,11 @@ describe("Narrative transition end-to-end", () => {
       });
 
       expect(
-        (await applyEffect(accessToken, projectId, effect.id as string)).status,
+        (await applyAssertion(accessToken, projectId, assertion.id as string)).status,
       ).toBe(200);
 
       const deleteEffectResponse = await request(
-        `${effectsPath(projectId)}/${effect.id as string}`,
+        `${effectsPath(projectId)}/${assertion.id as string}`,
         { method: "DELETE", accessToken },
       );
       expect(deleteEffectResponse.status).toBe(409);
@@ -1534,7 +1534,7 @@ describe("Narrative transition end-to-end", () => {
 
       // Both rows still there: a refused delete must write nothing.
       expect(
-        await prisma.transitionEffect.count({
+        await prisma.assertion.count({
           where: { narrativeTransitionId: transitionId },
         }),
       ).toBe(1);
@@ -1555,8 +1555,8 @@ describe("Narrative transition end-to-end", () => {
         title: "Never applied",
       });
       const transitionId = transition.id as string;
-      await addEffect(accessToken, projectId, transitionId, {
-        effectType: "attribute_change",
+      await addAssertion(accessToken, projectId, transitionId, {
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
@@ -1570,7 +1570,7 @@ describe("Narrative transition end-to-end", () => {
       expect(response.status).toBe(200);
 
       expect(
-        await prisma.transitionEffect.count({
+        await prisma.assertion.count({
           where: { narrativeTransitionId: transitionId },
         }),
       ).toBe(0);
@@ -1603,12 +1603,12 @@ describe("Narrative transition end-to-end", () => {
       // `status` is editorial lifecycle, excluded on purpose (§2) — and the
       // frozen docs' canonical `status -> dead` example is exactly this request.
       const response = await request(
-        `${transitionsPath(projectId)}/${transition.id as string}/effects`,
+        `${transitionsPath(projectId)}/${transition.id as string}/assertions`,
         {
           method: "POST",
           accessToken,
           body: {
-            effectType: "attribute_change",
+            operation: "attribute_change",
             targetEntityType: "character",
             targetEntityId: characterId,
             fieldPath: "status",
@@ -1631,13 +1631,13 @@ describe("Narrative transition end-to-end", () => {
         sourceEntityId: sceneId,
         title: "Registry rules apply here too",
       });
-      const path = `${transitionsPath(projectId)}/${transition.id as string}/effects`;
+      const path = `${transitionsPath(projectId)}/${transition.id as string}/assertions`;
 
       const unknownType = await request(path, {
         method: "POST",
         accessToken,
         body: {
-          effectType: "relationship_add",
+          operation: "relationship_add",
           targetEntityType: "character",
           targetEntityId: characterId,
           relationshipType: "invented_by_the_client",
@@ -1652,7 +1652,7 @@ describe("Narrative transition end-to-end", () => {
         method: "POST",
         accessToken,
         body: {
-          effectType: "relationship_add",
+          operation: "relationship_add",
           targetEntityType: "character",
           targetEntityId: characterId,
           relationshipType: "member_of",
@@ -1663,7 +1663,7 @@ describe("Narrative transition end-to-end", () => {
       expect(badPair.status).toBe(400);
     });
 
-    it("refuses a body that mixes the two effect variants", async () => {
+    it("refuses a body that mixes the two assertion variants", async () => {
       const { accessToken, projectId, sceneId, characterId } =
         await seedFixture();
       const transition = await declareTransition(accessToken, projectId, {
@@ -1673,12 +1673,12 @@ describe("Narrative transition end-to-end", () => {
       });
 
       const response = await request(
-        `${transitionsPath(projectId)}/${transition.id as string}/effects`,
+        `${transitionsPath(projectId)}/${transition.id as string}/assertions`,
         {
           method: "POST",
           accessToken,
           body: {
-            effectType: "attribute_change",
+            operation: "attribute_change",
             targetEntityType: "character",
             targetEntityId: characterId,
             fieldPath: "archetype",
@@ -1699,12 +1699,12 @@ describe("Narrative transition end-to-end", () => {
       const { accessToken, projectId } = await seedFixture();
 
       const response = await request(
-        `${transitionsPath(projectId)}/${crypto.randomUUID()}/effects`,
+        `${transitionsPath(projectId)}/${crypto.randomUUID()}/assertions`,
         {
           method: "POST",
           accessToken,
           body: {
-            effectType: "attribute_change",
+            operation: "attribute_change",
             targetEntityType: "character",
             targetEntityId: crypto.randomUUID(),
             fieldPath: "archetype",
@@ -1747,8 +1747,8 @@ describe("Narrative transition end-to-end", () => {
         title: "Readable by everyone",
       });
       const transitionId = transition.id as string;
-      const effect = await addEffect(accessToken, projectId, transitionId, {
-        effectType: "attribute_change",
+      const assertion = await addAssertion(accessToken, projectId, transitionId, {
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
@@ -1767,15 +1767,15 @@ describe("Narrative transition end-to-end", () => {
         ["PATCH", `${transitionsPath(projectId)}/${transitionId}`, { title: "Renamed by a reviewer" }],
         ["DELETE", `${transitionsPath(projectId)}/${transitionId}`, undefined],
         ["POST", `${transitionsPath(projectId)}/${transitionId}/apply`, undefined],
-        ["POST", `${transitionsPath(projectId)}/${transitionId}/effects`, {
-          effectType: "attribute_change",
+        ["POST", `${transitionsPath(projectId)}/${transitionId}/assertions`, {
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: characterId,
           fieldPath: "archetype",
           newValue: "fallen hero",
         }],
-        ["DELETE", `${effectsPath(projectId)}/${effect.id as string}`, undefined],
-        ["POST", `${effectsPath(projectId)}/${effect.id as string}/apply`, undefined],
+        ["DELETE", `${effectsPath(projectId)}/${assertion.id as string}`, undefined],
+        ["POST", `${effectsPath(projectId)}/${assertion.id as string}/apply`, undefined],
       ];
 
       for (const [method, path, body] of writes) {
@@ -1804,8 +1804,8 @@ describe("Narrative transition end-to-end", () => {
       expect(
         await prisma.narrativeTransition.count({ where: { projectId } }),
       ).toBe(1);
-      const untouched = await prisma.transitionEffect.findUnique({
-        where: { id: effect.id as string },
+      const untouched = await prisma.assertion.findUnique({
+        where: { id: assertion.id as string },
         select: { appliedAt: true },
       });
       expect(untouched?.appliedAt).toBeNull();
@@ -1838,12 +1838,12 @@ describe("Narrative transition end-to-end", () => {
       });
       expect(transition.declaredByUserId).toBe(editor.userId);
 
-      const effect = await addEffect(
+      const assertion = await addAssertion(
         editor.accessToken,
         projectId,
         transition.id as string,
         {
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: characterId,
           fieldPath: "archetype",
@@ -1852,7 +1852,7 @@ describe("Narrative transition end-to-end", () => {
       );
 
       expect(
-        (await applyEffect(editor.accessToken, projectId, effect.id as string))
+        (await applyAssertion(editor.accessToken, projectId, assertion.id as string))
           .status,
       ).toBe(200);
 
@@ -1871,8 +1871,8 @@ describe("Narrative transition end-to-end", () => {
         sourceEntityId: eventId,
         title: "Bulk applied by an editor",
       });
-      await addEffect(editor.accessToken, projectId, bulk.id as string, {
-        effectType: "relationship_add",
+      await addAssertion(editor.accessToken, projectId, bulk.id as string, {
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: characterId,
         relationshipType: "member_of",
@@ -1917,8 +1917,8 @@ describe("Narrative transition end-to-end", () => {
         title: "Someone else's pending transition",
       });
       const transitionId = transition.id as string;
-      const effect = await addEffect(accessToken, projectId, transitionId, {
-        effectType: "attribute_change",
+      const assertion = await addAssertion(accessToken, projectId, transitionId, {
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
@@ -1926,10 +1926,10 @@ describe("Narrative transition end-to-end", () => {
       });
 
       // The child first, then its parent — both without `can_delete`, and
-      // neither is content: deleting a pending effect destroys an intention.
+      // neither is content: deleting a pending assertion destroys an intention.
       expect(
         (
-          await request(`${effectsPath(projectId)}/${effect.id as string}`, {
+          await request(`${effectsPath(projectId)}/${assertion.id as string}`, {
             method: "DELETE",
             accessToken: editor.accessToken,
           })
@@ -1954,7 +1954,7 @@ describe("Narrative transition end-to-end", () => {
   });
 
   describe("tenant isolation", () => {
-    it("answers 404 for a transition, an effect and a source entity from another project", async () => {
+    it("answers 404 for a transition, an assertion and a source entity from another project", async () => {
       const mine = await seedFixture("nt-writer");
       const theirs = await seedFixture("nt-outsider");
 
@@ -1967,12 +1967,12 @@ describe("Narrative transition end-to-end", () => {
           title: "Not yours",
         },
       );
-      const theirEffect = await addEffect(
+      const theirAssertion = await addAssertion(
         theirs.accessToken,
         theirs.projectId,
         theirTransition.id as string,
         {
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: theirs.characterId,
           fieldPath: "archetype",
@@ -1987,8 +1987,8 @@ describe("Narrative transition end-to-end", () => {
         ["PATCH", `${transitionsPath(mine.projectId)}/${theirTransition.id as string}`],
         ["DELETE", `${transitionsPath(mine.projectId)}/${theirTransition.id as string}`],
         ["POST", `${transitionsPath(mine.projectId)}/${theirTransition.id as string}/apply`],
-        ["DELETE", `${effectsPath(mine.projectId)}/${theirEffect.id as string}`],
-        ["POST", `${effectsPath(mine.projectId)}/${theirEffect.id as string}/apply`],
+        ["DELETE", `${effectsPath(mine.projectId)}/${theirAssertion.id as string}`],
+        ["POST", `${effectsPath(mine.projectId)}/${theirAssertion.id as string}/apply`],
         [
           "GET",
           `/api/v1/projects/${mine.projectId}/scenes/${theirs.sceneId}/narrative-transitions`,
@@ -2006,8 +2006,8 @@ describe("Narrative transition end-to-end", () => {
       }
 
       // Their rows are untouched by any of it.
-      const theirEffectRow = await prisma.transitionEffect.findUnique({
-        where: { id: theirEffect.id as string },
+      const theirEffectRow = await prisma.assertion.findUnique({
+        where: { id: theirAssertion.id as string },
         select: { appliedAt: true },
       });
       expect(theirEffectRow?.appliedAt).toBeNull();

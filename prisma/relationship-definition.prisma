@@ -82,7 +82,7 @@ model RelationshipDefinition {
 
   subclasses    RelationshipDefinition[]         @relation("PredicateFamily")
   signatures    RelationshipDefinitionSignature[]
-  assertions    TransitionEffect[]
+  assertions    Assertion[]
   // The CRUD projection. `onDelete: Restrict` on the other side means a
   // predicate cannot be deleted while relationships still use it — the author
   // has to remove the facts first, which is the same shape as every other

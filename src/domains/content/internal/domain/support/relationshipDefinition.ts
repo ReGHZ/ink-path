@@ -41,7 +41,7 @@ export type RelationshipDefinition = {
   // The row's id, and it is DOMAIN data rather than a persistence detail:
   // premis §6.2 turns a predicate into a first-order constant precisely by
   // making it a row with an id, and an assertion references it by that id
-  // (`transition_effects.relationship_definition_id`). An earlier draft left it
+  // (`assertions.relationship_definition_id`). An earlier draft left it
   // out as "the rule engine's business"; the `has_provenance` CHECK rejected the
   // first parentless assertion written without it.
   id: string;
@@ -64,7 +64,7 @@ export type RelationshipDefinition = {
 // instead — "pair not allowed for this predicate" would be true but useless.
 // The database refuses to store such a signature at all
 // (`relationship_definition_signatures_no_dedicated_hierarchy`, migration
-// `20260818023920`), so this is the caller-facing half of a rule the schema
+// `20260820000000_phase7_phase11_additions`, §dari: `20260818023920`), so this is the caller-facing half of a rule the schema
 // already holds, not a second source of truth. The chapter-scene ban is
 // cross-type on purpose (§7.3): a per-predicate ban would need re-auditing every
 // time an author coins one, which is now continuously.

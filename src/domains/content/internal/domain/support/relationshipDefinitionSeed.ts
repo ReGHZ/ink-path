@@ -23,7 +23,7 @@ import type {
 // no second copy left to drift from.
 
 // Twin of the `relationship_definitions_predicate_format` CHECK in
-// `20260818023920_add_relationship_definitions`. Two copies of one rule, in two
+// `20260820000000_phase7_phase11_additions` (§dari: 20260818023920_add_relationship_definitions). Two copies of one rule, in two
 // languages, so neither is optional: the DB copy is what actually holds when an
 // author coins a predicate through any path, and this one is what lets the app
 // reject it with a message instead of a constraint violation. The integration

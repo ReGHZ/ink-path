@@ -13,24 +13,24 @@ import {
   seededDefinition,
 } from "../../domain/support/relationshipDefinitionSeed.js";
 import {
+  Assertion,
+  type AssertionProperties,
+} from "../../domain/transition/Assertion.js";
+import {
   NarrativeTransition,
   type NarrativeTransitionProperties,
 } from "../../domain/transition/NarrativeTransition.js";
-import {
-  TransitionEffect,
-  type TransitionEffectProperties,
-} from "../../domain/transition/TransitionEffect.js";
 
 import type { OutboxEvent } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ProjectMembership } from "../../../../../shared/application/ports/ProjectMembership.js";
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
-import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
 import type {
-  TransitionEffectClaim,
-  TransitionEffectDeletion,
-  TransitionEffectRepository,
-} from "../../domain/transition/TransitionEffectRepository.js";
+  AssertionClaim,
+  AssertionDeletion,
+  AssertionRepository,
+} from "../../domain/transition/AssertionRepository.js";
+import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
 import type {
   AppliedAttributeChange,
   ApplyAttributeChangeInput,
@@ -125,21 +125,21 @@ class FakeNarrativeTransitionRepository
   }
 }
 
-class FakeTransitionEffectRepository implements TransitionEffectRepository {
-  rows = new Map<string, TransitionEffectProperties>();
+class FakeAssertionRepository implements AssertionRepository {
+  rows = new Map<string, AssertionProperties>();
   claimed: string[] = [];
   updated: string[] = [];
   deleted: string[] = [];
 
-  save(effect: TransitionEffect): void {
-    this.rows.set(effect.id, effect.toSnapshot());
+  save(assertion: Assertion): void {
+    this.rows.set(assertion.id, assertion.toSnapshot());
   }
 
-  findById(id: string): Promise<TransitionEffect | null> {
+  findById(id: string): Promise<Assertion | null> {
     const row = this.rows.get(id);
 
     return Promise.resolve(
-      row ? TransitionEffect.reconstitute({ ...row }) : null,
+      row ? Assertion.reconstitute({ ...row }) : null,
     );
   }
 
@@ -148,25 +148,25 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
   findAssertionById(
     projectId: string,
     id: string,
-  ): Promise<TransitionEffect | null> {
+  ): Promise<Assertion | null> {
     const row = this.rows.get(id);
 
     return Promise.resolve(
       row?.projectId === projectId
-        ? TransitionEffect.reconstitute({ ...row })
+        ? Assertion.reconstitute({ ...row })
         : null,
     );
   }
 
   // Step 4b-5. Models the ADAPTER's contract, not a convenience: the claim is
-  // refused when `applied_at` is already set, and the effect handed back on
+  // refused when `applied_at` is already set, and the assertion handed back on
   // success is the PRE-CLAIM aggregate — so the service still walks
   // `markApplied()` and a test can still see it do so.
   claimForApply(
     projectId: string,
     id: string,
     now: Date,
-  ): Promise<TransitionEffectClaim> {
+  ): Promise<AssertionClaim> {
     this.claimed.push(id);
 
     const row = this.rows.get(id);
@@ -178,7 +178,7 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
     if (row.appliedAt !== null) {
       return Promise.resolve({
         status: "already-applied",
-        effect: TransitionEffect.reconstitute({ ...row }),
+        assertion: Assertion.reconstitute({ ...row }),
       });
     }
 
@@ -186,7 +186,7 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
 
     return Promise.resolve({
       status: "claimed",
-      effect: TransitionEffect.reconstitute({
+      assertion: Assertion.reconstitute({
         ...row,
         appliedAt: null,
         contentRevisionId: null,
@@ -197,7 +197,7 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
   deleteIfPending(
     projectId: string,
     id: string,
-  ): Promise<TransitionEffectDeletion> {
+  ): Promise<AssertionDeletion> {
     const row = this.rows.get(id);
 
     if (row?.projectId !== projectId) {
@@ -214,23 +214,23 @@ class FakeTransitionEffectRepository implements TransitionEffectRepository {
     return Promise.resolve("deleted");
   }
 
-  findByTransitionId(transitionId: string): Promise<TransitionEffect[]> {
+  findByTransitionId(transitionId: string): Promise<Assertion[]> {
     return Promise.resolve(
       [...this.rows.values()]
         .filter((row) => row.narrativeTransitionId === transitionId)
-        .map((row) => TransitionEffect.reconstitute({ ...row })),
+        .map((row) => Assertion.reconstitute({ ...row })),
     );
   }
 
-  insert(effect: TransitionEffect): Promise<void> {
-    this.save(effect);
+  insert(assertion: Assertion): Promise<void> {
+    this.save(assertion);
 
     return Promise.resolve();
   }
 
-  update(effect: TransitionEffect): Promise<void> {
-    this.updated.push(effect.id);
-    this.save(effect);
+  update(assertion: Assertion): Promise<void> {
+    this.updated.push(assertion.id);
+    this.save(assertion);
 
     return Promise.resolve();
   }
@@ -312,7 +312,7 @@ class FakeContentAttributeMutator implements ContentAttributeMutator {
 }
 
 let transitions: FakeNarrativeTransitionRepository;
-let effects: FakeTransitionEffectRepository;
+let assertions: FakeAssertionRepository;
 let relationships: FakeContentRelationshipRepository;
 let mutator: FakeContentAttributeMutator;
 let outbox: OutboxEvent[];
@@ -328,7 +328,7 @@ function locate(entityType: ContentEntityType, entityId: string): string {
 beforeEach(() => {
   clockReads = 0;
   transitions = new FakeNarrativeTransitionRepository();
-  effects = new FakeTransitionEffectRepository();
+  assertions = new FakeAssertionRepository();
   relationships = new FakeContentRelationshipRepository();
   mutator = new FakeContentAttributeMutator();
   outbox = [];
@@ -360,7 +360,7 @@ beforeEach(() => {
     // changed. The real unit of work rolls back; a fake that does not is a
     // control that reports the wrong colour.
     transaction: async (work) => {
-      const effectRows = new Map(effects.rows);
+      const effectRows = new Map(assertions.rows);
       const transitionRows = new Map(transitions.rows);
       const relationshipRows = [...relationships.rows];
       const outboxLength = outbox.length;
@@ -369,7 +369,7 @@ beforeEach(() => {
         return await work(
           {
             narrativeTransitions: transitions,
-            transitionEffects: effects,
+            assertions,
             contentRelationships: relationships,
             contentAttributes: mutator,
           },
@@ -382,7 +382,7 @@ beforeEach(() => {
           },
         );
       } catch (error) {
-        effects.rows = effectRows;
+        assertions.rows = effectRows;
         transitions.rows = transitionRows;
         relationships.rows = relationshipRows;
         outbox.length = outboxLength;
@@ -420,7 +420,7 @@ beforeEach(() => {
       },
     },
     transitions,
-    effects,
+    assertions,
     locator,
     unitOfWork,
     seededDefinitionReader,
@@ -449,14 +449,14 @@ function seedTransition(
   return transition;
 }
 
-function seedEffect(
-  overrides: Partial<TransitionEffectProperties> = {},
-): TransitionEffect {
-  const effect = TransitionEffect.reconstitute({
-    id: "effect-1",
+function seedAssertion(
+  overrides: Partial<AssertionProperties> = {},
+): Assertion {
+  const assertion = Assertion.reconstitute({
+    id: "assertion-1",
     narrativeTransitionId: "transition-1",
     projectId,
-    effectType: "attribute_change",
+    operation: "attribute_change",
     targetEntityType: "character",
     targetEntityId: "character-1",
     fieldPath: "archetype",
@@ -468,16 +468,16 @@ function seedEffect(
     anchorEntityType: null,
     anchorEntityId: null,
     targetAssertionId: null,
-    targetEffectType: null,
+    targetOperation: null,
     appliedAt: null,
     contentRevisionId: null,
     createdAt: now,
     ...overrides,
   });
 
-  effects.save(effect);
+  assertions.save(assertion);
 
-  return effect;
+  return assertion;
 }
 
 // The FACT a `relationship_remove` ends. Since step 4b-3 the remove path reads it —
@@ -485,17 +485,17 @@ function seedEffect(
 // projection but no origin assertion is a state the database's foreign key would not
 // allow either.
 function seedOriginAssertion(
-  overrides: Partial<TransitionEffectProperties> = {},
-): TransitionEffect {
-  return seedEffect({
-    id: "assertion-1",
-    effectType: "relationship_add",
+  overrides: Partial<AssertionProperties> = {},
+): Assertion {
+  return seedAssertion({
+    id: "origin-assertion-1",
+    operation: "relationship_add",
     fieldPath: null,
     newValue: null,
     relationshipType: "member_of",
     // The REAL definition id, not the placeholder `relationshipEffectFields` uses for
     // declared rows: a termination matches its target's predicate by row when the
-    // target names one (`TransitionEffect.terminateFact`), so a fixture with a made-up
+    // target names one (`Assertion.terminateFact`), so a fixture with a made-up
     // id would fail for a reason that has nothing to do with the case under test.
     relationshipDefinitionId: seededDefinition("member_of").id,
     relatedEntityType: "faction",
@@ -506,7 +506,7 @@ function seedOriginAssertion(
 }
 
 const relationshipEffectFields = {
-  effectType: "relationship_add" as const,
+  operation: "relationship_add" as const,
   fieldPath: null,
   newValue: null,
   relationshipType: "member_of",
@@ -542,7 +542,7 @@ describe("declareTransition", () => {
     ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
   });
 
-  it("stores a declared transition with no effects", async () => {
+  it("stores a declared transition with no assertions", async () => {
     const detail = await service.declareTransition({
       requestingUserId: userId,
       requestingMembership: writer,
@@ -553,7 +553,7 @@ describe("declareTransition", () => {
     });
 
     expect(detail.status).toBe("declared");
-    expect(detail.effects).toEqual([]);
+    expect(detail.assertions).toEqual([]);
     expect(detail.title).toBe("Raja Terbunuh");
     expect(transitions.rows.size).toBe(1);
   });
@@ -562,7 +562,7 @@ describe("declareTransition", () => {
   // the undoing of nothing.
   it("refuses to reverse a transition that is only declared", async () => {
     seedTransition();
-    seedEffect();
+    seedAssertion();
 
     await expect(
       service.declareTransition({
@@ -579,8 +579,8 @@ describe("declareTransition", () => {
 
   it("accepts a reversal of a partially applied transition", async () => {
     seedTransition();
-    seedEffect();
-    seedEffect({ id: "effect-2", appliedAt: later, contentRevisionId: "rev-1" });
+    seedAssertion();
+    seedAssertion({ id: "assertion-2", appliedAt: later, contentRevisionId: "rev-1" });
 
     const detail = await service.declareTransition({
       requestingUserId: userId,
@@ -621,15 +621,15 @@ describe("getTransitionById", () => {
     ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
   });
 
-  it("derives the status from the effects it loads", async () => {
+  it("derives the status from the assertions it loads", async () => {
     seedTransition();
-    seedEffect();
-    seedEffect({ id: "effect-2", appliedAt: later, contentRevisionId: "rev-1" });
+    seedAssertion();
+    seedAssertion({ id: "assertion-2", appliedAt: later, contentRevisionId: "rev-1" });
 
     const detail = await service.getTransitionById(projectId, "transition-1");
 
     expect(detail.status).toBe("partially_applied");
-    expect(detail.effects).toHaveLength(2);
+    expect(detail.assertions).toHaveLength(2);
   });
 });
 
@@ -700,7 +700,7 @@ describe("updateTransitionDetails", () => {
   });
 
   it("reports the derived status alongside the new labels", async () => {
-    seedEffect();
+    seedAssertion();
 
     const detail = await service.updateTransitionDetails(
       projectId,
@@ -713,14 +713,14 @@ describe("updateTransitionDetails", () => {
     );
 
     expect(detail.status).toBe("declared");
-    expect(detail.effects).toHaveLength(1);
+    expect(detail.assertions).toHaveLength(1);
   });
 });
 
 describe("list endpoints", () => {
   it("returns only this project's transitions, each with its derived status", async () => {
     seedTransition();
-    seedEffect({ appliedAt: later, contentRevisionId: "rev-1" });
+    seedAssertion({ appliedAt: later, contentRevisionId: "rev-1" });
     seedTransition({ id: "transition-2", projectId: otherProjectId });
 
     const details = await service.listTransitionsByProject(projectId);
@@ -757,7 +757,7 @@ describe("list endpoints", () => {
   });
 });
 
-describe("addEffect", () => {
+describe("addAssertion", () => {
   beforeEach(() => {
     seedTransition();
   });
@@ -774,25 +774,25 @@ describe("addEffect", () => {
   // (`test/integration/apply-delete-serialization.integration.test.ts`, T7). This
   // unit suite never bound it — mutant M2 proved that by surviving.
   it("inserts the child after reading its parent", async () => {
-    await service.addEffect(projectId, "transition-1", {
+    await service.addAssertion(projectId, "transition-1", {
       requestingUserId: userId,
       requestingMembership: writer,
-      effectType: "attribute_change",
+      operation: "attribute_change",
       targetEntityType: "character",
       targetEntityId: "character-1",
       fieldPath: "archetype",
       newValue: "mentor",
     });
 
-    expect(effects.rows.size).toBe(1);
+    expect(assertions.rows.size).toBe(1);
   });
 
   it("refuses a reviewer", async () => {
     await expect(
-      service.addEffect(projectId, "transition-1", {
+      service.addAssertion(projectId, "transition-1", {
         requestingUserId: userId,
         requestingMembership: reviewer,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: "character-1",
         fieldPath: "archetype",
@@ -803,10 +803,10 @@ describe("addEffect", () => {
 
   it("answers 404 for an unknown target entity", async () => {
     await expect(
-      service.addEffect(projectId, "transition-1", {
+      service.addAssertion(projectId, "transition-1", {
         requestingUserId: userId,
         requestingMembership: writer,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: "character-missing",
         fieldPath: "archetype",
@@ -817,10 +817,10 @@ describe("addEffect", () => {
 
   it("answers 404 for an unknown related entity", async () => {
     await expect(
-      service.addEffect(projectId, "transition-1", {
+      service.addAssertion(projectId, "transition-1", {
         requestingUserId: userId,
         requestingMembership: writer,
-        effectType: "relationship_add",
+        operation: "relationship_add",
         targetEntityType: "character",
         targetEntityId: "character-1",
         relationshipType: "member_of",
@@ -832,10 +832,10 @@ describe("addEffect", () => {
 
   it("turns a field the allowlist refuses into a 400", async () => {
     await expect(
-      service.addEffect(projectId, "transition-1", {
+      service.addAssertion(projectId, "transition-1", {
         requestingUserId: userId,
         requestingMembership: writer,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: "character-1",
         fieldPath: "status",
@@ -844,11 +844,11 @@ describe("addEffect", () => {
     ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
   });
 
-  it("stores a pending effect", async () => {
-    const detail = await service.addEffect(projectId, "transition-1", {
+  it("stores a pending assertion", async () => {
+    const detail = await service.addAssertion(projectId, "transition-1", {
       requestingUserId: userId,
       requestingMembership: writer,
-      effectType: "attribute_change",
+      operation: "attribute_change",
       targetEntityType: "character",
       targetEntityId: "character-1",
       fieldPath: "archetype",
@@ -857,7 +857,7 @@ describe("addEffect", () => {
 
     expect(detail.appliedAt).toBeNull();
     expect(detail.narrativeTransitionId).toBe("transition-1");
-    expect(effects.rows.size).toBe(1);
+    expect(assertions.rows.size).toBe(1);
   });
 
   it("answers 404 when the transition belongs to another project", async () => {
@@ -865,10 +865,10 @@ describe("addEffect", () => {
     seedTransition({ projectId: otherProjectId });
 
     await expect(
-      service.addEffect(projectId, "transition-1", {
+      service.addAssertion(projectId, "transition-1", {
         requestingUserId: userId,
         requestingMembership: writer,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: "character-1",
         fieldPath: "archetype",
@@ -878,19 +878,19 @@ describe("addEffect", () => {
   });
 });
 
-describe("deleteEffect", () => {
-  it("refuses to delete an applied effect", async () => {
+describe("deleteAssertion", () => {
+  it("refuses to delete an applied assertion", async () => {
     seedTransition();
-    seedEffect({ appliedAt: later, contentRevisionId: "rev-1" });
+    seedAssertion({ appliedAt: later, contentRevisionId: "rev-1" });
 
     await expect(
-      service.deleteEffect(projectId, "effect-1", {
+      service.deleteAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
     ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
 
-    expect(effects.deleted).toEqual([]);
+    expect(assertions.deleted).toEqual([]);
   });
 
   // The guard reads the row under a lock, not with a plain SELECT: a concurrent
@@ -898,24 +898,24 @@ describe("deleteEffect", () => {
   // Step 4b-5: one predicate-carrying statement instead of lock-then-check, so
   // the guard cannot be separated from the delete even in principle. The 409 twin
   // below is what proves the predicate is there.
-  it("removes a pending effect with a single guarded statement", async () => {
+  it("removes a pending assertion with a single guarded statement", async () => {
     seedTransition();
-    seedEffect();
+    seedAssertion();
 
-    await service.deleteEffect(projectId, "effect-1", {
+    await service.deleteAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
 
-    expect(effects.deleted).toEqual(["effect-1"]);
+    expect(assertions.deleted).toEqual(["assertion-1"]);
   });
 
-  it("answers 404 for an effect in another project", async () => {
+  it("answers 404 for an assertion in another project", async () => {
     seedTransition();
-    seedEffect({ projectId: otherProjectId });
+    seedAssertion({ projectId: otherProjectId });
 
     await expect(
-      service.deleteEffect(projectId, "effect-1", {
+      service.deleteAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
@@ -924,10 +924,10 @@ describe("deleteEffect", () => {
 });
 
 describe("deleteTransition", () => {
-  it("refuses when any effect is applied, and deletes nothing", async () => {
+  it("refuses when any assertion is applied, and deletes nothing", async () => {
     seedTransition();
-    seedEffect();
-    seedEffect({ id: "effect-2", appliedAt: later, contentRevisionId: "rev-1" });
+    seedAssertion();
+    seedAssertion({ id: "assertion-2", appliedAt: later, contentRevisionId: "rev-1" });
 
     await expect(
       service.deleteTransition(projectId, "transition-1", {
@@ -940,14 +940,14 @@ describe("deleteTransition", () => {
     // IS deleted before the applied one is reached, and what makes "deletes
     // nothing" true is the rollback that follows the 409 — which a call log
     // cannot see and a row count can.
-    expect(effects.rows.size).toBe(2);
+    expect(assertions.rows.size).toBe(2);
     expect(transitions.deleted).toEqual([]);
   });
 
   it("deletes children before the parent when everything is pending", async () => {
     seedTransition();
-    seedEffect();
-    seedEffect({ id: "effect-2" });
+    seedAssertion();
+    seedAssertion({ id: "assertion-2" });
 
     await service.deleteTransition(projectId, "transition-1", {
       requestingUserId: userId,
@@ -961,7 +961,7 @@ describe("deleteTransition", () => {
     // `deleteByTransitionId` was removed from the port rather than merely left
     // unused: it locks in scan order, so reintroducing it has to be a visible
     // act rather than a convenient call.
-    expect(effects.deleted).toEqual(["effect-1", "effect-2"]);
+    expect(assertions.deleted).toEqual(["assertion-1", "assertion-2"]);
     expect(transitions.deleted).toEqual(["transition-1"]);
   });
 
@@ -977,14 +977,14 @@ describe("deleteTransition", () => {
   });
 });
 
-describe("applyEffect — attribute_change", () => {
+describe("applyAssertion — attribute_change", () => {
   beforeEach(() => {
     seedTransition();
-    seedEffect();
+    seedAssertion();
   });
 
   it("resolves the wire field name to the aggregate property before writing", async () => {
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -999,8 +999,8 @@ describe("applyEffect — attribute_change", () => {
     });
   });
 
-  it("stamps the effect with the revision the mutation produced", async () => {
-    const detail = await service.applyEffect(projectId, "effect-1", {
+  it("stamps the assertion with the revision the mutation produced", async () => {
+    const detail = await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -1011,12 +1011,12 @@ describe("applyEffect — attribute_change", () => {
     expect(detail.contentRevisionId).toBe(revisionId);
     // Persisted, not merely mutated in memory: the fake reconstitutes on read,
     // so a missing `update()` call would leave the stored row pending.
-    expect(effects.updated).toEqual(["effect-1"]);
-    expect(effects.rows.get("effect-1")?.appliedAt).toEqual(later);
+    expect(assertions.updated).toEqual(["assertion-1"]);
+    expect(assertions.rows.get("assertion-1")?.appliedAt).toEqual(later);
   });
 
   it("emits the existing content event so the embedding worker sees it", async () => {
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -1047,14 +1047,14 @@ describe("applyEffect — attribute_change", () => {
   // readings happen to be equal; the EQUALITY catches a second read whose value
   // reached a different column. Either alone would leave a hole the other closes.
   it("reads the clock exactly once per apply, and stamps that one instant everywhere", async () => {
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
 
     expect(clockReads).toBe(1);
 
-    const stamped = effects.rows.get("effect-1")?.appliedAt;
+    const stamped = assertions.rows.get("assertion-1")?.appliedAt;
 
     expect(stamped).toEqual(later);
     expect(mutator.calls[0]?.now).toEqual(stamped);
@@ -1064,13 +1064,13 @@ describe("applyEffect — attribute_change", () => {
   // the entity must not be touched by a caller that did not win the claim.
   // Asserted in both directions: the winner claims and then mutates, and the
   // loser (below, already-applied) never reaches the mutator at all.
-  it("claims the effect before touching the entity", async () => {
-    await service.applyEffect(projectId, "effect-1", {
+  it("claims the assertion before touching the entity", async () => {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
 
-    expect(effects.claimed).toEqual(["effect-1"]);
+    expect(assertions.claimed).toEqual(["assertion-1"]);
     expect(mutator.calls).toHaveLength(1);
   });
 
@@ -1079,21 +1079,21 @@ describe("applyEffect — attribute_change", () => {
     mutator.result = { projectId, revisionNumber: 4, changed: false };
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
     ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
 
     expect(outbox).toEqual([]);
-    expect(effects.rows.get("effect-1")?.appliedAt).toBeNull();
+    expect(assertions.rows.get("assertion-1")?.appliedAt).toBeNull();
   });
 
   it("answers 404 when the target entity is gone", async () => {
     mutator.result = null;
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
@@ -1102,10 +1102,10 @@ describe("applyEffect — attribute_change", () => {
 
   // Idempotent, not a conflict: the caller asked for a state that holds. What
   // must not happen is a second ContentRevision.
-  it("is a no-op when the effect is already applied", async () => {
-    seedEffect({ appliedAt: later, contentRevisionId: "rev-1" });
+  it("is a no-op when the assertion is already applied", async () => {
+    seedAssertion({ appliedAt: later, contentRevisionId: "rev-1" });
 
-    const detail = await service.applyEffect(projectId, "effect-1", {
+    const detail = await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -1119,10 +1119,10 @@ describe("applyEffect — attribute_change", () => {
   // could only exist because the allowlist was narrowed after it was declared —
   // it stays readable and deletable, but it must not apply.
   it("refuses a field the allowlist no longer covers", async () => {
-    seedEffect({ fieldPath: "status" });
+    seedAssertion({ fieldPath: "status" });
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
@@ -1133,7 +1133,7 @@ describe("applyEffect — attribute_change", () => {
 
   it("refuses a reviewer", async () => {
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: reviewer,
       }),
@@ -1141,7 +1141,7 @@ describe("applyEffect — attribute_change", () => {
   });
 });
 
-describe("applyEffect — relationship effects", () => {
+describe("applyAssertion — relationship assertions", () => {
   beforeEach(() => {
     seedTransition();
   });
@@ -1150,7 +1150,7 @@ describe("applyEffect — relationship effects", () => {
     // Declared faction-first with a NON-directional type: the stored row must
     // come back character-first, because canonical orientation is the row's
     // identity and this path must produce the same row the manual endpoint does.
-    seedEffect({
+    seedAssertion({
       ...relationshipEffectFields,
       relationshipType: "ally_of",
       relationshipDefinitionId: "def-ally_of",
@@ -1160,7 +1160,7 @@ describe("applyEffect — relationship effects", () => {
       relatedEntityId: "character-1",
     });
 
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -1177,9 +1177,9 @@ describe("applyEffect — relationship effects", () => {
   });
 
   it("applies without a revision pointer and emits the causality event", async () => {
-    seedEffect(relationshipEffectFields);
+    seedAssertion(relationshipEffectFields);
 
-    const detail = await service.applyEffect(projectId, "effect-1", {
+    const detail = await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -1188,39 +1188,39 @@ describe("applyEffect — relationship effects", () => {
     expect(detail.contentRevisionId).toBeNull();
     expect(outbox).toHaveLength(1);
     expect(outbox[0]).toMatchObject({
-      eventType: "narrative.effect.applied",
+      eventType: "narrative.assertion.applied",
       aggregateType: "narrative_transition",
       aggregateId: "transition-1",
-      routingKey: "narrative.effect.applied",
+      routingKey: "narrative.assertion.applied",
       payload: {
-        effectId: "effect-1",
-        effectType: "relationship_add",
+        effectId: "assertion-1",
+        operation: "relationship_add",
         relationshipType: "member_of",
       },
     });
   });
 
-  // Decision D5: the link exists already, created by hand. Marking the effect
+  // Decision D5: the link exists already, created by hand. Marking the assertion
   // applied would attribute someone else's edit to this transition.
   it("answers 409 when the relationship it would add already exists", async () => {
-    seedEffect(relationshipEffectFields);
+    seedAssertion(relationshipEffectFields);
     relationships.duplicateOnInsert = true;
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
     ).rejects.toMatchObject({ code: ErrorCode.CONFLICT });
 
-    expect(effects.rows.get("effect-1")?.appliedAt).toBeNull();
+    expect(assertions.rows.get("assertion-1")?.appliedAt).toBeNull();
     expect(outbox).toEqual([]);
   });
 
-  it("removes the row that matches the effect's natural identity", async () => {
-    seedEffect({
+  it("removes the row that matches the assertion's natural identity", async () => {
+    seedAssertion({
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
     seedOriginAssertion();
 
@@ -1231,7 +1231,7 @@ describe("applyEffect — relationship effects", () => {
       definition: seededDefinition("member_of"),
       source: { entityType: "character", entityId: "character-1" },
       target: { entityType: "faction", entityId: "faction-1" },
-      sourceAssertionId: "assertion-1",
+      sourceAssertionId: "origin-assertion-1",
       createdByUserId: userId,
       now,
     });
@@ -1239,7 +1239,7 @@ describe("applyEffect — relationship effects", () => {
       ContentRelationship.reconstitute({ ...existing.toSnapshot(), version: 3 }),
     );
 
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
@@ -1258,9 +1258,9 @@ describe("applyEffect — relationship effects", () => {
   // relationship (gerbang G1, T-6). These are the claims that close that window.
   it("writes a terminate that names the assertion it ends and the story moment it ends at", async () => {
     seedTransition({ sourceEntityType: "scene", sourceEntityId: "scene-7" });
-    seedEffect({
+    seedAssertion({
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
     const origin = seedOriginAssertion();
 
@@ -1278,13 +1278,13 @@ describe("applyEffect — relationship effects", () => {
       }),
     );
 
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
 
-    const written = [...effects.rows.values()].filter(
-      (row) => row.effectType === "terminate",
+    const written = [...assertions.rows.values()].filter(
+      (row) => row.operation === "terminate",
     );
 
     expect(written).toHaveLength(1);
@@ -1294,8 +1294,8 @@ describe("applyEffect — relationship effects", () => {
 
     // `terminate`, NOT `retract`: a narrated removal means the fact stopped holding
     // at a point in the story, not that it was never true (premis §8.3).
-    expect(termination?.targetAssertionId).toBe("assertion-1");
-    expect(termination?.targetEffectType).toBe("relationship_add");
+    expect(termination?.targetAssertionId).toBe("origin-assertion-1");
+    expect(termination?.targetOperation).toBe("relationship_add");
     // VALID time, taken from the parent transition's source entity — the beat the
     // author declared this removal on. This is the assertion that would fail if the
     // anchor were left null to "keep it simple".
@@ -1310,8 +1310,8 @@ describe("applyEffect — relationship effects", () => {
     // The claim SURVIVES, untouched — that is what makes this a log and not a
     // mutation. Asserting it here catches a future edit that "cleans up" the
     // assertion along with the projection.
-    expect(effects.rows.get("assertion-1")?.effectType).toBe("relationship_add");
-    expect(effects.rows.get("assertion-1")?.appliedAt).toEqual(now);
+    expect(assertions.rows.get("origin-assertion-1")?.operation).toBe("relationship_add");
+    expect(assertions.rows.get("origin-assertion-1")?.appliedAt).toEqual(now);
     // And the fold is gone, so the CRUD surface stops showing it.
     expect(relationships.deleted).toEqual([
       { id: "relationship-1", expectedVersion: 0 },
@@ -1323,9 +1323,9 @@ describe("applyEffect — relationship effects", () => {
     // carries, which is the only "when" a valid-time fold has.
     expect(outbox).toHaveLength(1);
     expect(outbox[0]?.payload).toMatchObject({
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
       terminationId: termination?.id,
-      targetAssertionId: "assertion-1",
+      targetAssertionId: "origin-assertion-1",
       anchorEntityType: "scene",
       anchorEntityId: "scene-7",
       assertionId: null,
@@ -1338,9 +1338,9 @@ describe("applyEffect — relationship effects", () => {
   // the log unnarrowed.
   it("terminates a fact that CRUD asserted, not only one a transition wrote", async () => {
     seedTransition({ sourceEntityType: "chapter", sourceEntityId: "chapter-3" });
-    seedEffect({
+    seedAssertion({
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
     seedOriginAssertion({ narrativeTransitionId: null });
 
@@ -1352,22 +1352,22 @@ describe("applyEffect — relationship effects", () => {
         definition: seededDefinition("member_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
-        sourceAssertionId: "assertion-1",
+        sourceAssertionId: "origin-assertion-1",
         createdByUserId: userId,
         now,
       }),
     );
 
-    await service.applyEffect(projectId, "effect-1", {
+    await service.applyAssertion(projectId, "assertion-1", {
       requestingUserId: userId,
       requestingMembership: writer,
     });
 
-    const termination = [...effects.rows.values()].find(
-      (row) => row.effectType === "terminate",
+    const termination = [...assertions.rows.values()].find(
+      (row) => row.operation === "terminate",
     );
 
-    expect(termination?.targetAssertionId).toBe("assertion-1");
+    expect(termination?.targetAssertionId).toBe("origin-assertion-1");
     // The termination belongs to the transition that narrated it, even though the
     // fact it ends belongs to no transition at all.
     expect(termination?.narrativeTransitionId).toBe("transition-1");
@@ -1378,9 +1378,9 @@ describe("applyEffect — relationship effects", () => {
   // because the row vanished mid-transaction. One fact, one answer — and the
   // message must not name the transition, which exists.
   it("answers the same 409 when the relationship vanishes mid-delete", async () => {
-    seedEffect({
+    seedAssertion({
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
     seedOriginAssertion();
 
@@ -1392,7 +1392,7 @@ describe("applyEffect — relationship effects", () => {
         definition: seededDefinition("member_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
-        sourceAssertionId: "assertion-1",
+        sourceAssertionId: "origin-assertion-1",
         createdByUserId: userId,
         now,
       }),
@@ -1400,24 +1400,24 @@ describe("applyEffect — relationship effects", () => {
     relationships.notFoundOnDelete = true;
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
     ).rejects.toMatchObject({
       code: ErrorCode.CONFLICT,
-      message: "The relationship this effect would remove does not exist",
+      message: "The relationship this assertion would remove does not exist",
     });
   });
 
   it("answers 409 when the relationship it would remove is not there", async () => {
-    seedEffect({
+    seedAssertion({
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
@@ -1428,9 +1428,9 @@ describe("applyEffect — relationship effects", () => {
   // by several relation types at once, and removing the wrong one would be a
   // silent data loss the writer never asked for.
   it("does not remove a row of a different relation type between the same pair", async () => {
-    seedEffect({
+    seedAssertion({
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
 
     relationships.rows.push(
@@ -1441,14 +1441,14 @@ describe("applyEffect — relationship effects", () => {
         definition: seededDefinition("ally_of"),
         source: { entityType: "character", entityId: "character-1" },
         target: { entityType: "faction", entityId: "faction-1" },
-        sourceAssertionId: "assertion-1",
+        sourceAssertionId: "origin-assertion-1",
         createdByUserId: userId,
         now,
       }),
     );
 
     await expect(
-      service.applyEffect(projectId, "effect-1", {
+      service.applyAssertion(projectId, "assertion-1", {
         requestingUserId: userId,
         requestingMembership: writer,
       }),
@@ -1459,15 +1459,15 @@ describe("applyEffect — relationship effects", () => {
 });
 
 describe("applyTransition", () => {
-  it("applies every pending effect and leaves the applied ones alone", async () => {
+  it("applies every pending assertion and leaves the applied ones alone", async () => {
     seedTransition();
-    seedEffect();
-    seedEffect({
-      id: "effect-2",
+    seedAssertion();
+    seedAssertion({
+      id: "assertion-2",
       ...relationshipEffectFields,
     });
-    seedEffect({
-      id: "effect-3",
+    seedAssertion({
+      id: "assertion-3",
       appliedAt: now,
       contentRevisionId: "rev-old",
     });
@@ -1478,13 +1478,13 @@ describe("applyTransition", () => {
     });
 
     expect(detail.status).toBe("fully_applied");
-    expect(effects.updated).toEqual(["effect-1", "effect-2"]);
-    expect(effects.rows.get("effect-3")?.contentRevisionId).toBe("rev-old");
-    // One content event and one causality event — the already-applied effect
+    expect(assertions.updated).toEqual(["assertion-1", "assertion-2"]);
+    expect(assertions.rows.get("assertion-3")?.contentRevisionId).toBe("rev-old");
+    // One content event and one causality event — the already-applied assertion
     // must not be re-announced.
     expect(outbox.map((event) => event.eventType)).toEqual([
       "content.updated",
-      "narrative.effect.applied",
+      "narrative.assertion.applied",
     ]);
   });
 
@@ -1492,13 +1492,13 @@ describe("applyTransition", () => {
   // simulate, so what is asserted is the contract the real one relies on: the
   // failure propagates out of the transaction callback instead of being
   // swallowed into a partial success.
-  it("propagates a failing effect instead of reporting partial success", async () => {
+  it("propagates a failing assertion instead of reporting partial success", async () => {
     seedTransition();
-    seedEffect();
-    seedEffect({
-      id: "effect-2",
+    seedAssertion();
+    seedAssertion({
+      id: "assertion-2",
       ...relationshipEffectFields,
-      effectType: "relationship_remove",
+      operation: "relationship_remove",
     });
 
     await expect(

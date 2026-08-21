@@ -1,7 +1,7 @@
 import { NESTED_TRANSITION_ROUTES } from "./nestedTransitionRoutes.js";
 import {
   NARRATIVE_TRANSITION_ID_PARAMETER,
-  TRANSITION_EFFECT_ID_PARAMETER,
+  ASSERTION_ID_PARAMETER,
 } from "./transitionRouteParameters.js";
 import {
   requireProjectId,
@@ -17,7 +17,7 @@ import { declareTransitionSchema } from "../dto/transition/declareTransitionSche
 import {
   narrativeTransitionListResponseSchema,
   narrativeTransitionResponseSchema,
-  transitionEffectResponseSchema,
+  assertionResponseSchema,
 } from "../dto/transition/transitionResponseSchema.js";
 import { updateTransitionSchema } from "../dto/transition/updateTransitionSchema.js";
 import { NarrativeTransitionDtoMapper } from "../mappers/transition/NarrativeTransitionDtoMapper.js";
@@ -32,7 +32,7 @@ import type { Context } from "hono";
 // indistinguishable from outside, otherwise the shape of the 404 tells a caller
 // whether a row exists.
 const NARRATIVE_TRANSITION_NOT_FOUND = "Narrative transition not found";
-const TRANSITION_EFFECT_NOT_FOUND = "Transition effect not found";
+const TRANSITION_EFFECT_NOT_FOUND = "Transition assertion not found";
 
 // No try/catch anywhere in this file, and that is a decision rather than an
 // omission. `NarrativeTransitionService` already translates every failure class
@@ -158,8 +158,8 @@ export class NarrativeTransitionController {
   // `can_delete` is never consulted on this path, deliberately, exactly as on
   // the relationship delete: the service's one guard is `assertCanWrite`
   // (`NarrativeTransitionService.ts:130-137`), because deleting a transition
-  // destroys an intention, not content — and one whose effects are all still
-  // pending, since a single applied effect makes the delete a 409 (D7).
+  // destroys an intention, not content — and one whose assertions are all still
+  // pending, since a single applied assertion makes the delete a 409 (D7).
   async deleteTransition(c: Context<AppEnvironment>) {
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
@@ -182,7 +182,7 @@ export class NarrativeTransitionController {
     return success(c, null, 200);
   }
 
-  async addEffect(c: Context<AppEnvironment>) {
+  async addAssertion(c: Context<AppEnvironment>) {
     const dto = await parseJsonBody(c, addEffectSchema);
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
@@ -198,35 +198,35 @@ export class NarrativeTransitionController {
       canDelete: member.canDelete,
     });
 
-    const detail = await this.narrativeTransitionService.addEffect(
+    const detail = await this.narrativeTransitionService.addAssertion(
       projectId,
       transitionId,
       input,
     );
     const response =
-      NarrativeTransitionDtoMapper.toTransitionEffectResponse(detail);
+      NarrativeTransitionDtoMapper.toAssertionResponse(detail);
 
-    return success(c, transitionEffectResponseSchema.parse(response), 201);
+    return success(c, assertionResponseSchema.parse(response), 201);
   }
 
-  // Flat path, not nested under its transition, and the asymmetry with addEffect
-  // is intentional (D10). `deleteEffect` and `applyEffect` are keyed on the
-  // effect id ALONE (`NarrativeTransitionService.ts:502-504,537-539`); a
-  // `/narrative-transitions/:id/effects/:effectId` URL would advertise a
+  // Flat path, not nested under its transition, and the asymmetry with addAssertion
+  // is intentional (D10). `deleteAssertion` and `applyAssertion` are keyed on the
+  // assertion id ALONE (`NarrativeTransitionService.ts:502-504,537-539`); a
+  // `/narrative-transitions/:id/assertions/:effectId` URL would advertise a
   // containment check that never runs, so a mismatched pair would succeed while
-  // reading as if it had been verified. `addEffect` stays nested because it
+  // reading as if it had been verified. `addAssertion` stays nested because it
   // genuinely needs the parent id.
-  async deleteEffect(c: Context<AppEnvironment>) {
+  async deleteAssertion(c: Context<AppEnvironment>) {
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
     const effectId = requireRouteParameter(
       c,
-      TRANSITION_EFFECT_ID_PARAMETER,
+      ASSERTION_ID_PARAMETER,
       TRANSITION_EFFECT_NOT_FOUND,
     );
     const member = requireProjectMember(c);
 
-    await this.narrativeTransitionService.deleteEffect(
+    await this.narrativeTransitionService.deleteAssertion(
       projectId,
       effectId,
       NarrativeTransitionDtoMapper.toMutateTransitionInput(userId, {
@@ -242,20 +242,20 @@ export class NarrativeTransitionController {
   // mutates the target entity and fills `applied_at` on a row that already
   // exists. It is also idempotent by construction (the claim is a conditional
   // write, so a second caller matches no row and is told `already-applied`,
-  // `flow_10:101,115`), so a repeat returns the same applied effect instead of
+  // `flow_10:101,115`), so a repeat returns the same applied assertion instead of
   // failing, and a caller that retries after a dropped connection gets the truth
   // rather than a conflict. Read `FOR UPDATE` + re-check until gerbang G2 (G2-2).
-  async applyEffect(c: Context<AppEnvironment>) {
+  async applyAssertion(c: Context<AppEnvironment>) {
     const userId = requireUserId(c);
     const projectId = requireProjectId(c);
     const effectId = requireRouteParameter(
       c,
-      TRANSITION_EFFECT_ID_PARAMETER,
+      ASSERTION_ID_PARAMETER,
       TRANSITION_EFFECT_NOT_FOUND,
     );
     const member = requireProjectMember(c);
 
-    const detail = await this.narrativeTransitionService.applyEffect(
+    const detail = await this.narrativeTransitionService.applyAssertion(
       projectId,
       effectId,
       NarrativeTransitionDtoMapper.toMutateTransitionInput(userId, {
@@ -264,14 +264,14 @@ export class NarrativeTransitionController {
       }),
     );
     const response =
-      NarrativeTransitionDtoMapper.toTransitionEffectResponse(detail);
+      NarrativeTransitionDtoMapper.toAssertionResponse(detail);
 
-    return success(c, transitionEffectResponseSchema.parse(response));
+    return success(c, assertionResponseSchema.parse(response));
   }
 
-  // Bulk apply (D9): every pending effect of one transition, in ONE transaction,
+  // Bulk apply (D9): every pending assertion of one transition, in ONE transaction,
   // all-or-nothing (notes §10 decision 4). The response is the whole transition
-  // afterwards — the same shape GET returns — and NOT a per-effect report, on
+  // afterwards — the same shape GET returns — and NOT a per-assertion report, on
   // purpose: a `{ succeeded, failed }` body would be the wire making room for
   // partial success, and partial success is precisely what this endpoint refuses
   // to have. Nothing applied means nothing changed and the caller gets the

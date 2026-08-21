@@ -136,7 +136,7 @@ export class PrismaContentRelationshipRepository
     // and an unguarded delete would be the bypass that voids the guarantee.
     //
     // No P2003 branch: nothing points at `content_relationships` (no inbound
-    // Restrict FK, no back-relation, and 7.7's `transition_effects` stores
+    // Restrict FK, no back-relation, and 7.7's `assertions` stores
     // endpoints rather than a FK to a relationship row), so a delete cannot be
     // blocked by a referent — which is why this port has no ReferencedError.
     const result = await this.client.contentRelationship.deleteMany({

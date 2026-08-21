@@ -62,12 +62,12 @@ export class PrismaEvaluationFactReader implements EvaluationFactReader {
       // as a fact that still holds. The mapping below applies the null check
       // where it belongs: to rows becoming assertions, after the retract and
       // terminate sets have been built from all of them.
-      this.client.transitionEffect.findMany({
+      this.client.assertion.findMany({
         where: { projectId },
         select: {
           id: true,
           relationshipDefinitionId: true,
-          effectType: true,
+          operation: true,
           targetEntityId: true,
           relatedEntityId: true,
           anchorEntityType: true,
@@ -121,7 +121,7 @@ export class PrismaEvaluationFactReader implements EvaluationFactReader {
     // nothing left to fold.
     const retractedIds = new Set(
       rows
-        .filter((row) => row.effectType === "retract")
+        .filter((row) => row.operation === "retract")
         .map((row) => row.targetAssertionId)
         .filter((id): id is string => id !== null),
     );
@@ -140,7 +140,7 @@ export class PrismaEvaluationFactReader implements EvaluationFactReader {
     const terminatedIds = new Set(
       rows
         .filter(
-          (row) => row.effectType === "terminate" && !retractedIds.has(row.id),
+          (row) => row.operation === "terminate" && !retractedIds.has(row.id),
         )
         .map((row) => row.targetAssertionId)
         .filter((id): id is string => id !== null),
@@ -152,8 +152,8 @@ export class PrismaEvaluationFactReader implements EvaluationFactReader {
           row,
         ): row is (typeof rows)[number] & { relationshipDefinitionId: string } =>
           row.relationshipDefinitionId !== null &&
-          row.effectType !== "retract" &&
-          row.effectType !== "terminate" &&
+          row.operation !== "retract" &&
+          row.operation !== "terminate" &&
           !retractedIds.has(row.id),
       )
       .map((row) => ({

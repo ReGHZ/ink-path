@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PrismaTransitionEffectRepository,
-  type TransitionEffectDatabase,
-} from "./PrismaTransitionEffectRepository.js";
+  PrismaAssertionRepository,
+  type AssertionDatabase,
+} from "./PrismaAssertionRepository.js";
+import { Assertion } from "../../domain/transition/Assertion.js";
 import { NarrativeTransitionRepositoryNotFoundError } from "../../domain/transition/NarrativeTransitionRepositoryError.js";
-import { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
 
-import type { TransitionEffect as PrismaTransitionEffect } from "../../../../../generated/prisma/client.js";
+import type { Assertion as PrismaAssertion } from "../../../../../generated/prisma/client.js";
 
 const now = new Date("2026-08-16T00:00:00.000Z");
 const later = new Date("2026-08-17T00:00:00.000Z");
 
-const row: PrismaTransitionEffect = {
-  id: "effect-1",
+const row: PrismaAssertion = {
+  id: "assertion-1",
   narrativeTransitionId: "transition-1",
   projectId: "project-1",
-  effectType: "attribute_change",
+  operation: "attribute_change",
   targetEntityType: "character",
   targetEntityId: "character-1",
   fieldPath: "archetype",
@@ -25,13 +25,13 @@ const row: PrismaTransitionEffect = {
   relatedEntityType: null,
   relatedEntityId: null,
   // Assertion-log columns (2026-08-18). All null here on purpose: this fixture
-  // is a Phase 7 transition effect, which is exactly the row shape that carries
+  // is a Phase 7 transition assertion, which is exactly the row shape that carries
   // none of them.
   relationshipDefinitionId: null,
   anchorEntityType: null,
   anchorEntityId: null,
   targetAssertionId: null,
-  targetEffectType: null,
+  targetOperation: null,
   appliedAt: null,
   contentRevisionId: null,
   createdAt: now,
@@ -59,16 +59,16 @@ function buildRepository(options: { count?: number } = {}) {
   // No `$queryRaw` fake since gerbang G2 (G2-2). It existed to let a test assert
   // the statement really said `FOR UPDATE`; that assertion died with the mechanism
   // at step 4b-5, and the predicate that replaced it is pinned behaviourally
-  // instead (`test/integration/transition-effect-tenancy.integration.test.ts` and
+  // instead (`test/integration/assertion-tenancy.integration.test.ts` and
   // `apply-delete-serialization.integration.test.ts`).
   const client = {
-    transitionEffect: {
+    assertion: {
       findUnique: () => {
         calls.findUnique += 1;
 
         return Promise.resolve(row);
       },
-      // `findById` moved off findUnique when `transition_effects` became the
+      // `findById` moved off findUnique when `assertions` became the
       // assertion log too: it now has to carry `narrativeTransitionId: { not:
       // null }` so an assertion id answers 404 rather than reaching a mapper
       // that would reject it with the wrong reason. The `where` is recorded
@@ -99,17 +99,17 @@ function buildRepository(options: { count?: number } = {}) {
         return Promise.resolve({ count: options.count ?? 1 });
       },
     },
-  } as unknown as TransitionEffectDatabase;
+  } as unknown as AssertionDatabase;
 
-  return { repository: new PrismaTransitionEffectRepository(client), calls };
+  return { repository: new PrismaAssertionRepository(client), calls };
 }
 
-function buildAppliedEffect(): TransitionEffect {
-  const effect = TransitionEffect.reconstitute({
-    id: "effect-1",
+function buildAppliedAssertion(): Assertion {
+  const assertion = Assertion.reconstitute({
+    id: "assertion-1",
     narrativeTransitionId: "transition-1",
     projectId: "project-1",
-    effectType: "attribute_change",
+    operation: "attribute_change",
     targetEntityType: "character",
     targetEntityId: "character-1",
     fieldPath: "archetype",
@@ -121,19 +121,19 @@ function buildAppliedEffect(): TransitionEffect {
     anchorEntityType: null,
     anchorEntityId: null,
     targetAssertionId: null,
-    targetEffectType: null,
+    targetOperation: null,
     appliedAt: null,
     contentRevisionId: null,
     createdAt: now,
   });
 
-  effect.markApplied({ contentRevisionId: "revision-1", now: later });
+  assertion.markApplied({ contentRevisionId: "revision-1", now: later });
 
-  return effect;
+  return assertion;
 }
 
-describe("PrismaTransitionEffectRepository", () => {
-  // Since `transition_effects` became the assertion log as well, the TABLE is
+describe("PrismaAssertionRepository", () => {
+  // Since `assertions` became the assertion log as well, the TABLE is
   // wider than this AGGREGATE: it holds rows with no parent transition at all.
   // Without this predicate an assertion id reached the mapper and came back as
   // "Narrative transition id is required" — the wrong reason for a row designed
@@ -141,17 +141,17 @@ describe("PrismaTransitionEffectRepository", () => {
   it("reads only rows that belong to a transition", async () => {
     const { repository, calls } = buildRepository();
 
-    await repository.findById("effect-1");
+    await repository.findById("assertion-1");
 
     expect(calls.findFirst).toEqual([
-      { where: { id: "effect-1", narrativeTransitionId: { not: null } } },
+      { where: { id: "assertion-1", narrativeTransitionId: { not: null } } },
     ]);
   });
 
   // Both bulk apply and the delete guard walk this list to take their locks.
   // A non-total order would let the two acquire the same two rows in opposite
   // sequences — the textbook deadlock.
-  it("returns a transition's effects in a stable, total order", async () => {
+  it("returns a transition's assertions in a stable, total order", async () => {
     const { repository, calls } = buildRepository();
 
     await repository.findByTransitionId("transition-1");
@@ -164,7 +164,7 @@ describe("PrismaTransitionEffectRepository", () => {
 
   // The invariant this once guarded MOVED in step 4b; it was not dropped.
   //
-  // Before: `insert` discarded `applied_at`, so "an effect cannot be declared as
+  // Before: `insert` discarded `applied_at`, so "an assertion cannot be declared as
   // already applied" was enforced here, by the column default. That worked while
   // a transition was the only writer. Relationship CRUD asserts facts that hold
   // the moment they are written and have no apply step that could set the column
@@ -172,19 +172,19 @@ describe("PrismaTransitionEffectRepository", () => {
   // pending.
   //
   // After: `insert` writes what the aggregate carries, and the DOMAIN is what
-  // refuses the abuse — `TransitionEffect.create()` hardcodes `appliedAt: null`,
+  // refuses the abuse — `Assertion.create()` hardcodes `appliedAt: null`,
   // and only `assertFact()` (parentless, relationship shapes only) can produce a
   // snapshot with a value. That domain half is asserted in
-  // `../../domain/transition/TransitionEffect.test.ts` ("is born pending…",
+  // `../../domain/transition/Assertion.test.ts` ("is born pending…",
   // `:111`) — passing the column through here is only safe because that holds.
   it("passes applied state through on insert, but only the domain can produce it", async () => {
     const { repository, calls } = buildRepository();
 
-    await repository.insert(buildAppliedEffect());
+    await repository.insert(buildAppliedAssertion());
 
     const data = (calls.create[0] as { data: Record<string, unknown> }).data;
 
-    // `later`, not `now`: the fixture applies the effect after creating it, so
+    // `later`, not `now`: the fixture applies the assertion after creating it, so
     // this also shows the column is carried from the AGGREGATE rather than
     // stamped by the mapper.
     expect(data.appliedAt).toBe(later);
@@ -197,7 +197,7 @@ describe("PrismaTransitionEffectRepository", () => {
   it("writes only the two mutable columns on update", async () => {
     const { repository, calls } = buildRepository();
 
-    await repository.update(buildAppliedEffect());
+    await repository.update(buildAppliedAssertion());
 
     const data = (calls.updateMany[0] as { data: Record<string, unknown> }).data;
 
@@ -212,7 +212,7 @@ describe("PrismaTransitionEffectRepository", () => {
     const { repository } = buildRepository({ count: 0 });
 
     await expect(
-      repository.update(buildAppliedEffect()),
+      repository.update(buildAppliedAssertion()),
     ).rejects.toBeInstanceOf(NarrativeTransitionRepositoryNotFoundError);
   });
 

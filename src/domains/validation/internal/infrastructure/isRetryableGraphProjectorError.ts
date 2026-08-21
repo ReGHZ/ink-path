@@ -13,7 +13,7 @@ import { EvaluationGraphTransientError } from "../domain/EvaluationGraphError.js
 //
 // Everything not named here is NON-retryable, and that default is the design:
 //
-//   · a routing key or effect type the fold has no branch for
+//   · a routing key or assertion type the fold has no branch for
 //   · an event naming an assertion the log does not have
 //   · a foreign key refusing a predicate the project never defined
 //   · a unary fact, which has no home in the fold yet

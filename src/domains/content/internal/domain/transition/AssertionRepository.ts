@@ -1,21 +1,21 @@
-import type { TransitionEffect } from "./TransitionEffect.js";
+import type { Assertion } from "./Assertion.js";
 
 // Three outcomes rather than a boolean plus a follow-up read at every call site:
 // "nobody has this row" and "somebody applied it first" are different answers to
 // the caller (404 vs idempotent success), and deciding which one it is requires a
 // read the adapter has already done.
-export type TransitionEffectClaim =
-  | { status: "claimed"; effect: TransitionEffect }
-  | { status: "already-applied"; effect: TransitionEffect }
+export type AssertionClaim =
+  | { status: "claimed"; assertion: Assertion }
+  | { status: "already-applied"; assertion: Assertion }
   | { status: "missing" };
 
-export type TransitionEffectDeletion = "deleted" | "applied" | "missing";
+export type AssertionDeletion = "deleted" | "applied" | "missing";
 
-export type TransitionEffectRepository = {
+export type AssertionRepository = {
   // Unscoped read, then the service compares `projectId` — same 404-not-403 rule
-  // as everywhere else in this domain. The effect carries its own `project_id`
+  // as everywhere else in this domain. The assertion carries its own `project_id`
   // (denormalised from the parent, `16:95`), so the comparison needs no join.
-  findById(id: string): Promise<TransitionEffect | null>;
+  findById(id: string): Promise<Assertion | null>;
 
   // The SAME read WITHOUT the parent-transition narrowing, added in step 4b-2.
   //
@@ -23,7 +23,7 @@ export type TransitionEffectRepository = {
   // is what makes it a read of the Phase 7 AGGREGATE rather than of the table.
   // An assertion written straight through relationship CRUD has no parent, so
   // that read cannot see it — and an operation (`retract`/`terminate`) has to,
-  // because it must point at the row's real `effect_type` rather than at a kind
+  // because it must point at the row's real `operation` rather than at a kind
   // its caller merely believes (C-1).
   //
   // Project-scoped in the signature rather than compared afterwards, because
@@ -33,7 +33,7 @@ export type TransitionEffectRepository = {
   findAssertionById(
     projectId: string,
     id: string,
-  ): Promise<TransitionEffect | null>;
+  ): Promise<Assertion | null>;
 
   // Step 4b-5. The apply path's FIRST statement, and the replacement for the
   // pessimistic read lock below: the predicate travels INSIDE the write, so the
@@ -54,13 +54,13 @@ export type TransitionEffectRepository = {
   //
   // `claimed` hands the row back in its PRE-CLAIM shape on purpose: the row on
   // disk already carries the claim, but the aggregate stays pending so
-  // `markApplied()` remains the single place that decides an effect is applied,
+  // `markApplied()` remains the single place that decides an assertion is applied,
   // with the same `now` the claim used.
   claimForApply(
     projectId: string,
     id: string,
     now: Date,
-  ): Promise<TransitionEffectClaim>;
+  ): Promise<AssertionClaim>;
 
   // The delete twin of the claim, step 4b-5. `applied` is the answer only after
   // the delete has WAITED for whatever holds that row: zero rows removed means
@@ -69,9 +69,9 @@ export type TransitionEffectRepository = {
   deleteIfPending(
     projectId: string,
     id: string,
-  ): Promise<TransitionEffectDeletion>;
+  ): Promise<AssertionDeletion>;
 
-  // Every effect of one transition, in `createdAt` asc with `id` asc as
+  // Every assertion of one transition, in `createdAt` asc with `id` asc as
   // tie-break. Backed by `@@index([narrativeTransitionId])`
   // (`prisma/narrative-transition.prisma:56`).
   //
@@ -81,21 +81,21 @@ export type TransitionEffectRepository = {
   // apply (decision D9) iterates over. Returns aggregates rather than a count of
   // applied rows for the same reason `findByEntity` beat `countByEntity` at the
   // 7.1 gate: every caller needs the rows themselves anyway.
-  findByTransitionId(transitionId: string): Promise<TransitionEffect[]>;
+  findByTransitionId(transitionId: string): Promise<Assertion[]>;
 
-  insert(transitionEffect: TransitionEffect): Promise<void>;
+  insert(assertion: Assertion): Promise<void>;
 
   // Writes `applied_at` + `content_revision_id`. Those are the only mutable
-  // columns on this table — an effect's intent is immutable, and changing one
-  // means deleting the pending effect and declaring another
-  // (Flow 10 has no update endpoint for effects, only add and delete).
+  // columns on this table — an assertion's intent is immutable, and changing one
+  // means deleting the pending assertion and declaring another
+  // (Flow 10 has no update endpoint for assertions, only add and delete).
   //
   // Unguarded by version, and that is not the oversight it looks like: this
   // table has no `version` column and does not need one, because since step 4b-5
   // the write only ever happens inside the transaction whose `claimForApply()`
   // already holds this row's lock. The CLAIM is the serialisation. Calling this
   // outside that transaction loses the guarantee.
-  update(transitionEffect: TransitionEffect): Promise<void>;
+  update(assertion: Assertion): Promise<void>;
 
 
 };

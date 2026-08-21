@@ -79,7 +79,7 @@ async function cleanDatabase(client: PrismaClient): Promise<void> {
   await client.evaluationEdge.deleteMany({ where: { projectId } });
   await client.evaluationNode.deleteMany({ where: { projectId } });
   await client.contentRelationship.deleteMany({ where: { projectId } });
-  await client.transitionEffect.deleteMany({ where: { projectId } });
+  await client.assertion.deleteMany({ where: { projectId } });
   await client.narrativeTransition.deleteMany({ where: { projectId } });
   await client.relationshipDefinition.deleteMany({ where: { projectId } });
   await client.outboxEvent.deleteMany({ where: { projectId } });
@@ -132,12 +132,12 @@ async function seedAssertion(
     select: { id: true },
   });
 
-  await prisma.transitionEffect.create({
+  await prisma.assertion.create({
     data: {
       id,
       projectId,
       narrativeTransitionId: null,
-      effectType: "relationship_add",
+      operation: "relationship_add",
       targetEntityType: "character",
       targetEntityId: characterA,
       relationshipType: "ally_of",
@@ -315,13 +315,13 @@ describe("assertion log -> RabbitMQ -> GraphProjector -> evaluation graph (4b-4)
         characterC,
       );
 
-      await publisher.publish("narrative.effect.applied", {
+      await publisher.publish("narrative.assertion.applied", {
         projectId,
-        effectType: "relationship_add",
+        operation: "relationship_add",
         assertionId,
       });
 
-      // `narrative.effect.*` matches neither `content.*` nor `content.relationship.*`.
+      // `narrative.assertion.*` matches neither `content.*` nor `content.relationship.*`.
       // If the queue carried one binding, this fact would simply never arrive and the
       // graph would be quietly incomplete — the failure T-1 was about.
       await waitUntil("the narrated assertion is folded", async () => {
@@ -343,30 +343,30 @@ describe("assertion log -> RabbitMQ -> GraphProjector -> evaluation graph (4b-4)
         characterC,
       );
 
-      await publisher.publish("narrative.effect.applied", {
+      await publisher.publish("narrative.assertion.applied", {
         projectId,
-        effectType: "relationship_add",
+        operation: "relationship_add",
         assertionId: terminated,
       });
       await waitUntil("the fact to terminate is folded", async () => {
         return (await edgeCount(terminated)) === 1;
       });
 
-      await publisher.publish("narrative.effect.applied", {
+      await publisher.publish("narrative.assertion.applied", {
         projectId,
-        effectType: "relationship_remove",
+        operation: "relationship_remove",
         assertionId: null,
         terminationId: "6a6a6a6a-0000-4000-8000-0000000000f1",
         targetAssertionId: terminated,
       });
 
-      // A FENCE, not a sleep: the removal carries no observable effect by design, so
+      // A FENCE, not a sleep: the removal carries no observable assertion by design, so
       // this publishes a message BEHIND it on the same queue and waits for that one.
       // Once the fence is folded, the removal has already been consumed — which is what
       // makes the assertion below about a decision rather than about timing.
-      await publisher.publish("narrative.effect.applied", {
+      await publisher.publish("narrative.assertion.applied", {
         projectId,
-        effectType: "relationship_add",
+        operation: "relationship_add",
         assertionId: fence,
       });
       await waitUntil("the fence message behind the removal is folded", async () => {

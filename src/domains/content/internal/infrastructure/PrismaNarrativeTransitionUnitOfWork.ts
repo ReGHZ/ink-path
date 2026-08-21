@@ -5,8 +5,8 @@ import { PrismaPlotRepository } from "./story/PrismaPlotRepository.js";
 import { PrismaSceneRepository } from "./story/PrismaSceneRepository.js";
 import { PrismaContentRelationshipRepository } from "./support/PrismaContentRelationshipRepository.js";
 import { PrismaContentRevisionRepository } from "./support/PrismaContentRevisionRepository.js";
+import { PrismaAssertionRepository } from "./transition/PrismaAssertionRepository.js";
 import { PrismaNarrativeTransitionRepository } from "./transition/PrismaNarrativeTransitionRepository.js";
-import { PrismaTransitionEffectRepository } from "./transition/PrismaTransitionEffectRepository.js";
 import { PrismaEventRepository } from "./world/PrismaEventRepository.js";
 import { PrismaLayerRepository } from "./world/PrismaLayerRepository.js";
 import { PrismaWorldElementRepository } from "./world/PrismaWorldElementRepository.js";
@@ -26,8 +26,8 @@ import type {
 
 // Every repository below is built over `tx`, including the nine that back the
 // attribute mutator. That is the whole reason this class exists rather than a
-// reuse of `PrismaContentUnitOfWork`: applying an effect locks
-// `transition_effects`, then writes an entity table, `content_revisions`,
+// reuse of `PrismaContentUnitOfWork`: applying an assertion locks
+// `assertions`, then writes an entity table, `content_revisions`,
 // `content_relationships` and `outbox_events` — and a lock only covers writes
 // made through the connection that holds it.
 //
@@ -52,7 +52,7 @@ export class PrismaNarrativeTransitionUnitOfWork
         return work(
           {
             narrativeTransitions: new PrismaNarrativeTransitionRepository(tx),
-            transitionEffects: new PrismaTransitionEffectRepository(tx),
+            assertions: new PrismaAssertionRepository(tx),
             contentRelationships: new PrismaContentRelationshipRepository(tx),
             contentAttributes: createContentAttributeMutator({
               layerRepository: new PrismaLayerRepository(tx),

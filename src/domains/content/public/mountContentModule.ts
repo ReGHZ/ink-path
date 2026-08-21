@@ -96,7 +96,7 @@ export function mountContentModule(
   // Phase 7.8, mounted beside the relationship router for the same reason it can
   // be: its own nested lists are one segment deeper than the entity routers
   // (`/:projectId/scenes/:sceneId/narrative-transitions`), and its two flat
-  // collections (`/narrative-transitions`, `/transition-effects`) are segments
+  // collections (`/narrative-transitions`, `/assertions`) are segments
   // no other content router claims. Order is irrelevant here; shape decides.
   router.route(
     "/",

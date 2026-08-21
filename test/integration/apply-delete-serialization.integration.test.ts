@@ -122,7 +122,7 @@ function serviceOver(
     narrativeTransitionRepository: container.resolve(
       "narrativeTransitionRepository",
     ),
-    transitionEffectRepository: container.resolve("transitionEffectRepository"),
+    assertionRepository: container.resolve("assertionRepository"),
     contentEntityLocator: container.resolve("contentEntityLocator"),
     narrativeTransitionUnitOfWork: unitOfWork,
     relationshipDefinitionReader: container.resolve(
@@ -145,7 +145,7 @@ const plainService = serviceOver(
 );
 
 // Same connection, but every id it mints is the one the caller names — so a
-// THIRD party can apply the effect A is about to create without waiting for A to
+// THIRD party can apply the assertion A is about to create without waiting for A to
 // return it. Under the mechanism that protects this race A never returns at all
 // (it is blocked), which is exactly why the id cannot come from its result.
 function mintingService(id: string): NarrativeTransitionService {
@@ -171,7 +171,7 @@ function interceptingService(
         // A Proxy rather than an object spread: the repository is a class
         // instance, so its methods live on the prototype and a spread would
         // silently drop all of them.
-        const transitionEffects = new Proxy(repositories.transitionEffects, {
+        const assertions = new Proxy(repositories.assertions, {
           get(target, property, receiver) {
             if (property === "findByTransitionId") {
               return async (transitionId: string) => {
@@ -189,7 +189,7 @@ function interceptingService(
           },
         });
 
-        return work({ ...repositories, transitionEffects }, outboxEvents);
+        return work({ ...repositories, assertions }, outboxEvents);
       }),
   };
 
@@ -218,7 +218,7 @@ function interceptingAfterFirst(
   const unitOfWork: NarrativeTransitionUnitOfWork = {
     transaction: (work) =>
       inner.transaction(async (repositories, outboxEvents) => {
-        const transitionEffects = new Proxy(repositories.transitionEffects, {
+        const assertions = new Proxy(repositories.assertions, {
           get(target, property, receiver) {
             if (property === method) {
               return async (...args: unknown[]) => {
@@ -245,7 +245,7 @@ function interceptingAfterFirst(
           },
         });
 
-        return work({ ...repositories, transitionEffects }, outboxEvents);
+        return work({ ...repositories, assertions }, outboxEvents);
       }),
   };
 
@@ -306,7 +306,7 @@ function watch<T>(promise: Promise<T>): { settled: () => boolean } {
 async function cleanDatabase(client: PrismaClient): Promise<void> {
   await deleteEvaluationFold(client, [projectId]);
   await client.contentRelationship.deleteMany({ where: { projectId } });
-  await client.transitionEffect.deleteMany({ where: { projectId } });
+  await client.assertion.deleteMany({ where: { projectId } });
   await client.narrativeTransition.deleteMany({ where: { projectId } });
   await client.character.deleteMany({ where: { projectId } });
   await client.contentRevision.deleteMany({ where: { projectId } });
@@ -341,7 +341,7 @@ beforeEach(async () => {
   );
 
   // Real rows: `applyAttributeChange` mutates the entity and writes a revision,
-  // so an effect pointing at a phantom character would answer 404 for the wrong
+  // so an assertion pointing at a phantom character would answer 404 for the wrong
   // reason and every assertion below would be measuring that instead.
   //
   // The creation revision is part of that realism and not fixture ceremony: the
@@ -419,13 +419,13 @@ beforeEach(async () => {
     );
   }
 
-  await prisma.transitionEffect.createMany({
+  await prisma.assertion.createMany({
     data: [
       {
         id: effectId,
         narrativeTransitionId: transitionId,
         projectId,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: characterId,
         fieldPath: "archetype",
@@ -436,7 +436,7 @@ beforeEach(async () => {
         id: otherEffectId,
         narrativeTransitionId: otherTransitionId,
         projectId,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: otherCharacterId,
         fieldPath: "archetype",
@@ -457,12 +457,12 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   // T1. The delete has to WAIT and then refuse. "0 rows deleted, reported as
   // success" is the failure this test exists to reject: it would leave the
   // caller believing a fact was withdrawn.
-  it("makes a delete of an effect wait for an in-flight apply and then refuses it", async () => {
+  it("makes a delete of an assertion wait for an in-flight apply and then refuses it", async () => {
     const order: string[] = [];
     const holder = holdingService();
 
     const applying = holder.service
-      .applyEffect(projectId, effectId, writer)
+      .applyAssertion(projectId, effectId, writer)
       .then((detail) => {
         order.push("apply committed");
         return detail;
@@ -471,7 +471,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
     await holder.reached;
 
     const deleting = rivalService
-      .deleteEffect(projectId, effectId, writer)
+      .deleteAssertion(projectId, effectId, writer)
       .catch((error: unknown) => {
         order.push("delete resolved");
         throw error;
@@ -493,7 +493,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
 
     expect(order).toEqual(["apply committed", "delete resolved"]);
 
-    const row = await prisma.transitionEffect.findUnique({
+    const row = await prisma.assertion.findUnique({
       where: { id: effectId },
     });
 
@@ -501,13 +501,13 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   });
 
   // T2. Invariant 7.7, stated as behaviour: the assertion log must not keep a
-  // fact whose effect row is gone. Reads the three surfaces a fact can land on
+  // fact whose assertion row is gone. Reads the three surfaces a fact can land on
   // rather than the one the current code happens to use.
-  it("writes no fact when the effect was deleted before the apply ran", async () => {
-    await rivalService.deleteEffect(projectId, effectId, writer);
+  it("writes no fact when the assertion was deleted before the apply ran", async () => {
+    await rivalService.deleteAssertion(projectId, effectId, writer);
 
     await expect(
-      rivalService.applyEffect(projectId, effectId, writer),
+      rivalService.applyAssertion(projectId, effectId, writer),
     ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND });
 
     const [revisions, relationships, edges, character] = await Promise.all([
@@ -534,11 +534,11 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   it("applies exactly once when two applies race, and the loser succeeds idempotently", async () => {
     const holder = holdingService();
 
-    const applying = holder.service.applyEffect(projectId, effectId, writer);
+    const applying = holder.service.applyAssertion(projectId, effectId, writer);
 
     await holder.reached;
 
-    const rivalApplying = rivalService.applyEffect(projectId, effectId, writer);
+    const rivalApplying = rivalService.applyAssertion(projectId, effectId, writer);
     const rivalRun = watch(rivalApplying);
 
     await new Promise((resolve) => setTimeout(resolve, CHANCE_TO_RUN_MS));
@@ -550,13 +550,13 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
       await applying;
     }
 
-    const afterWinner = await prisma.transitionEffect.findUnique({
+    const afterWinner = await prisma.assertion.findUnique({
       where: { id: effectId },
     });
 
     await expect(rivalApplying).resolves.toMatchObject({ id: effectId });
 
-    const afterLoser = await prisma.transitionEffect.findUnique({
+    const afterLoser = await prisma.assertion.findUnique({
       where: { id: effectId },
     });
 
@@ -575,12 +575,12 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   });
 
   // T4. The parent delete must see the child that was applied inside its guard
-  // window. Destroying an applied effect is the 7.7 failure with the pieces
+  // window. Destroying an applied assertion is the 7.7 failure with the pieces
   // swapped: the fact survives in the log, its provenance does not.
   it("makes a transition delete wait for an in-flight apply of its child and then refuses it", async () => {
     const holder = holdingService();
 
-    const applying = holder.service.applyEffect(projectId, effectId, writer);
+    const applying = holder.service.applyAssertion(projectId, effectId, writer);
 
     await holder.reached;
 
@@ -604,24 +604,24 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
       code: ErrorCode.CONFLICT,
     });
 
-    const [transition, effect] = await Promise.all([
+    const [transition, assertion] = await Promise.all([
       prisma.narrativeTransition.findUnique({ where: { id: transitionId } }),
-      prisma.transitionEffect.findUnique({ where: { id: effectId } }),
+      prisma.assertion.findUnique({ where: { id: effectId } }),
     ]);
 
     expect(transition).not.toBeNull();
-    expect(effect?.appliedAt).not.toBeNull();
+    expect(assertion?.appliedAt).not.toBeNull();
   });
 
   // T5. A child born inside the delete's window either goes with the parent or
   // stops the delete. What must never happen is the third outcome: the parent
   // gone and a child left pointing at nothing.
-  it("never leaves a child effect without its parent transition", async () => {
+  it("never leaves a child assertion without its parent transition", async () => {
     const holder = holdingService();
 
-    const adding = holder.service.addEffect(projectId, transitionId, {
+    const adding = holder.service.addAssertion(projectId, transitionId, {
       ...writer,
-      effectType: "attribute_change",
+      operation: "attribute_change",
       targetEntityType: "character",
       targetEntityId: otherCharacterId,
       fieldPath: "archetype",
@@ -656,7 +656,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
 
     const [transition, children] = await Promise.all([
       prisma.narrativeTransition.findUnique({ where: { id: transitionId } }),
-      prisma.transitionEffect.findMany({
+      prisma.assertion.findMany({
         where: { narrativeTransitionId: transitionId },
       }),
     ]);
@@ -680,7 +680,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   //
   // Stated as behaviour, so it survives the mechanism swap: IF a fact was
   // applied, its provenance row must still exist. A revision numbered above the
-  // creation snapshot is that fact's fingerprint, and it outlives the effect row
+  // creation snapshot is that fact's fingerprint, and it outlives the assertion row
   // the delete would destroy — which is the only reason the assertion can be
   // made at all.
   it("never destroys a child that was applied while its parent was being deleted", async () => {
@@ -705,16 +705,16 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
     // Born and applied inside B's window — or blocked for the whole of it, which
     // is what the current mechanism does and is equally acceptable behaviour.
     const newborn = mintingService(newbornId)
-      .addEffect(projectId, transitionId, {
+      .addAssertion(projectId, transitionId, {
         ...writer,
-        effectType: "attribute_change",
+        operation: "attribute_change",
         targetEntityType: "character",
         targetEntityId: otherCharacterId,
         fieldPath: "archetype",
         newValue: "traitor",
       })
       .then(
-        () => plainService.applyEffect(projectId, newbornId, writer),
+        () => plainService.applyAssertion(projectId, newbornId, writer),
         () => null,
       )
       .catch(() => null);
@@ -738,11 +738,11 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
       // that says WHICH transition applied it must still be there.
       expect(outcome).toBe("refused");
 
-      const effect = await prisma.transitionEffect.findUnique({
+      const assertion = await prisma.assertion.findUnique({
         where: { id: newbornId },
       });
 
-      expect(effect?.appliedAt).not.toBeNull();
+      expect(assertion?.appliedAt).not.toBeNull();
     } else {
       // Nothing was applied, so the delete was free to succeed.
       expect(outcome).toBe("deleted");
@@ -757,7 +757,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   // the exact complaint the deleted `for-update-lock` file wrote about itself.
   //
   // Two rows are the minimum that can express an order, so this needs its own
-  // transition with two pending effects, and they target DIFFERENT characters: two
+  // transition with two pending assertions, and they target DIFFERENT characters: two
   // attribute changes on one entity would make the second apply fail on "already
   // holds the intended value" and the test would be measuring D5 instead of lock
   // order.
@@ -785,13 +785,13 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
       }),
     );
 
-    await prisma.transitionEffect.createMany({
+    await prisma.assertion.createMany({
       data: [
         {
           id: firstEffectId,
           narrativeTransitionId: orderedTransitionId,
           projectId,
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: characterId,
           fieldPath: "archetype",
@@ -805,7 +805,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
           id: secondEffectId,
           narrativeTransitionId: orderedTransitionId,
           projectId,
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: "character",
           targetEntityId: otherCharacterId,
           fieldPath: "archetype",
@@ -875,7 +875,7 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
       });
     }
 
-    const survivors = await prisma.transitionEffect.findMany({
+    const survivors = await prisma.assertion.findMany({
       where: { narrativeTransitionId: orderedTransitionId },
       select: { id: true, appliedAt: true },
       orderBy: { createdAt: "asc" },
@@ -893,20 +893,20 @@ describe("apply vs delete, serialised — behaviour, not mechanism", () => {
   it("does not block work on a different transition while an apply is in flight", async () => {
     const holder = holdingService();
 
-    const applying = holder.service.applyEffect(projectId, effectId, writer);
+    const applying = holder.service.applyAssertion(projectId, effectId, writer);
 
     await holder.reached;
 
     try {
       await expect(
-        rivalService.deleteEffect(projectId, otherEffectId, writer),
+        rivalService.deleteAssertion(projectId, otherEffectId, writer),
       ).resolves.toBeUndefined();
     } finally {
       holder.release();
       await applying;
     }
 
-    const other = await prisma.transitionEffect.findUnique({
+    const other = await prisma.assertion.findUnique({
       where: { id: otherEffectId },
     });
 

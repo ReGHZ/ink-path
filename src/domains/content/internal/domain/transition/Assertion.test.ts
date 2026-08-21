@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  TransitionEffect,
-  type CreateTransitionEffectProperties,
-  type TransitionEffectProperties,
-} from "./TransitionEffect.js";
+  Assertion,
+  type CreateAssertionProperties,
+  type AssertionProperties,
+} from "./Assertion.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { CONTENT_ENTITY_TYPES } from "../support/ContentRevision.js";
 import { seededDefinition } from "../support/relationshipDefinitionSeed.js";
@@ -16,23 +16,23 @@ const projectId = "project-1";
 const narrativeTransitionId = "transition-1";
 
 type CreateAttributeChangeProperties = Extract<
-  CreateTransitionEffectProperties,
-  { effectType: "attribute_change" }
+  CreateAssertionProperties,
+  { operation: "attribute_change" }
 >;
 
 type CreateRelationshipChangeProperties = Extract<
-  CreateTransitionEffectProperties,
-  { effectType: "relationship_add" | "relationship_remove" }
+  CreateAssertionProperties,
+  { operation: "relationship_add" | "relationship_remove" }
 >;
 
 function createAttributeChange(
   overrides: Partial<CreateAttributeChangeProperties> = {},
 ) {
-  return TransitionEffect.create({
-    id: "effect-1",
+  return Assertion.create({
+    id: "assertion-1",
     narrativeTransitionId,
     projectId,
-    effectType: "attribute_change",
+    operation: "attribute_change",
     targetEntityType: "character",
     targetEntityId: "character-1",
     fieldPath: "description",
@@ -53,11 +53,11 @@ function createRelationshipChange(
       ? overrides.relationshipType
       : "member_of";
 
-  return TransitionEffect.create({
-    id: "effect-1",
+  return Assertion.create({
+    id: "assertion-1",
     narrativeTransitionId,
     projectId,
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetEntityType: "character",
     targetEntityId: "character-1",
     relationshipType,
@@ -74,11 +74,11 @@ function createRelationshipChange(
   });
 }
 
-const attributeSnapshot: TransitionEffectProperties = {
-  id: "effect-1",
+const attributeSnapshot: AssertionProperties = {
+  id: "assertion-1",
   narrativeTransitionId,
   projectId,
-  effectType: "attribute_change",
+  operation: "attribute_change",
   targetEntityType: "character",
   targetEntityId: "character-1",
   fieldPath: "description",
@@ -90,15 +90,15 @@ const attributeSnapshot: TransitionEffectProperties = {
   anchorEntityType: null,
   anchorEntityId: null,
   targetAssertionId: null,
-  targetEffectType: null,
+  targetOperation: null,
   appliedAt: null,
   contentRevisionId: null,
   createdAt: now,
 };
 
-const relationshipSnapshot: TransitionEffectProperties = {
+const relationshipSnapshot: AssertionProperties = {
   ...attributeSnapshot,
-  effectType: "relationship_add",
+  operation: "relationship_add",
   fieldPath: null,
   newValue: null,
   relationshipType: "member_of",
@@ -107,20 +107,20 @@ const relationshipSnapshot: TransitionEffectProperties = {
   relatedEntityId: "faction-1",
 };
 
-function reconstitute(overrides: Partial<TransitionEffectProperties> = {}) {
-  return TransitionEffect.reconstitute({ ...attributeSnapshot, ...overrides });
+function reconstitute(overrides: Partial<AssertionProperties> = {}) {
+  return Assertion.reconstitute({ ...attributeSnapshot, ...overrides });
 }
 
-describe("TransitionEffect.create — attribute_change", () => {
+describe("Assertion.create — attribute_change", () => {
   // The counterpart of "born pending", and the reason the persistence mapper is
   // allowed to write `applied_at` at all since step 4b: a fact asserted straight
   // through relationship CRUD has no apply step that could ever set it.
   it("assertFact produces an APPLIED, parentless fact carrying its predicate", () => {
-    const effect = TransitionEffect.assertFact({
+    const assertion = Assertion.assertFact({
       id: "assertion-1",
       narrativeTransitionId: null,
       projectId,
-      effectType: "relationship_add",
+      operation: "relationship_add",
       targetEntityType: "character",
       targetEntityId: "character-1",
       relationshipType: "member_of",
@@ -130,36 +130,36 @@ describe("TransitionEffect.create — attribute_change", () => {
       now,
     });
 
-    expect(effect.isApplied).toBe(true);
-    expect(effect.narrativeTransitionId).toBeNull();
-    expect(effect.toSnapshot().relationshipDefinitionId).toBe(
+    expect(assertion.isApplied).toBe(true);
+    expect(assertion.narrativeTransitionId).toBeNull();
+    expect(assertion.toSnapshot().relationshipDefinitionId).toBe(
       seededDefinition("member_of").id,
     );
     // Still no revision pointer: an asserted fact produces none.
-    expect(effect.toSnapshot().contentRevisionId).toBeNull();
+    expect(assertion.toSnapshot().contentRevisionId).toBeNull();
   });
 
   it("is born pending, with no relationship fields and no revision pointer", () => {
-    const effect = createAttributeChange();
+    const assertion = createAttributeChange();
 
-    expect(effect.effectType).toBe("attribute_change");
-    expect(effect.fieldPath).toBe("description");
-    expect(effect.relationshipType).toBeNull();
-    expect(effect.relatedEntityType).toBeNull();
-    expect(effect.relatedEntityId).toBeNull();
-    expect(effect.appliedAt).toBeNull();
-    expect(effect.contentRevisionId).toBeNull();
-    expect(effect.isApplied).toBe(false);
-    expect(effect.createdAt).toBe(now);
+    expect(assertion.operation).toBe("attribute_change");
+    expect(assertion.fieldPath).toBe("description");
+    expect(assertion.relationshipType).toBeNull();
+    expect(assertion.relatedEntityType).toBeNull();
+    expect(assertion.relatedEntityId).toBeNull();
+    expect(assertion.appliedAt).toBeNull();
+    expect(assertion.contentRevisionId).toBeNull();
+    expect(assertion.isApplied).toBe(false);
+    expect(assertion.createdAt).toBe(now);
   });
 
   // The intended value is stored exactly as declared: normalising it here would
   // make the stored intent differ from what the target aggregate eventually
   // writes, and the target aggregate is the one that owns the rule.
   it("stores the new value verbatim", () => {
-    const effect = createAttributeChange({ newValue: "  Raja Baru  " });
+    const assertion = createAttributeChange({ newValue: "  Raja Baru  " });
 
-    expect(effect.newValue).toBe("  Raja Baru  ");
+    expect(assertion.newValue).toBe("  Raja Baru  ");
   });
 
   it("rejects status for every entity type", () => {
@@ -217,13 +217,13 @@ describe("TransitionEffect.create — attribute_change", () => {
   });
 });
 
-describe("TransitionEffect.create — relationship effects", () => {
+describe("Assertion.create — relationship assertions", () => {
   it("keeps the declared endpoints instead of canonicalising them", () => {
-    // `ally_of` is non-directional, so the row this effect will write is
-    // canonicalised to character -> faction. The effect must NOT be: its
+    // `ally_of` is non-directional, so the row this assertion will write is
+    // canonicalised to character -> faction. The assertion must NOT be: its
     // `target_entity_*` columns answer "which entity does this touch", and the
-    // pending-effect index is built on them.
-    const effect = createRelationshipChange({
+    // pending-assertion index is built on them.
+    const assertion = createRelationshipChange({
       relationshipType: "ally_of",
       targetEntityType: "faction",
       targetEntityId: "faction-1",
@@ -231,10 +231,10 @@ describe("TransitionEffect.create — relationship effects", () => {
       relatedEntityId: "character-1",
     });
 
-    expect(effect.targetEntityType).toBe("faction");
-    expect(effect.targetEntityId).toBe("faction-1");
-    expect(effect.relatedEntityType).toBe("character");
-    expect(effect.relatedEntityId).toBe("character-1");
+    expect(assertion.targetEntityType).toBe("faction");
+    expect(assertion.targetEntityId).toBe("faction-1");
+    expect(assertion.relatedEntityType).toBe("character");
+    expect(assertion.relatedEntityId).toBe("character-1");
   });
 
   it("accepts a non-directional pair declared in either orientation", () => {
@@ -345,18 +345,18 @@ describe("TransitionEffect.create — relationship effects", () => {
   });
 
   it("carries no attribute change fields", () => {
-    const effect = createRelationshipChange({
-      effectType: "relationship_remove",
+    const assertion = createRelationshipChange({
+      operation: "relationship_remove",
     });
 
-    expect(effect.effectType).toBe("relationship_remove");
-    expect(effect.fieldPath).toBeNull();
-    expect(effect.newValue).toBeNull();
-    expect(effect.isApplied).toBe(false);
+    expect(assertion.operation).toBe("relationship_remove");
+    expect(assertion.fieldPath).toBeNull();
+    expect(assertion.newValue).toBeNull();
+    expect(assertion.isApplied).toBe(false);
   });
 });
 
-describe("TransitionEffect.reconstitute", () => {
+describe("Assertion.reconstitute", () => {
   it.each([
     ["id", { id: "  " }],
     ["narrative transition id", { narrativeTransitionId: "" }],
@@ -374,7 +374,7 @@ describe("TransitionEffect.reconstitute", () => {
     ).toThrow(/Invalid target entity type/);
 
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...relationshipSnapshot,
         relatedEntityType: "narrative_transition" as never,
       }),
@@ -382,7 +382,7 @@ describe("TransitionEffect.reconstitute", () => {
   });
 
   // The three-variant union is the whole point of this entity: the database has
-  // one CHECK, on `effect_type`, and nothing else stops a row from carrying both
+  // one CHECK, on `operation`, and nothing else stops a row from carrying both
   // halves at once.
   it("rejects an attribute change carrying relationship fields", () => {
     expect(() =>
@@ -395,9 +395,9 @@ describe("TransitionEffect.reconstitute", () => {
     ).toThrow(/must not carry relationship fields/);
   });
 
-  it("rejects a relationship effect carrying attribute change fields", () => {
+  it("rejects a relationship assertion carrying attribute change fields", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...relationshipSnapshot,
         fieldPath: "description",
         newValue: "Tewas",
@@ -414,9 +414,9 @@ describe("TransitionEffect.reconstitute", () => {
     );
   });
 
-  it("rejects a relationship effect with no relation type or no related entity", () => {
+  it("rejects a relationship assertion with no relation type or no related entity", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...relationshipSnapshot,
         relationshipType: null,
         relationshipDefinitionId: null,
@@ -424,7 +424,7 @@ describe("TransitionEffect.reconstitute", () => {
     ).toThrow(/requires a relationship type/);
 
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...relationshipSnapshot,
         relatedEntityId: null,
       }),
@@ -433,16 +433,16 @@ describe("TransitionEffect.reconstitute", () => {
 
   // A field path that has since been removed from the allowlist must stay
   // READABLE: the delete guard has to read `applied_at` before it can delete a
-  // pending effect, so a row this constructor refused would be a row nobody
+  // pending assertion, so a row this constructor refused would be a row nobody
   // could ever get rid of.
   it("accepts a stored field path the allowlist no longer covers", () => {
     expect(() => reconstitute({ fieldPath: "status" })).not.toThrow();
   });
 
-  it("rejects a pending effect that points at a content revision", () => {
+  it("rejects a pending assertion that points at a content revision", () => {
     expect(() =>
       reconstitute({ contentRevisionId: "revision-1" }),
-    ).toThrow(/Pending transition effect must not reference a content revision/);
+    ).toThrow(/Pending transition assertion must not reference a content revision/);
   });
 
   it("rejects a blank content revision id", () => {
@@ -453,39 +453,39 @@ describe("TransitionEffect.reconstitute", () => {
 
   it("rejects an applied attribute change with no content revision", () => {
     expect(() => reconstitute({ appliedAt: later })).toThrow(
-      /Applied attribute change effect requires a content revision id/,
+      /Applied attribute change assertion requires a content revision id/,
     );
   });
 
-  it("rejects a relationship effect that points at a content revision", () => {
+  it("rejects a relationship assertion that points at a content revision", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...relationshipSnapshot,
         appliedAt: later,
         contentRevisionId: "revision-1",
       }),
-    ).toThrow(/Relationship effect must not reference a content revision/);
+    ).toThrow(/Relationship assertion must not reference a content revision/);
   });
 
   it("accepts an applied attribute change with its revision pointer", () => {
-    const effect = reconstitute({
+    const assertion = reconstitute({
       appliedAt: later,
       contentRevisionId: "revision-1",
     });
 
-    expect(effect.isApplied).toBe(true);
-    expect(effect.appliedAt).toBe(later);
-    expect(effect.contentRevisionId).toBe("revision-1");
+    expect(assertion.isApplied).toBe(true);
+    expect(assertion.appliedAt).toBe(later);
+    expect(assertion.contentRevisionId).toBe("revision-1");
   });
 
-  it("accepts an applied relationship effect with no revision pointer", () => {
-    const effect = TransitionEffect.reconstitute({
+  it("accepts an applied relationship assertion with no revision pointer", () => {
+    const assertion = Assertion.reconstitute({
       ...relationshipSnapshot,
       appliedAt: later,
     });
 
-    expect(effect.isApplied).toBe(true);
-    expect(effect.contentRevisionId).toBeNull();
+    expect(assertion.isApplied).toBe(true);
+    expect(assertion.contentRevisionId).toBeNull();
   });
 });
 
@@ -493,7 +493,7 @@ describe("TransitionEffect.reconstitute", () => {
 // STEP 4b-2 — operation rows (`terminate`/`retract`).
 //
 // Every case below has a twin CHECK in
-// `20260818030100_generalise_transition_effects_into_assertion_log`. The
+// `20260820000000_phase7_phase11_additions` (§dari: 20260818030100_generalise_transition_effects_into_assertion_log). The
 // duplication is deliberate and it is not defence in depth for its own sake: the
 // database refuses the ROW, this refuses to BUILD it, and only the second can
 // tell a caller which rule it broke. What would be untrustworthy is a test that
@@ -507,11 +507,11 @@ describe("TransitionEffect.reconstitute", () => {
 function assertedFact(
   overrides: Partial<{ id: string; projectId: string }> = {},
 ) {
-  return TransitionEffect.assertFact({
+  return Assertion.assertFact({
     id: overrides.id ?? "assertion-1",
     narrativeTransitionId: null,
     projectId: overrides.projectId ?? projectId,
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetEntityType: "character",
     targetEntityId: "character-1",
     relationshipType: "member_of",
@@ -526,25 +526,25 @@ function assertedFact(
 // hand-written after 4b-3 added `terminateFact()`: that factory requires a parent
 // transition and an anchor, and several cases below need a PARENTLESS operation row
 // — a shape only a stored row can have.
-const operationSnapshot: TransitionEffectProperties = {
+const operationSnapshot: AssertionProperties = {
   ...relationshipSnapshot,
   id: "operation-1",
   narrativeTransitionId: null,
-  effectType: "terminate",
+  operation: "terminate",
   relationshipType: null,
   relatedEntityType: null,
   relatedEntityId: null,
   relationshipDefinitionId: seededDefinition("member_of").id,
   targetAssertionId: "assertion-1",
-  targetEffectType: "relationship_add",
+  targetOperation: "relationship_add",
   appliedAt: now,
 };
 
-describe("TransitionEffect.retractFact", () => {
+describe("Assertion.retractFact", () => {
   it("withdraws a claim by pointing at it, with no story time of its own", () => {
     const target = assertedFact();
 
-    const retraction = TransitionEffect.retractFact({
+    const retraction = Assertion.retractFact({
       id: "retraction-1",
       projectId,
       target,
@@ -552,10 +552,10 @@ describe("TransitionEffect.retractFact", () => {
       now: later,
     });
 
-    expect(retraction.effectType).toBe("retract");
+    expect(retraction.operation).toBe("retract");
     expect(retraction.targetAssertionId).toBe("assertion-1");
     // Read off the target, which is what makes the kind unable to lie (C-1).
-    expect(retraction.targetEffectType).toBe("relationship_add");
+    expect(retraction.targetOperation).toBe("relationship_add");
     // Transaction time, not valid time: a retraction is not placed in the story
     // at all. This is the single assertion that separates it from a termination.
     expect(retraction.anchorEntityType).toBeNull();
@@ -570,7 +570,7 @@ describe("TransitionEffect.retractFact", () => {
   });
 
   it("points at the fact instead of restating it", () => {
-    const retraction = TransitionEffect.retractFact({
+    const retraction = Assertion.retractFact({
       id: "retraction-1",
       projectId,
       target: assertedFact(),
@@ -591,7 +591,7 @@ describe("TransitionEffect.retractFact", () => {
 
   it("refuses a target in another project", () => {
     expect(() =>
-      TransitionEffect.retractFact({
+      Assertion.retractFact({
         id: "retraction-1",
         projectId,
         target: assertedFact({ projectId: "project-2" }),
@@ -606,7 +606,7 @@ describe("TransitionEffect.retractFact", () => {
   // than the row it withdraws would make the log say two things at once.
   it("refuses a definition that is not the one the target asserts", () => {
     expect(() =>
-      TransitionEffect.retractFact({
+      Assertion.retractFact({
         id: "retraction-1",
         projectId,
         target: assertedFact(),
@@ -617,14 +617,14 @@ describe("TransitionEffect.retractFact", () => {
   });
 
   it("refuses to retract another retraction", () => {
-    const storedRetraction = TransitionEffect.reconstitute({
+    const storedRetraction = Assertion.reconstitute({
       ...operationSnapshot,
       id: "retraction-1",
-      effectType: "retract",
+      operation: "retract",
     });
 
     expect(() =>
-      TransitionEffect.retractFact({
+      Assertion.retractFact({
         id: "retraction-2",
         projectId,
         target: storedRetraction,
@@ -638,9 +638,9 @@ describe("TransitionEffect.retractFact", () => {
   // allowed at all: in an append-only log it is the only way out of a mistyped
   // termination.
   it("allows retracting a termination", () => {
-    const termination = TransitionEffect.reconstitute(operationSnapshot);
+    const termination = Assertion.reconstitute(operationSnapshot);
 
-    const retraction = TransitionEffect.retractFact({
+    const retraction = Assertion.retractFact({
       id: "retraction-1",
       projectId,
       target: termination,
@@ -648,7 +648,7 @@ describe("TransitionEffect.retractFact", () => {
       now,
     });
 
-    expect(retraction.targetEffectType).toBe("terminate");
+    expect(retraction.targetOperation).toBe("terminate");
   });
 
 
@@ -657,14 +657,14 @@ describe("TransitionEffect.retractFact", () => {
   // inherit, and a parentless retraction must name one. 4b-3 decides the shape
   // that serves this case; until then the refusal says so.
   it("refuses a target whose provenance is only its parent transition", () => {
-    const parentedTermination = TransitionEffect.reconstitute({
+    const parentedTermination = Assertion.reconstitute({
       ...operationSnapshot,
       narrativeTransitionId,
       relationshipDefinitionId: null,
     });
 
     expect(() =>
-      TransitionEffect.retractFact({
+      Assertion.retractFact({
         id: "retraction-1",
         projectId,
         target: parentedTermination,
@@ -676,16 +676,16 @@ describe("TransitionEffect.retractFact", () => {
 });
 
 // A fact asserted BY A NARRATIVE TRANSITION — the shape jalur 7.7 leaves behind,
-// where the effect row IS the assertion and its provenance is its parent rather
+// where the assertion row IS the assertion and its provenance is its parent rather
 // than a definition row.
 function narratedFact(
   overrides: Partial<{ id: string; projectId: string }> = {},
 ) {
-  const effect = TransitionEffect.create({
+  const assertion = Assertion.create({
     id: overrides.id ?? "narrated-1",
     narrativeTransitionId: "transition-1",
     projectId: overrides.projectId ?? projectId,
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetEntityType: "character",
     targetEntityId: "character-1",
     relationshipType: "member_of",
@@ -695,14 +695,14 @@ function narratedFact(
     now,
   });
 
-  effect.markApplied({ now });
+  assertion.markApplied({ now });
 
-  return effect;
+  return assertion;
 }
 
-describe("TransitionEffect.terminateFact", () => {
+describe("Assertion.terminateFact", () => {
   it("ends a fact AT A STORY MOMENT, which is the line between it and a retraction", () => {
-    const termination = TransitionEffect.terminateFact({
+    const termination = Assertion.terminateFact({
       id: "termination-1",
       projectId,
       narrativeTransitionId: "transition-1",
@@ -713,10 +713,10 @@ describe("TransitionEffect.terminateFact", () => {
       now: later,
     });
 
-    expect(termination.effectType).toBe("terminate");
+    expect(termination.operation).toBe("terminate");
     expect(termination.targetAssertionId).toBe("narrated-1");
     // Read off the target, never asserted by the caller (C-1).
-    expect(termination.targetEffectType).toBe("relationship_add");
+    expect(termination.targetOperation).toBe("relationship_add");
     // VALID time — the assertion `retractFact` deliberately cannot make.
     expect(termination.anchorEntityType).toBe("scene");
     expect(termination.anchorEntityId).toBe("scene-9");
@@ -730,7 +730,7 @@ describe("TransitionEffect.terminateFact", () => {
   });
 
   it("points at the fact instead of restating it", () => {
-    const termination = TransitionEffect.terminateFact({
+    const termination = Assertion.terminateFact({
       id: "termination-1",
       projectId,
       narrativeTransitionId: "transition-1",
@@ -755,7 +755,7 @@ describe("TransitionEffect.terminateFact", () => {
   // parent, so its predicate is named by ROW rather than by name — the branch that
   // would silently refuse the whole class if the two-way match were dropped.
   it("terminates a PARENTLESS assertion made through CRUD", () => {
-    const termination = TransitionEffect.terminateFact({
+    const termination = Assertion.terminateFact({
       id: "termination-1",
       projectId,
       narrativeTransitionId: "transition-1",
@@ -772,7 +772,7 @@ describe("TransitionEffect.terminateFact", () => {
 
   it("refuses a target in another project", () => {
     expect(() =>
-      TransitionEffect.terminateFact({
+      Assertion.terminateFact({
         id: "termination-1",
         projectId,
         narrativeTransitionId: "transition-1",
@@ -787,7 +787,7 @@ describe("TransitionEffect.terminateFact", () => {
 
   it("refuses a predicate that is not the target's", () => {
     expect(() =>
-      TransitionEffect.terminateFact({
+      Assertion.terminateFact({
         id: "termination-1",
         projectId,
         narrativeTransitionId: "transition-1",
@@ -803,10 +803,10 @@ describe("TransitionEffect.terminateFact", () => {
   // `terminate` is defined over FACTS only (TERMINATE_TARGET_TYPES). Ending an
   // ending has no range to end, and premis §8.3 settles it as not-an-operation.
   it("refuses to terminate an operation row", () => {
-    const storedTermination = TransitionEffect.reconstitute(operationSnapshot);
+    const storedTermination = Assertion.reconstitute(operationSnapshot);
 
     expect(() =>
-      TransitionEffect.terminateFact({
+      Assertion.terminateFact({
         id: "termination-2",
         projectId,
         narrativeTransitionId: "transition-1",
@@ -823,7 +823,7 @@ describe("TransitionEffect.terminateFact", () => {
   // a blank id arriving from a drifted row.
   it("refuses a blank anchor id", () => {
     expect(() =>
-      TransitionEffect.terminateFact({
+      Assertion.terminateFact({
         id: "termination-1",
         projectId,
         narrativeTransitionId: "transition-1",
@@ -837,39 +837,39 @@ describe("TransitionEffect.terminateFact", () => {
   });
 });
 
-describe("TransitionEffect.reconstitute — operation rows", () => {
+describe("Assertion.reconstitute — operation rows", () => {
   it("accepts a stored termination", () => {
     expect(() =>
-      TransitionEffect.reconstitute(operationSnapshot),
+      Assertion.reconstitute(operationSnapshot),
     ).not.toThrow();
   });
 
   it("refuses a termination over an operation row", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
-        effectType: "terminate",
-        targetEffectType: "retract",
+        operation: "terminate",
+        targetOperation: "retract",
       }),
     ).toThrow(DomainError);
   });
 
   it("refuses an operation with no target", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         targetAssertionId: null,
-        targetEffectType: null,
+        targetOperation: null,
       }),
     ).toThrow(DomainError);
   });
 
   it("refuses a fact that points at another assertion", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...relationshipSnapshot,
         targetAssertionId: "assertion-2",
-        targetEffectType: "relationship_add",
+        targetOperation: "relationship_add",
       }),
     ).toThrow(DomainError);
   });
@@ -878,16 +878,16 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
   // true — exactly how C-1 stayed invisible.
   it("refuses a target whose kind went unstated", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
-        targetEffectType: null,
+        targetOperation: null,
       }),
     ).toThrow(DomainError);
   });
 
   it("refuses a row that targets itself", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         targetAssertionId: operationSnapshot.id,
       }),
@@ -896,7 +896,7 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
 
   it("refuses an operation that restates the fact it acts on", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         relationshipType: "member_of",
         relatedEntityType: "faction",
@@ -907,7 +907,7 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
 
   it("refuses half an anchor", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         anchorEntityType: "scene",
         anchorEntityId: null,
@@ -915,7 +915,7 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
     ).toThrow(DomainError);
 
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         anchorEntityType: null,
         anchorEntityId: "scene-1",
@@ -925,7 +925,7 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
 
   it("accepts a complete anchor", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         anchorEntityType: "scene",
         anchorEntityId: "scene-1",
@@ -939,7 +939,7 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
   // nor "what does it claim".
   it("refuses a parentless row that names no predicate", () => {
     expect(() =>
-      TransitionEffect.reconstitute({
+      Assertion.reconstitute({
         ...operationSnapshot,
         relationshipDefinitionId: null,
       }),
@@ -947,48 +947,48 @@ describe("TransitionEffect.reconstitute — operation rows", () => {
   });
 });
 
-describe("TransitionEffect.markApplied", () => {
+describe("Assertion.markApplied", () => {
   it("records the revision produced by an attribute change", () => {
-    const effect = createAttributeChange();
+    const assertion = createAttributeChange();
 
-    effect.markApplied({ contentRevisionId: "revision-1", now: later });
+    assertion.markApplied({ contentRevisionId: "revision-1", now: later });
 
-    expect(effect.isApplied).toBe(true);
-    expect(effect.appliedAt).toBe(later);
-    expect(effect.contentRevisionId).toBe("revision-1");
+    expect(assertion.isApplied).toBe(true);
+    expect(assertion.appliedAt).toBe(later);
+    expect(assertion.contentRevisionId).toBe("revision-1");
   });
 
-  it("applies a relationship effect without a revision", () => {
-    const effect = createRelationshipChange();
+  it("applies a relationship assertion without a revision", () => {
+    const assertion = createRelationshipChange();
 
-    effect.markApplied({ now: later });
+    assertion.markApplied({ now: later });
 
-    expect(effect.isApplied).toBe(true);
-    expect(effect.appliedAt).toBe(later);
-    expect(effect.contentRevisionId).toBeNull();
+    expect(assertion.isApplied).toBe(true);
+    expect(assertion.appliedAt).toBe(later);
+    expect(assertion.contentRevisionId).toBeNull();
   });
 
-  it("refuses an attribute change with no revision, leaving the effect pending", () => {
-    const effect = createAttributeChange();
+  it("refuses an attribute change with no revision, leaving the assertion pending", () => {
+    const assertion = createAttributeChange();
 
     expect(() => {
-      effect.markApplied({ now: later });
+      assertion.markApplied({ now: later });
     }).toThrow(DomainError);
 
     // The rejection must not half-apply: validate() runs before the assignment,
-    // so a caller that catches this error still holds a pending effect.
-    expect(effect.isApplied).toBe(false);
-    expect(effect.appliedAt).toBeNull();
+    // so a caller that catches this error still holds a pending assertion.
+    expect(assertion.isApplied).toBe(false);
+    expect(assertion.appliedAt).toBeNull();
   });
 
-  it("refuses a relationship effect that is handed a revision", () => {
-    const effect = createRelationshipChange();
+  it("refuses a relationship assertion that is handed a revision", () => {
+    const assertion = createRelationshipChange();
 
     expect(() => {
-      effect.markApplied({ contentRevisionId: "revision-1", now: later });
+      assertion.markApplied({ contentRevisionId: "revision-1", now: later });
     }).toThrow(/must not reference a content revision/);
 
-    expect(effect.isApplied).toBe(false);
+    expect(assertion.isApplied).toBe(false);
   });
 
   // Append-only. The service is expected to see this under the row lock and
@@ -996,30 +996,30 @@ describe("TransitionEffect.markApplied", () => {
   // skipped, and the second ContentRevision it would have produced is exactly
   // what the lock exists to prevent.
   it("refuses a second apply and keeps the first one intact", () => {
-    const effect = createAttributeChange();
+    const assertion = createAttributeChange();
 
-    effect.markApplied({ contentRevisionId: "revision-1", now: later });
+    assertion.markApplied({ contentRevisionId: "revision-1", now: later });
 
     expect(() => {
-      effect.markApplied({
+      assertion.markApplied({
         contentRevisionId: "revision-2",
         now: new Date("2026-08-18T00:00:00.000Z"),
       });
     }).toThrow(/already applied/);
 
-    expect(effect.appliedAt).toBe(later);
-    expect(effect.contentRevisionId).toBe("revision-1");
+    expect(assertion.appliedAt).toBe(later);
+    expect(assertion.contentRevisionId).toBe("revision-1");
   });
 });
 
-describe("TransitionEffect.toSnapshot", () => {
+describe("Assertion.toSnapshot", () => {
   it("returns a copy that cannot mutate the aggregate", () => {
-    const effect = createAttributeChange();
-    const snapshot = effect.toSnapshot();
+    const assertion = createAttributeChange();
+    const snapshot = assertion.toSnapshot();
 
     snapshot.appliedAt = later;
 
-    expect(effect.appliedAt).toBeNull();
-    expect(effect.isApplied).toBe(false);
+    expect(assertion.appliedAt).toBeNull();
+    expect(assertion.isApplied).toBe(false);
   });
 });

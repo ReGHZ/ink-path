@@ -120,7 +120,7 @@ afterAll(async () => {
 });
 
 // Two writers taking the same two row locks in OPPOSITE order — the textbook
-// deadlock, and the exact shape the debt names: bulk apply locks every effect row
+// deadlock, and the exact shape the debt names: bulk apply locks every assertion row
 // plus every target entity in one transaction, and two bulk applies of different
 // transitions touching the same entities have no global order between them.
 async function forceDeadlock(): Promise<unknown> {

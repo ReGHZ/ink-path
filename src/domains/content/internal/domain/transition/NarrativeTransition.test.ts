@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { Assertion } from "./Assertion.js";
 import {
   deriveNarrativeTransitionStatus,
   NarrativeTransition,
   type CreateNarrativeTransitionProperties,
   type NarrativeTransitionProperties,
 } from "./NarrativeTransition.js";
-import { TransitionEffect } from "./TransitionEffect.js";
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 
 const now = new Date("2026-08-16T00:00:00.000Z");
@@ -49,14 +49,14 @@ function reconstitute(overrides: Partial<NarrativeTransitionProperties> = {}) {
 
 let effectSequence = 0;
 
-function pendingEffect() {
+function pendingAssertion() {
   effectSequence += 1;
 
-  return TransitionEffect.create({
-    id: `effect-${String(effectSequence)}`,
+  return Assertion.create({
+    id: `assertion-${String(effectSequence)}`,
     narrativeTransitionId: "transition-1",
     projectId,
-    effectType: "attribute_change",
+    operation: "attribute_change",
     targetEntityType: "character",
     targetEntityId: "character-1",
     fieldPath: "description",
@@ -65,12 +65,12 @@ function pendingEffect() {
   });
 }
 
-function appliedEffect() {
-  const effect = pendingEffect();
+function appliedAssertion() {
+  const assertion = pendingAssertion();
 
-  effect.markApplied({ contentRevisionId: "revision-1", now: later });
+  assertion.markApplied({ contentRevisionId: "revision-1", now: later });
 
-  return effect;
+  return assertion;
 }
 
 describe("NarrativeTransition.create", () => {
@@ -201,38 +201,38 @@ describe("NarrativeTransition.updateDetails", () => {
 
 describe("deriveNarrativeTransitionStatus", () => {
   // Vacuously "all applied" is exactly the wrong reading: a transition with no
-  // effects has changed nothing in the world.
-  it("treats a transition with no effects as declared", () => {
+  // assertions has changed nothing in the world.
+  it("treats a transition with no assertions as declared", () => {
     expect(deriveNarrativeTransitionStatus([])).toBe("declared");
   });
 
-  it("is declared while every effect is pending", () => {
+  it("is declared while every assertion is pending", () => {
     expect(
-      deriveNarrativeTransitionStatus([pendingEffect(), pendingEffect()]),
+      deriveNarrativeTransitionStatus([pendingAssertion(), pendingAssertion()]),
     ).toBe("declared");
   });
 
-  it("is partially applied once one effect is applied", () => {
+  it("is partially applied once one assertion is applied", () => {
     expect(
-      deriveNarrativeTransitionStatus([appliedEffect(), pendingEffect()]),
+      deriveNarrativeTransitionStatus([appliedAssertion(), pendingAssertion()]),
     ).toBe("partially_applied");
   });
 
-  it("is fully applied only when no effect is left pending", () => {
+  it("is fully applied only when no assertion is left pending", () => {
     expect(
-      deriveNarrativeTransitionStatus([appliedEffect(), appliedEffect()]),
+      deriveNarrativeTransitionStatus([appliedAssertion(), appliedAssertion()]),
     ).toBe("fully_applied");
   });
 
-  it("follows an effect that is applied after the first reading", () => {
-    const effect = pendingEffect();
-    const effects = [effect, appliedEffect()];
+  it("follows an assertion that is applied after the first reading", () => {
+    const assertion = pendingAssertion();
+    const assertions = [assertion, appliedAssertion()];
 
-    expect(deriveNarrativeTransitionStatus(effects)).toBe("partially_applied");
+    expect(deriveNarrativeTransitionStatus(assertions)).toBe("partially_applied");
 
-    effect.markApplied({ contentRevisionId: "revision-2", now: later });
+    assertion.markApplied({ contentRevisionId: "revision-2", now: later });
 
-    expect(deriveNarrativeTransitionStatus(effects)).toBe("fully_applied");
+    expect(deriveNarrativeTransitionStatus(assertions)).toBe("fully_applied");
   });
 });
 

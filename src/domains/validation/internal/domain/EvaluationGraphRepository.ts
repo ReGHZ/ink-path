@@ -13,7 +13,7 @@ import type { EntityType } from "./ruleAst.js";
 // ⚠ What this port is NOT, so the next reader does not widen it by accident
 // (`03-database-design/15_validation_tables.md` §ADDENDUM 2026-08-19 butir 7):
 // `evaluation_*` is not the executor's source of facts. `PrismaEvaluationFactReader`
-// reads `transition_effects` directly and builds its own retract/terminate sets.
+// reads `assertions` directly and builds its own retract/terminate sets.
 // While that holds, this fold serves impact analysis and scheduling — moving the
 // rule answer path onto it is a separate decision.
 //

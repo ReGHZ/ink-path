@@ -6,13 +6,13 @@ import {
 } from "../../domain/support/relationshipDefinition.js";
 
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
-import type { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
+import type { Assertion } from "../../domain/transition/Assertion.js";
 
 // THE FOLD — `content_relationships` derived from a row in the assertion log.
 //
 // STEP 4b-3, and the dual write it ends. Until now two places built this
 // projection: `RelationshipService.createRelationship` from its own request input,
-// and `NarrativeTransitionService.applyRelationshipChange` from an effect row. Both
+// and `NarrativeTransitionService.applyRelationshipChange` from an assertion row. Both
 // went through `ContentRelationship.create()`, so neither could store a row the
 // other would refuse — but they read DIFFERENT sources for the same fact, which is
 // exactly what `07-implementation-order/01` §Langkah 4 butir 3 calls "jalur tulis
@@ -27,9 +27,9 @@ import type { TransitionEffect } from "../../domain/transition/TransitionEffect.
 export function foldAssertion(props: {
   id: string;
   // The log row being folded. `relationship_add` — an `assertFact()` from CRUD or an
-  // applied narrative effect; both are assertions of the same shape, which is the
+  // applied narrative assertion; both are assertions of the same shape, which is the
   // whole reason one function can serve both.
-  assertion: TransitionEffect;
+  assertion: Assertion;
   // The project's row for the predicate the assertion names. Resolved by the caller,
   // like everywhere else in this domain, so the fold stays free of I/O.
   definition: RelationshipDefinition;
@@ -83,7 +83,7 @@ export function foldAssertion(props: {
 // The projection row for a fact stated by (predicate, subject, object) — the fold's
 // identity rather than its id.
 //
-// Needed because a `relationship_remove` effect names ENDPOINTS, not a row: the
+// Needed because a `relationship_remove` assertion names ENDPOINTS, not a row: the
 // author declares "Aria leaves the Silver Hand", not "delete row 7". Decision D4
 // (`notes/phase-7-narrative-transition.md`) settled that this lookup keys on the
 // canonical orientation of (type, endpoints), which is what the six-column unique

@@ -39,7 +39,7 @@ export type LoggedAssertion = {
   // here rather than be handed only the rows the caller thinks are assertions: an
   // `asserted` event pointing at a `terminate` row is a producer bug, and the fold
   // can only refuse what it can see.
-  effectType: LoggedAssertionEffectType;
+  operation: LoggedAssertionEffectType;
   // Null on `attribute_change`, and on nothing else that matters here — the
   // predicate is what the edge is keyed by, so the projector refuses a
   // relationship row without one instead of inventing a symbol.
@@ -64,7 +64,7 @@ export type LoggedAssertion = {
   retracted: boolean;
   subject: LoggedAssertionEndpoint;
   // Null = a UNARY fact. The log refuses to write one today
-  // (`TransitionEffect.validateRelationshipChange` requires `related_entity_*`), so
+  // (`Assertion.validateRelationshipChange` requires `related_entity_*`), so
   // this stays null-typed to say the shape exists while
   // `03-database-design/15_validation_tables.md` §ADDENDUM butir 4 keeps its home
   // out of 4b-4 — the projector must NOT grow a fold branch for data that cannot
@@ -77,7 +77,7 @@ export type LoggedAssertion = {
 // operations (`retract`, `terminate`) that name another row rather than state a fact.
 export type LoggedOperation = {
   id: string;
-  effectType: LoggedAssertionEffectType;
+  operation: LoggedAssertionEffectType;
   targetAssertionId: string | null;
 };
 

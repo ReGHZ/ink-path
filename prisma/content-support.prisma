@@ -113,7 +113,7 @@ model ContentRelationship {
   // left — hand-run SQL — and it refuses it for the right reason: deleting the
   // assertion would leave a projection row that can no longer say what fact it
   // is a fold of.
-  sourceAssertion TransitionEffect @relation(fields: [sourceAssertionId, projectId], references: [id, projectId], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssertion Assertion @relation(fields: [sourceAssertionId, projectId], references: [id, projectId], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([projectId, relationType, sourceEntityType, sourceEntityId, targetEntityType, targetEntityId])
   @@index([projectId])

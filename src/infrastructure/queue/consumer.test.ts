@@ -111,7 +111,7 @@ describe("RabbitMqConsumer — routing key patterns", () => {
       // The `GraphProjector` shape (step 4b-4, stage C): two prefixes, because AMQP
       // has no way to express "either of these" in ONE binding and `content.#` would
       // swallow every entity lifecycle event in the system.
-      routingKeyPattern: ["content.relationship.*", "narrative.effect.*"],
+      routingKeyPattern: ["content.relationship.*", "narrative.assertion.*"],
       handleMessage: () => Promise.resolve(),
     });
 
@@ -128,7 +128,7 @@ describe("RabbitMqConsumer — routing key patterns", () => {
       2,
       "test-two-bindings",
       expect.any(String),
-      "narrative.effect.*",
+      "narrative.assertion.*",
     );
 
     await consumer.stop();

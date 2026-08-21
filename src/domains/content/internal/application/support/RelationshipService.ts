@@ -11,7 +11,7 @@ import {
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
-import { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
+import { Assertion } from "../../domain/transition/Assertion.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -254,20 +254,20 @@ export class RelationshipService {
     // the fact it projects — a divergence nothing downstream could explain.
     const now = this.clock.now();
 
-    let assertion: TransitionEffect;
+    let assertion: Assertion;
     let relationship: ContentRelationship;
     try {
       // Endpoints as DECLARED, not canonicalised — the log's existing
       // convention, set by the narrative writer and argued in
-      // `TransitionEffect.validateRelationshipChange()`: `target_entity_*` is
-      // indexed as "which entity does this effect touch". Canonical order
+      // `Assertion.validateRelationshipChange()`: `target_entity_*` is
+      // indexed as "which entity does this assertion touch". Canonical order
       // belongs to the row's IDENTITY, which is the projection's business, and
       // `ContentRelationship.create()` applies it there.
-      assertion = TransitionEffect.assertFact({
+      assertion = Assertion.assertFact({
         id: this.idGenerator.generate(),
         narrativeTransitionId: null,
         projectId: input.projectId,
-        effectType: "relationship_add",
+        operation: "relationship_add",
         targetEntityType: input.sourceEntityType,
         targetEntityId: input.sourceEntityId,
         relationshipType: input.relationType,
@@ -309,7 +309,7 @@ export class RelationshipService {
           await repositories.contentRelationships.insert(relationship);
 
           // Written now, consumed by `GraphProjector` later (item 11.4). The
-          // precedent is `narrative.effect.applied`, produced since 7.7 with no
+          // precedent is `narrative.assertion.applied`, produced since 7.7 with no
           // consumer on purpose: what is not recorded today cannot be
           // reconstructed later.
           //
@@ -328,7 +328,7 @@ export class RelationshipService {
           // `GraphProjector` gets must be DECIDED (`content.#` / `narrative.#`, or
           // explicit keys) and must cover all three keys that exist:
           // `content.relationship.asserted`, `content.relationship.retracted`,
-          // `narrative.effect.applied`. (2) Do NOT shorten this key to two words
+          // `narrative.assertion.applied`. (2) Do NOT shorten this key to two words
           // hoping a binding picks it up — that is exactly what would feed the
           // embedding worker garbage.
           await outboxEvents.insert({
@@ -528,7 +528,7 @@ export class RelationshipService {
       await this.relationshipUnitOfWork.transaction(
         async (repositories, outboxEvents) => {
           // Read INSIDE the transaction, and unnarrowed: the retraction must
-          // carry the target's real `effect_type` (C-1 — a kind that can lie is
+          // carry the target's real `operation` (C-1 — a kind that can lie is
           // the bug that shape closes), and `findById` cannot see a parentless
           // assertion by design.
           const assertion = await repositories.assertions.findAssertionById(
@@ -563,7 +563,7 @@ export class RelationshipService {
           //    (`reversesTransitionId` → retract? terminate?) in the most destructive
           //    direction, using the least information available anywhere.
           // 3. `05-implementation-policy/05_append_only_invariants.md` §NarrativeTransition
-          //    — Aturan Delete already has the answer for undoing an applied effect:
+          //    — Aturan Delete already has the answer for undoing an applied assertion:
           //    a reversal transition. That rule survived the 2026-08-19 revision of
           //    that document precisely because it is still the right shape.
           //
@@ -581,7 +581,7 @@ export class RelationshipService {
           if (assertion.narrativeTransitionId !== null) {
             throw new AppError(
               ErrorCode.CONFLICT,
-              "This relationship was asserted by a narrative transition and cannot be deleted directly. Reverse the transition, or narrate the relationship ending with a relationship_remove effect.",
+              "This relationship was asserted by a narrative transition and cannot be deleted directly. Reverse the transition, or narrate the relationship ending with a relationship_remove assertion.",
               {
                 narrativeTransitionId: assertion.narrativeTransitionId,
                 sourceAssertionId: assertion.id,
@@ -589,9 +589,9 @@ export class RelationshipService {
             );
           }
 
-          let retraction: TransitionEffect;
+          let retraction: Assertion;
           try {
-            retraction = TransitionEffect.retractFact({
+            retraction = Assertion.retractFact({
               id: this.idGenerator.generate(),
               projectId,
               target: assertion,

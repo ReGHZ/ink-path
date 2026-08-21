@@ -1,12 +1,12 @@
 import type { ContentEntityType } from "../support/ContentRevision.js";
 
-// Which entity fields an `attribute_change` effect is allowed to write, per
+// Which entity fields an `attribute_change` assertion is allowed to write, per
 // entity type. Decision D1 of Blok B
 // (`notes/phase-7-narrative-transition.md` §3), and the reason this file exists
-// at all: `transition_effects.field_path` is a plain TEXT column with no CHECK
+// at all: `assertions.field_path` is a plain TEXT column with no CHECK
 // (`03-database-design/16_narrative_transition_tables.md:99`), while
 // `target_entity_type` spans all nine content entity types. Without a closed
-// list, "declare an effect" is a write primitive for any column of any table —
+// list, "declare an assertion" is a write primitive for any column of any table —
 // the caller picks the field name, and apply obeys.
 //
 // The list mirrors the `fields` record of each descriptor in

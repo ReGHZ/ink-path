@@ -10,7 +10,7 @@ import {
   relationTypeSchema,
 } from "../support/relationshipFieldSchemas.js";
 
-// The target is the same for all three variants: WHICH entity this effect acts
+// The target is the same for all three variants: WHICH entity this assertion acts
 // on. It is not the transition's source — a scene (source) changes a character
 // (target) — so it cannot be lifted out of the path.
 const targetShape = {
@@ -31,21 +31,21 @@ const relationshipEffectShape = {
 
 // A discriminated union, mirroring `AddEffectInput`
 // (`NarrativeTransitionService.ts:74-87`), which itself mirrors
-// `CreateTransitionEffectProperties` (`TransitionEffect.ts:96-106`). The chain
+// `CreateAssertionProperties` (`Assertion.ts:96-106`). The chain
 // matters: the impossible request — an attribute change carrying a relation
 // type — is unrepresentable at the wire, in the service input, and in the domain
 // factory, so no layer has to detect it.
 //
 // `.strict()` on each member is what makes that true at the wire. Without it,
-// `{ effectType: "attribute_change", fieldPath, newValue, relationshipType }`
+// `{ operation: "attribute_change", fieldPath, newValue, relationshipType }`
 // would parse with the stray key silently dropped, and the caller would be told
 // its relationship request succeeded when only half of it was read. With it,
 // that body is a 400 naming the key — the same answer the domain gives for the
-// row shape (`TransitionEffect.ts:357-366`).
-export const addEffectSchema = z.discriminatedUnion("effectType", [
+// row shape (`Assertion.ts:357-366`).
+export const addEffectSchema = z.discriminatedUnion("operation", [
   z
     .object({
-      effectType: z.literal("attribute_change"),
+      operation: z.literal("attribute_change"),
       ...targetShape,
       fieldPath: transitionFieldPathSchema,
       newValue: transitionNewValueSchema,
@@ -53,13 +53,13 @@ export const addEffectSchema = z.discriminatedUnion("effectType", [
     .strict(),
   z
     .object({
-      effectType: z.literal("relationship_add"),
+      operation: z.literal("relationship_add"),
       ...relationshipEffectShape,
     })
     .strict(),
   z
     .object({
-      effectType: z.literal("relationship_remove"),
+      operation: z.literal("relationship_remove"),
       ...relationshipEffectShape,
     })
     .strict(),

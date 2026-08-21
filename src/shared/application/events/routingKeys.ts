@@ -49,10 +49,10 @@ export const CONTENT_DELETED = "content.deleted";
 export const CONTENT_RELATIONSHIP_ASSERTED = "content.relationship.asserted";
 export const CONTENT_RELATIONSHIP_RETRACTED = "content.relationship.retracted";
 
-// A narrative transition effect was applied (step 7.7). Not `content.updated`
+// A narrative transition assertion was applied (step 7.7). Not `content.updated`
 // (decision D6): no entity text changed, so the embedding worker must never see
 // it; what it exists for is the evaluation graph of the Validation domain.
-export const NARRATIVE_EFFECT_APPLIED = "narrative.effect.applied";
+export const NARRATIVE_ASSERTION_APPLIED = "narrative.assertion.applied";
 
 // ---------------------------------------------------------------------------
 // Bindings
@@ -78,7 +78,7 @@ export const EMBEDDING_WORKER_BINDING = "content.*";
 //   lockstep with the producer, and the failure mode of forgetting is again silence.
 //
 //   CHOSEN two-word prefix + `*`. The prefix is the part the producer guarantees
-//   (`content.relationship.` = a fact about a relationship; `narrative.effect.` = a
+//   (`content.relationship.` = a fact about a relationship; `narrative.assertion.` = a
 //   consequence of a transition); the last word is the verb, which is the part that
 //   grows. So a new verb — `content.relationship.terminated`, which step 4b-3 is
 //   likely to add — is delivered without touching the binding, while entity
@@ -91,7 +91,7 @@ export const EMBEDDING_WORKER_BINDING = "content.*";
 // recorded here and in `notes/tech-debt.md` instead of stubbed.
 export const GRAPH_PROJECTOR_BINDINGS = [
   "content.relationship.*",
-  "narrative.effect.*",
+  "narrative.assertion.*",
 ] as const;
 
 // ---------------------------------------------------------------------------

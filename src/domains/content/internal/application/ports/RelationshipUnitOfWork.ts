@@ -1,6 +1,6 @@
 import type { OutboxEventRepository } from "../../../../../shared/application/ports/OutboxEventRepository.js";
 import type { ContentRelationshipRepository } from "../../domain/support/ContentRelationshipRepository.js";
-import type { TransitionEffectRepository } from "../../domain/transition/TransitionEffectRepository.js";
+import type { AssertionRepository } from "../../domain/transition/AssertionRepository.js";
 
 // A third unit of work, and the reason is a change of shape rather than a new
 // domain: until step 4b a relationship write was ONE statement, so
@@ -10,14 +10,14 @@ import type { TransitionEffectRepository } from "../../domain/transition/Transit
 // together or the log and its projection disagree.
 //
 // Not a reuse of `NarrativeTransitionUnitOfWork`: that one carries nine entity
-// repositories plus the attribute mutator, because applying an effect can touch
+// repositories plus the attribute mutator, because applying an assertion can touch
 // any of them. A relationship write touches exactly the two below, and handing
 // this path the other eleven would let a future edit reach for one.
 export type RelationshipRepositories = {
-  // The assertion log. `transition_effects` by table name still, which the
+  // The assertion log. `assertions` by table name still, which the
   // rename scheduled with the migration collapse will fix — the rows written
   // here have no transition.
-  assertions: TransitionEffectRepository;
+  assertions: AssertionRepository;
 
   // The CRUD projection, folded from the assertion INSIDE this transaction.
   // Synchronous on purpose: this is the table the relationship API reads back,

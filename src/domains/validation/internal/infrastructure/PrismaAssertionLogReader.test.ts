@@ -16,7 +16,7 @@ import type { PrismaClient } from "../../../../generated/prisma/client.js";
 // the translation needs a fake, because no fixture can make Postgres drop a connection.
 function clientRejecting(error: Error): PrismaClient {
   return {
-    transitionEffect: { findFirst: () => Promise.reject(error) },
+    assertion: { findFirst: () => Promise.reject(error) },
   } as unknown as PrismaClient;
 }
 

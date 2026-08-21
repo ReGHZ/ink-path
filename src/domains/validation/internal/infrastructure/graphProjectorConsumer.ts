@@ -51,7 +51,7 @@ export function createGraphProjectorConsumer({
 }): Consumer {
   return createRabbitMqConsumer<GraphProjectorEventPayload>(rabbitmq, {
     queue: GRAPH_PROJECTOR_QUEUE,
-    // TWO patterns (`content.relationship.*` + `narrative.effect.*`), which is why
+    // TWO patterns (`content.relationship.*` + `narrative.assertion.*`), which is why
     // `createRabbitMqConsumer` learned to loop `bindQueue` at this step. Imported,
     // never spelled out: `routingKeys.test.ts` walks production sources and fails on
     // a routing-key literal outside that module, which is what keeps a binding and

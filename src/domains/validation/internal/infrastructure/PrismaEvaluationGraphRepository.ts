@@ -152,7 +152,7 @@ export class PrismaEvaluationGraphRepository
 
 // `Prisma.TransactionClient` structurally, same as every other adapter in this
 // codebase that needs to run inside someone else's transaction
-// (`PrismaTransitionEffectRepository.ts:10`).
+// (`PrismaAssertionRepository.ts:10`).
 async function upsertNode(
   tx: Prisma.TransactionClient,
   projectId: string,

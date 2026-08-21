@@ -23,7 +23,7 @@ type RabbitMqConsumerOptions<Payload = unknown> = {
   queue: string;
   // ONE pattern or MANY (step 4b-4, stage C). It stayed singular while every
   // consumer needed one binding; `GraphProjector` needs two —
-  // `content.relationship.*` and `narrative.effect.*` — because the two prefixes are
+  // `content.relationship.*` and `narrative.assertion.*` — because the two prefixes are
   // what the producers guarantee and `content.#` would also deliver every entity
   // text change in the system (`shared/application/events/routingKeys.ts`,
   // GRAPH_PROJECTOR_BINDINGS).

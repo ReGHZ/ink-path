@@ -60,8 +60,8 @@ import { createSceneRepository } from "./internal/infrastructure/story/PrismaSce
 import { createSceneUnitOfWork } from "./internal/infrastructure/story/PrismaSceneUnitOfWork.js";
 import { createContentRelationshipRepository } from "./internal/infrastructure/support/PrismaContentRelationshipRepository.js";
 import { createRelationshipDefinitionReader } from "./internal/infrastructure/support/PrismaRelationshipDefinitionReader.js";
+import { createAssertionRepository } from "./internal/infrastructure/transition/PrismaAssertionRepository.js";
 import { createNarrativeTransitionRepository } from "./internal/infrastructure/transition/PrismaNarrativeTransitionRepository.js";
-import { createTransitionEffectRepository } from "./internal/infrastructure/transition/PrismaTransitionEffectRepository.js";
 import { createEventRepository } from "./internal/infrastructure/world/PrismaEventRepository.js";
 import { createEventUnitOfWork } from "./internal/infrastructure/world/PrismaEventUnitOfWork.js";
 import { createLayerRepository } from "./internal/infrastructure/world/PrismaLayerRepository.js";
@@ -126,8 +126,8 @@ import type { FactionRepository } from "./internal/domain/story/FactionRepositor
 import type { PlotRepository } from "./internal/domain/story/PlotRepository.js";
 import type { SceneRepository } from "./internal/domain/story/SceneRepository.js";
 import type { ContentRelationshipRepository } from "./internal/domain/support/ContentRelationshipRepository.js";
+import type { AssertionRepository } from "./internal/domain/transition/AssertionRepository.js";
 import type { NarrativeTransitionRepository } from "./internal/domain/transition/NarrativeTransitionRepository.js";
-import type { TransitionEffectRepository } from "./internal/domain/transition/TransitionEffectRepository.js";
 import type { EventRepository } from "./internal/domain/world/EventRepository.js";
 import type { LayerRepository } from "./internal/domain/world/LayerRepository.js";
 import type { WorldElementRepository } from "./internal/domain/world/WorldElementRepository.js";
@@ -200,8 +200,8 @@ export type ContentDomainCradle = {
   relationshipController: RelationshipController;
   // Phase 7.6-7.7. `narrativeTransitionUnitOfWork` has no
   // `ContentUnitOfWork<T>` twin above it because it is not generic over one
-  // entity repository: applying an effect touches whichever of the nine the
-  // effect names, plus the effect row, plus revisions or relationships
+  // entity repository: applying an assertion touches whichever of the nine the
+  // assertion names, plus the assertion row, plus revisions or relationships
   // (`internal/application/ports/NarrativeTransitionUnitOfWork.ts`).
   //
   // The two repositories beside it are the POOLED instances, and the split
@@ -212,20 +212,20 @@ export type ContentDomainCradle = {
   //   declare (`insert`) and relabel (`update`, last-write-wins, this table has
   //   no `version` column on purpose).
   //
-  //   `transitionEffectRepository` — READS ONLY from the service. Every write to
-  //   `transition_effects` goes through the unit of work, including the plain
-  //   insert of `addEffect`, which looks like it could be a single statement and
+  //   `assertionRepository` — READS ONLY from the service. Every write to
+  //   `assertions` goes through the unit of work, including the plain
+  //   insert of `addAssertion`, which looks like it could be a single statement and
   //   deliberately is not: it runs under the aggregate-root lock so that
   //   `deleteTransition` can trust that the set of children it inspected is the
   //   set its blanket delete removes (7.7 gate, notes §10).
   narrativeTransitionRepository: NarrativeTransitionRepository;
-  transitionEffectRepository: TransitionEffectRepository;
+  assertionRepository: AssertionRepository;
   narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork;
   narrativeTransitionService: NarrativeTransitionService;
   // Phase 7.8. One controller for all twelve routes, including the two that hang
-  // off `/transition-effects` rather than off a transition: they are operations
+  // off `/assertions` rather than off a transition: they are operations
   // of the same aggregate, and splitting them into a second controller would
-  // only hide that `deleteEffect` and `deleteTransition` guard each other (D10).
+  // only hide that `deleteAssertion` and `deleteTransition` guard each other (D10).
   narrativeTransitionController: NarrativeTransitionController;
 };
 
@@ -289,8 +289,8 @@ export function registerContentDomain(
     narrativeTransitionRepository: asFunction(
       createNarrativeTransitionRepository,
     ).singleton(),
-    transitionEffectRepository: asFunction(
-      createTransitionEffectRepository,
+    assertionRepository: asFunction(
+      createAssertionRepository,
     ).singleton(),
     narrativeTransitionUnitOfWork: asFunction(
       createNarrativeTransitionUnitOfWork,

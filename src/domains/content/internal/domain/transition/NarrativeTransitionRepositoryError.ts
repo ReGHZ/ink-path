@@ -15,7 +15,7 @@ export class NarrativeTransitionRepositoryNotFoundError extends Error {
   }
 }
 
-// Step 4b-5. The FK refused to delete a transition because a child effect
+// Step 4b-5. The FK refused to delete a transition because a child assertion
 // survived — applied while the delete was working, or born after the delete read
 // its list. Named after the FACT rather than after Postgres's code, because the
 // service answers it with the same sentence its own per-child guard uses: one
@@ -28,7 +28,7 @@ export class NarrativeTransitionRepositoryNotFoundError extends Error {
 // outcome of a race, so it needs a name and an answer.
 export class NarrativeTransitionRepositoryChildSurvivedError extends Error {
   constructor() {
-    super("Narrative transition still has a child effect");
+    super("Narrative transition still has a child assertion");
     this.name = "NarrativeTransitionRepositoryChildSurvivedError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -39,15 +39,15 @@ export class NarrativeTransitionRepositoryChildSurvivedError extends Error {
 // live in this list — see the note below the pair.
 //
 // No `...ConflictError`. Neither `narrative_transitions` nor
-// `transition_effects` has a `version` column
+// `assertions` has a `version` column
 // (`prisma/narrative-transition.prisma:13-60`), so no write is version-guarded
 // and no update can match zero rows for a reason other than "gone". Apply is
-// serialised by a claim on the row instead (`TransitionEffectRepository.claimForApply`,
+// serialised by a claim on the row instead (`AssertionRepository.claimForApply`,
 // step 4b-5), which produces waiting, not conflict.
 //
 // No `...DuplicateError`. There is no unique index on either table beyond the
 // primary key — nothing here is deduplicated the way
-// `content_relationships` is by its six-column constraint. Two identical effects
+// `content_relationships` is by its six-column constraint. Two identical assertions
 // on the same transition are legal: declaring the same consequence twice is a
 // writer's mistake, not a corrupt state, and applying the second one after the
 // first is caught at apply time by the drift rule (decision D5) rather than by

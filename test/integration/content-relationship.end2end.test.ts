@@ -237,12 +237,12 @@ beforeEach(async () => {
       where: { projectId: { in: projectIds } },
     });
 
-    // Assertions before the vocabulary they reference: `transition_effects`
+    // Assertions before the vocabulary they reference: `assertions`
     // points at `relationship_definitions` with onDelete: Restrict since step
     // 4b, so the log goes first. Filtered by `projectId` and not by a relation:
     // that column is denormalised with no FK of its own (`16:95,127`).
     await deleteEvaluationFold(prisma, projectIds);
-    await prisma.transitionEffect.deleteMany({
+    await prisma.assertion.deleteMany({
       where: { projectId: { in: projectIds } },
     });
     await prisma.relationshipDefinition.deleteMany({
@@ -302,7 +302,7 @@ describe("Content relationship end-to-end", () => {
 
       expect(created.status).toBe(201);
 
-      const assertions = await prisma.transitionEffect.findMany({
+      const assertions = await prisma.assertion.findMany({
         where: { projectId },
       });
 
@@ -313,7 +313,7 @@ describe("Content relationship end-to-end", () => {
       // Parentless — no transition declared this — and carrying the predicate
       // instead, which is the other half of the `has_provenance` CHECK.
       expect(assertion?.narrativeTransitionId).toBeNull();
-      expect(assertion?.effectType).toBe("relationship_add");
+      expect(assertion?.operation).toBe("relationship_add");
       expect(assertion?.relationshipType).toBe("member_of");
 
       // Endpoints as DECLARED, not canonicalised: the log keeps the writer's
@@ -376,7 +376,7 @@ describe("Content relationship end-to-end", () => {
       ).toBe(409);
 
       expect(
-        await prisma.transitionEffect.count({ where: { projectId } }),
+        await prisma.assertion.count({ where: { projectId } }),
       ).toBe(1);
       expect(
         await prisma.contentRelationship.count({ where: { projectId } }),
@@ -410,7 +410,7 @@ describe("Content relationship end-to-end", () => {
       });
 
       expect(events).toHaveLength(1);
-      // Written with no consumer on purpose, same as `narrative.effect.applied`
+      // Written with no consumer on purpose, same as `narrative.assertion.applied`
       // since 7.7: what is not recorded today cannot be reconstructed when item
       // 11.4 builds the evaluation graph.
       expect(events[0]?.routingKey).toBe("content.relationship.asserted");
@@ -470,7 +470,7 @@ describe("Content relationship end-to-end", () => {
         await prisma.contentRelationship.count({ where: { id: relationshipId } }),
       ).toBe(0);
 
-      const rows = await prisma.transitionEffect.findMany({
+      const rows = await prisma.assertion.findMany({
         where: { projectId },
         orderBy: { createdAt: "asc" },
       });
@@ -479,16 +479,16 @@ describe("Content relationship end-to-end", () => {
       // substance of 4b-2 — before it, the delete left nothing behind at all.
       expect(rows).toHaveLength(2);
       expect(rows[0]?.id).toBe(assertionId);
-      expect(rows[0]?.effectType).toBe("relationship_add");
+      expect(rows[0]?.operation).toBe("relationship_add");
 
       const retraction = rows[1];
 
-      expect(retraction?.effectType).toBe("retract");
+      expect(retraction?.operation).toBe("retract");
       expect(retraction?.targetAssertionId).toBe(assertionId);
       // Carried, and the composite foreign key is what makes it unable to lie
       // (C-1). A row disagreeing with the target's real kind has nothing to
       // reference.
-      expect(retraction?.targetEffectType).toBe("relationship_add");
+      expect(retraction?.targetOperation).toBe("relationship_add");
       // NOT a termination: no anchor, because a retraction is transaction-time.
       // The rule engine treats the two differently, so this is the assertion that
       // keeps `DELETE` from silently becoming a valid-time cessation.
@@ -589,7 +589,7 @@ describe("Content relationship end-to-end", () => {
       }
 
       await expect(
-        prisma.transitionEffect.delete({
+        prisma.assertion.delete({
           where: { id: projection.sourceAssertionId },
         }),
       ).rejects.toThrow();
@@ -598,7 +598,7 @@ describe("Content relationship end-to-end", () => {
       // catches a cascade: the delete itself would succeed under one, and only the
       // vanished relationship would say so.
       expect(
-        await prisma.transitionEffect.count({
+        await prisma.assertion.count({
           where: { id: projection.sourceAssertionId },
         }),
       ).toBe(1);
@@ -663,11 +663,11 @@ describe("Content relationship end-to-end", () => {
       // append-only rule enforced against hand-run SQL, not only against the
       // application.
       await expect(
-        prisma.transitionEffect.delete({ where: { id: assertionId } }),
+        prisma.assertion.delete({ where: { id: assertionId } }),
       ).rejects.toThrow();
 
       expect(
-        await prisma.transitionEffect.count({ where: { id: assertionId } }),
+        await prisma.assertion.count({ where: { id: assertionId } }),
       ).toBe(1);
     });
   });
@@ -1117,7 +1117,7 @@ describe("Content relationship end-to-end", () => {
       // fold. A leak that failed late (foreign key) instead of early (vocabulary)
       // could still have left an assertion behind.
       expect(
-        await prisma.transitionEffect.count({ where: { projectId: borrower } }),
+        await prisma.assertion.count({ where: { projectId: borrower } }),
       ).toBe(0);
       expect(
         await prisma.contentRelationship.count({ where: { projectId: borrower } }),

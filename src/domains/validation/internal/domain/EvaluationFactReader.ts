@@ -1,8 +1,8 @@
 import type { EvaluationSnapshot } from "./RuleEvaluator.js";
 
 // The contract lives here and the Postgres implementation lives in
-// `infrastructure/`, the same split as `TransitionEffectRepository` against
-// `PrismaTransitionEffectRepository` (`notes/02-struktur-domain-dan-test.md`:
+// `infrastructure/`, the same split as `AssertionRepository` against
+// `PrismaAssertionRepository` (`notes/02-struktur-domain-dan-test.md`:
 // repository interface → `domain/`, impl → `infrastructure/`).
 //
 // It matters more than usual here: `evaluateRule` decides what a rule ANSWERS,

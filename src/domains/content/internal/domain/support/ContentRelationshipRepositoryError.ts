@@ -40,9 +40,9 @@ export class ContentRelationshipRepositoryDuplicateError extends Error {
 // `content_relationships`. Both of its FKs are outbound (`project_id` Restrict,
 // `created_by_user_id` SetNull) and no model declares a back-relation to it
 // (`content-support.prisma:55-81`), so a delete cannot be blocked by an inbound
-// Restrict. Confirmed against 7.7: `transition_effects` stores endpoints
+// Restrict. Confirmed against 7.7: `assertions` stores endpoints
 // (`target_entity_*`, `related_entity_*`) and has no FK to a relationship row
-// (`narrative-transition.prisma:38-60`), so applying an effect cannot pin one.
+// (`narrative-transition.prisma:38-60`), so applying an assertion cannot pin one.
 //
 // No translated error for an outbound FK violation on insert() either — a P2003
 // there must surface RAW. `projectId` comes from the authorized route context

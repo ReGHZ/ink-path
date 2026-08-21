@@ -297,7 +297,7 @@ model EvaluationEdge {
   // edge folded from ANOTHER project's assertion is a tenancy leak the database
   // can refuse outright, rather than one that survives until a service forgets to
   // check.
-  sourceAssertion TransitionEffect @relation(fields: [sourceAssertionId, projectId], references: [id, projectId], onDelete: Restrict, onUpdate: Restrict)
+  sourceAssertion Assertion @relation(fields: [sourceAssertionId, projectId], references: [id, projectId], onDelete: Restrict, onUpdate: Restrict)
 
   // §ADDENDUM butir 6: the predicate reference takes the shape 4a settled on —
   // `relationship_type text` + composite FK — and NOT a `predicate_id` column

@@ -11,7 +11,7 @@ import {
   CONTENT_UPDATED,
   EMBEDDING_WORKER_BINDING,
   GRAPH_PROJECTOR_BINDINGS,
-  NARRATIVE_EFFECT_APPLIED,
+  NARRATIVE_ASSERTION_APPLIED,
   matchesTopicPattern,
 } from "./routingKeys.js";
 
@@ -72,7 +72,7 @@ describe("the routing key contract", () => {
   const graphFacts = [
     CONTENT_RELATIONSHIP_ASSERTED,
     CONTENT_RELATIONSHIP_RETRACTED,
-    NARRATIVE_EFFECT_APPLIED,
+    NARRATIVE_ASSERTION_APPLIED,
   ];
 
   it.each(entityLifecycle)(

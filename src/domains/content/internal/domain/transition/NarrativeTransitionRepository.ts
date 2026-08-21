@@ -42,12 +42,12 @@ export type NarrativeTransitionRepository = {
   // row lock.
   update(narrativeTransition: NarrativeTransition): Promise<void>;
 
-  // Hard delete, allowed ONLY when every child effect is still pending
+  // Hard delete, allowed ONLY when every child assertion is still pending
   // (`05-implementation-policy/05_append_only_invariants.md:52-59`). Two things
   // the caller owns, neither of which this method can check for itself:
   //
   // 1. The append-only guard — read the children, refuse with 409 if any is
-  //    applied. The database will not help: the FK on `transition_effects` is
+  //    applied. The database will not help: the FK on `assertions` is
   //    `onDelete: Restrict` (`prisma/narrative-transition.prisma:54`), which
   //    blocks a delete while ANY child exists, applied or not, and cascade was
   //    switched off precisely so that the rule stays app-decided

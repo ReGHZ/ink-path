@@ -1,5 +1,5 @@
 import { PrismaContentRelationshipRepository } from "./support/PrismaContentRelationshipRepository.js";
-import { PrismaTransitionEffectRepository } from "./transition/PrismaTransitionEffectRepository.js";
+import { PrismaAssertionRepository } from "./transition/PrismaAssertionRepository.js";
 import {
   Prisma,
   type PrismaClient,
@@ -29,7 +29,7 @@ export class PrismaRelationshipUnitOfWork implements RelationshipUnitOfWork {
       async (tx) => {
         return work(
           {
-            assertions: new PrismaTransitionEffectRepository(tx),
+            assertions: new PrismaAssertionRepository(tx),
             contentRelationships: new PrismaContentRelationshipRepository(tx),
           },
           new PrismaOutboxEventRepository(tx),

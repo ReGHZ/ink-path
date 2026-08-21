@@ -12,7 +12,7 @@ import {
   SEEDED_DEFINITIONS,
   seededDefinition,
 } from "../../domain/support/relationshipDefinitionSeed.js";
-import { TransitionEffect } from "../../domain/transition/TransitionEffect.js";
+import { Assertion } from "../../domain/transition/Assertion.js";
 
 import type { Clock } from "../../../../../shared/application/ports/Clock.js";
 import type { IdGenerator } from "../../../../../shared/application/ports/IdGenerator.js";
@@ -198,10 +198,10 @@ function createUnitOfWork(
   relationships: ContentRelationshipRepository,
 ): {
   unitOfWork: RelationshipUnitOfWork;
-  assertions: TransitionEffect[];
+  assertions: Assertion[];
   outbox: OutboxEvent[];
 } {
-  const assertions: TransitionEffect[] = [];
+  const assertions: Assertion[] = [];
   const outbox: OutboxEvent[] = [];
 
   return {
@@ -304,24 +304,24 @@ function createInput(
 }
 
 // The log entry the projection row is a fold OF. Since step 4b-2 a delete is a
-// retraction, so it reads this row to learn the target's real `effect_type` — a
+// retraction, so it reads this row to learn the target's real `operation` — a
 // test that seeds only the projection is testing a state the database refuses
 // (the composite foreign key would have no row to reference).
 // A fact asserted BY A NARRATIVE TRANSITION, i.e. what jalur 7.7 leaves behind: the
-// effect row IS the assertion, and it carries a parent. Built through create() +
+// assertion row IS the assertion, and it carries a parent. Built through create() +
 // markApplied() rather than assertFact(), which the type system reserves for the
 // parentless CRUD path — that reservation is itself the invariant this fixture is
 // here to exercise from the outside.
 function seedNarrativeOriginAssertion(
-  assertions: TransitionEffect[],
+  assertions: Assertion[],
   overrides: Partial<{ id: string; projectId: string; predicate: string }> = {},
-): TransitionEffect {
+): Assertion {
   const predicate = overrides.predicate ?? "member_of";
-  const assertion = TransitionEffect.create({
+  const assertion = Assertion.create({
     id: overrides.id ?? "assertion-1",
     narrativeTransitionId: "transition-1",
     projectId: overrides.projectId ?? "proj-1",
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetEntityType: "character",
     targetEntityId: "character-1",
     relationshipType: predicate,
@@ -338,15 +338,15 @@ function seedNarrativeOriginAssertion(
 }
 
 function seedOriginAssertion(
-  assertions: TransitionEffect[],
+  assertions: Assertion[],
   overrides: Partial<{ id: string; projectId: string; predicate: string }> = {},
-): TransitionEffect {
+): Assertion {
   const predicate = overrides.predicate ?? "member_of";
-  const assertion = TransitionEffect.assertFact({
+  const assertion = Assertion.assertFact({
     id: overrides.id ?? "assertion-1",
     narrativeTransitionId: null,
     projectId: overrides.projectId ?? "proj-1",
-    effectType: "relationship_add",
+    operation: "relationship_add",
     targetEntityType: "character",
     targetEntityId: "character-1",
     relationshipType: predicate,
@@ -766,11 +766,11 @@ describe("RelationshipService", () => {
 
       const retraction = assertions[1];
 
-      expect(retraction?.effectType).toBe("retract");
+      expect(retraction?.operation).toBe("retract");
       expect(retraction?.targetAssertionId).toBe(origin.id);
       // The KIND read off the target row, not asserted by the caller (C-1): a
       // hardcoded literal here would be exactly the value that can lie.
-      expect(retraction?.targetEffectType).toBe("relationship_add");
+      expect(retraction?.targetOperation).toBe("relationship_add");
       expect(retraction?.narrativeTransitionId).toBeNull();
       // Provenance, and it is not optional: with no parent transition, naming the
       // predicate is the only way this row satisfies `has_provenance`.
@@ -870,7 +870,7 @@ describe("RelationshipService", () => {
 
     // DECIDED 2026-08-19 — blokir gerbang G1 (T-2). Before this, the CRUD button
     // could retract a fact a narrative transition had asserted: the projection row
-    // points at the effect row (jalur 7.7 sets `sourceAssertionId: effect.id`), and
+    // points at the assertion row (jalur 7.7 sets `sourceAssertionId: assertion.id`), and
     // nothing on the delete path looked at whether that row had a parent. The
     // transition kept reporting `applied` while the fact it applied was withdrawn at
     // every cut.
@@ -926,7 +926,7 @@ describe("RelationshipService", () => {
       });
 
       expect(assertions).toHaveLength(2);
-      expect(assertions[1]?.effectType).toBe("retract");
+      expect(assertions[1]?.operation).toBe("retract");
       expect(relationships.relationships.size).toBe(0);
     });
 

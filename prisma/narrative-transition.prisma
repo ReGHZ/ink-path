@@ -22,7 +22,7 @@ enum NarrativeTransitionSourceType {
 // Resolution needs exactly one rule — retraction beats termination — because it
 // works on the stratum of EXISTENCE while termination works on the stratum of
 // VALID RANGE.
-enum TransitionEffectType {
+enum AssertionOperation {
   attribute_change
   relationship_add
   relationship_remove
@@ -46,7 +46,7 @@ model NarrativeTransition {
   declaredBy         User                 @relation("NarrativeTransitionDeclaredBy", fields: [declaredByUserId], references: [id], onDelete: Restrict)
   reversesTransition NarrativeTransition? @relation("NarrativeTransitionReversal", fields: [reversesTransitionId], references: [id], onDelete: SetNull)
 
-  effects    TransitionEffect[]
+  assertions Assertion[]
   reversedBy NarrativeTransition[] @relation("NarrativeTransitionReversal")
 
   @@index([projectId])
@@ -64,7 +64,7 @@ model NarrativeTransition {
 // The four columns below are what it was missing, and every one of them was
 // found the same way — a row in the gap table marked "✓" that was only true for
 // the table's OLD role.
-model TransitionEffect {
+model Assertion {
   id String @id @default(uuid()) @db.Uuid
 
   // NULLABLE since 2026-08-18. Blocker 1: an assertion made through plain CRUD
@@ -73,7 +73,7 @@ model TransitionEffect {
   narrativeTransitionId String? @map("narrative_transition_id") @db.Uuid
 
   projectId        String               @map("project_id") @db.Uuid
-  effectType       TransitionEffectType @map("effect_type")
+  operation       AssertionOperation @map("operation")
   targetEntityType ContentEntityType    @map("target_entity_type")
   targetEntityId   String               @map("target_entity_id") @db.Uuid
   fieldPath        String?              @map("field_path")
@@ -114,14 +114,14 @@ model TransitionEffect {
   //
   // It cannot drift, and that is the point of the shape: the composite foreign
   // key below carries it, so a value disagreeing with the target's real
-  // `effect_type` has no row to reference. Append-only makes that permanent —
-  // `effect_type` is never updated, so the reference can never go stale.
+  // `operation` has no row to reference. Append-only makes that permanent —
+  // `operation` is never updated, so the reference can never go stale.
   //
   // What it enforces (premis §8.3 AMENDMENT 2026-08-18): `terminate` acts only
   // on an assertion; `retract` acts on an assertion or on a `terminate`, never
   // on another `retract`. Before this, both were writable and silently ignored —
   // a mistyped termination could not be corrected at all.
-  targetEffectType TransitionEffectType? @map("target_effect_type")
+  targetOperation AssertionOperation? @map("target_operation")
 
   appliedAt         DateTime? @map("applied_at")
   contentRevisionId String?   @map("content_revision_id") @db.Uuid
@@ -134,9 +134,9 @@ model TransitionEffect {
   // DIFFERENT project is a tenancy leak the database can refuse outright, rather
   // than one that survives until a service forgets to check.
   relationshipDefinition RelationshipDefinition? @relation(fields: [relationshipDefinitionId, projectId], references: [id, projectId], onDelete: Restrict)
-  targetAssertion        TransitionEffect?       @relation("AssertionTarget", fields: [targetAssertionId, projectId, targetEffectType], references: [id, projectId, effectType], onDelete: Restrict)
+  targetAssertion        Assertion?       @relation("AssertionTarget", fields: [targetAssertionId, projectId, targetOperation], references: [id, projectId, operation], onDelete: Restrict)
 
-  targetedBy TransitionEffect[] @relation("AssertionTarget")
+  targetedBy Assertion[] @relation("AssertionTarget")
 
   // The CRUD projection rows folded FROM this assertion (step 4b-2). Restrict on
   // that side, so an assertion cannot be deleted out from under the row that
@@ -151,10 +151,10 @@ model TransitionEffect {
   evaluationEdges EvaluationEdge[]
 
   // Exists only as the target of the self-referencing foreign key above. It
-  // carries `effect_type` so a referencing row can name its target's KIND and be
+  // carries `operation` so a referencing row can name its target's KIND and be
   // held to it by the key itself — the one thing a CHECK cannot do, since a
   // CHECK only ever sees its own row.
-  @@unique([id, projectId, effectType])
+  @@unique([id, projectId, operation])
   // Re-added in step 4b-2, and NOT the orphan that C-1 removed: it is the key
   // `content_relationships.source_assertion_id` references, and it carries
   // `project_id` for the reason every composite key in this schema does — a
@@ -170,5 +170,5 @@ model TransitionEffect {
   @@index([projectId, relationshipDefinitionId])
   @@index([projectId, anchorEntityType, anchorEntityId])
   @@index([targetAssertionId])
-  @@map("transition_effects")
+  @@map("assertions")
 }

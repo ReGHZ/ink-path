@@ -1,5 +1,5 @@
 import {
-  NARRATIVE_EFFECT_APPLIED,
+  NARRATIVE_ASSERTION_APPLIED,
   CONTENT_UPDATED,
 } from "../../../../../shared/application/events/routingKeys.js";
 import { AppError } from "../../../../../shared/errors/AppError.js";
@@ -10,6 +10,10 @@ import {
   ContentRelationshipRepositoryDuplicateError,
   ContentRelationshipRepositoryNotFoundError,
 } from "../../domain/support/ContentRelationshipRepositoryError.js";
+import {
+  Assertion,
+  type AssertionOperation,
+} from "../../domain/transition/Assertion.js";
 import { domainAttributeFieldOf } from "../../domain/transition/attributeFieldRegistry.js";
 import {
   deriveNarrativeTransitionStatus,
@@ -21,10 +25,6 @@ import {
   NarrativeTransitionRepositoryChildSurvivedError,
   NarrativeTransitionRepositoryNotFoundError,
 } from "../../domain/transition/NarrativeTransitionRepositoryError.js";
-import {
-  TransitionEffect,
-  type TransitionEffectType,
-} from "../../domain/transition/TransitionEffect.js";
 import { ContentAttributeConflictError } from "../ports/ContentAttributeMutatorError.js";
 import { findFoldOfFact, foldAssertion } from "../support/relationshipProjection.js";
 
@@ -35,8 +35,8 @@ import type { ProjectMembership } from "../../../../../shared/application/ports/
 import type { ContentRelationship } from "../../domain/support/ContentRelationship.js";
 import type { ContentEntityType } from "../../domain/support/ContentRevision.js";
 import type { RelationshipDefinition } from "../../domain/support/relationshipDefinition.js";
+import type { AssertionRepository } from "../../domain/transition/AssertionRepository.js";
 import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
-import type { TransitionEffectRepository } from "../../domain/transition/TransitionEffectRepository.js";
 import type { ContentEntityLocator } from "../ports/ContentEntityLocator.js";
 import type {
   NarrativeTransitionRepositories,
@@ -74,17 +74,17 @@ type BaseAddEffectInput = {
   targetEntityId: string;
 };
 
-// Mirrors `CreateTransitionEffectProperties`: the caller cannot express an
+// Mirrors `CreateAssertionProperties`: the caller cannot express an
 // attribute change carrying a relation type, so the impossible request never
 // reaches the domain. The DTO layer at 7.8 discriminates on the same field.
 export type AddEffectInput =
   | (BaseAddEffectInput & {
-      effectType: "attribute_change";
+      operation: "attribute_change";
       fieldPath: string;
       newValue: string;
     })
   | (BaseAddEffectInput & {
-      effectType: "relationship_add" | "relationship_remove";
+      operation: "relationship_add" | "relationship_remove";
       // Plain `string`: rule 1 belongs to the domain, so an unknown relation
       // type is rejected identically here and on the manual relationship path.
       relationshipType: string;
@@ -92,11 +92,11 @@ export type AddEffectInput =
       relatedEntityId: string;
     });
 
-export type TransitionEffectDetail = {
+export type AssertionDetail = {
   id: string;
   narrativeTransitionId: string;
   projectId: string;
-  effectType: TransitionEffectType;
+  operation: AssertionOperation;
   targetEntityType: ContentEntityType;
   targetEntityId: string;
   fieldPath: string | null;
@@ -109,9 +109,9 @@ export type TransitionEffectDetail = {
   createdAt: Date;
 };
 
-// `status` is computed here, never stored (`16:71-75`), and the effects travel
+// `status` is computed here, never stored (`16:71-75`), and the assertions travel
 // with the transition because the status cannot be produced without them: a
-// caller that received a transition alone would have to ask for the effects to
+// caller that received a transition alone would have to ask for the assertions to
 // learn anything about its state.
 export type NarrativeTransitionDetail = {
   id: string;
@@ -123,7 +123,7 @@ export type NarrativeTransitionDetail = {
   declaredByUserId: string;
   reversesTransitionId: string | null;
   status: NarrativeTransitionStatus;
-  effects: TransitionEffectDetail[];
+  assertions: AssertionDetail[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -131,7 +131,7 @@ export type NarrativeTransitionDetail = {
 // Flow 10's role matrix (`02-system-design/03_flow_10_narrative_transition.md:15-21`)
 // gives Writer and Editor every column and Reviewer none — declare, add, delete,
 // apply and reversal alike. One guard, no `assertCanDelete` twin: deleting a
-// PENDING effect destroys an intention, not content, and an applied one cannot
+// PENDING assertion destroys an intention, not content, and an applied one cannot
 // be deleted by anybody. Same shape as RelationshipService, for the same reason.
 function assertCanWrite(membership: ProjectMembership): void {
   if (membership.role === "reviewer") {
@@ -149,7 +149,7 @@ function mapNarrativeTransitionError(error: unknown): never {
 
   // The relationship vanished between the lookup and the guarded delete — under
   // READ COMMITTED that is possible even inside one transaction. It is the SAME
-  // world-fact as the pre-check further down ("the link this effect would remove
+  // world-fact as the pre-check further down ("the link this assertion would remove
   // is not there"), so it must get the same answer: 409 with the same sentence.
   //
   // It used to fall into the 404 above, which was wrong twice over at the 7.7
@@ -165,26 +165,26 @@ function mapNarrativeTransitionError(error: unknown): never {
   if (error instanceof NarrativeTransitionRepositoryChildSurvivedError) {
     throw new AppError(
       ErrorCode.CONFLICT,
-      "Transition has applied effects and cannot be deleted — declare a reversal instead",
+      "Transition has applied assertions and cannot be deleted — declare a reversal instead",
     );
   }
 
   if (error instanceof ContentRelationshipRepositoryNotFoundError) {
     throw new AppError(
       ErrorCode.CONFLICT,
-      "The relationship this effect would remove does not exist",
+      "The relationship this assertion would remove does not exist",
     );
   }
 
-  // Decision D5: the world already holds the state this effect intends. Marking
+  // Decision D5: the world already holds the state this assertion intends. Marking
   // it applied would claim this transition caused a relationship somebody else
   // created by hand — provenance is two-pathed on purpose (keputusan #12), and
   // conflating the paths is exactly what append-only exists to prevent. The
-  // writer's way out is to delete the pending effect.
+  // writer's way out is to delete the pending assertion.
   if (error instanceof ContentRelationshipRepositoryDuplicateError) {
     throw new AppError(
       ErrorCode.CONFLICT,
-      "The relationship this effect would add already exists",
+      "The relationship this assertion would add already exists",
     );
   }
 
@@ -214,7 +214,7 @@ export class NarrativeTransitionService {
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
     private readonly narrativeTransitionRepository: NarrativeTransitionRepository,
-    private readonly transitionEffectRepository: TransitionEffectRepository,
+    private readonly assertionRepository: AssertionRepository,
     private readonly contentEntityLocator: ContentEntityLocator,
     private readonly narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork,
     private readonly relationshipDefinitionReader: RelationshipDefinitionReader,
@@ -266,7 +266,7 @@ export class NarrativeTransitionService {
       mapNarrativeTransitionError(error);
     }
 
-    // A transition is born with no effects, so its status is `declared` and the
+    // A transition is born with no assertions, so its status is `declared` and the
     // list is empty — no read needed to say so.
     return toTransitionDetail(transition, []);
   }
@@ -284,14 +284,14 @@ export class NarrativeTransitionService {
 
     return toTransitionDetail(
       transition,
-      await this.transitionEffectRepository.findByTransitionId(transition.id),
+      await this.assertionRepository.findByTransitionId(transition.id),
     );
   }
 
   async listTransitionsByProject(
     projectId: string,
   ): Promise<NarrativeTransitionDetail[]> {
-    return this.withEffects(
+    return this.withAssertions(
       await this.narrativeTransitionRepository.findByProjectId(projectId),
     );
   }
@@ -311,7 +311,7 @@ export class NarrativeTransitionService {
       "Source",
     );
 
-    return this.withEffects(
+    return this.withAssertions(
       await this.narrativeTransitionRepository.findBySourceEntity(
         projectId,
         sourceEntityType,
@@ -353,7 +353,7 @@ export class NarrativeTransitionService {
 
     return toTransitionDetail(
       transition,
-      await this.transitionEffectRepository.findByTransitionId(transition.id),
+      await this.assertionRepository.findByTransitionId(transition.id),
     );
   }
 
@@ -393,8 +393,8 @@ export class NarrativeTransitionService {
           );
         }
 
-        const effects =
-          await repositories.transitionEffects.findByTransitionId(transitionId);
+        const assertions =
+          await repositories.assertions.findByTransitionId(transitionId);
 
         // Per id in the LIST'S OWN ORDER (createdAt asc, id tie-break), not one
         // blanket statement. Bulk apply claims its rows in exactly that order, so
@@ -402,16 +402,16 @@ export class NarrativeTransitionService {
         // against each other. A blanket `DELETE ... WHERE narrative_transition_id`
         // would lock in scan order, which is unspecified — the anti-deadlock
         // property would be dropped silently rather than decided.
-        for (const effect of effects) {
-          const outcome = await repositories.transitionEffects.deleteIfPending(
+        for (const assertion of assertions) {
+          const outcome = await repositories.assertions.deleteIfPending(
             projectId,
-            effect.id,
+            assertion.id,
           );
 
           if (outcome === "applied") {
             throw new AppError(
               ErrorCode.CONFLICT,
-              "Transition has applied effects and cannot be deleted — declare a reversal instead",
+              "Transition has applied assertions and cannot be deleted — declare a reversal instead",
             );
           }
         }
@@ -425,11 +425,11 @@ export class NarrativeTransitionService {
     );
   }
 
-  async addEffect(
+  async addAssertion(
     projectId: string,
     transitionId: string,
     input: AddEffectInput,
-  ): Promise<TransitionEffectDetail> {
+  ): Promise<AssertionDetail> {
     assertCanWrite(input.requestingMembership);
 
     // Endpoint checks run on the pooled client BEFORE the transaction opens, the
@@ -437,7 +437,7 @@ export class NarrativeTransitionService {
     // calling it inside would take a second connection while holding the first.
     //
     // Flow 10 §Add Effect step 4 for the target, and the same check for the
-    // related entity of a relationship effect — an effect whose endpoints do not
+    // related entity of a relationship assertion — an assertion whose endpoints do not
     // exist is one that can never be applied.
     await this.assertEntityInProject(
       projectId,
@@ -447,15 +447,15 @@ export class NarrativeTransitionService {
     );
 
 
-    let effect: TransitionEffect;
+    let assertion: Assertion;
 
-    if (input.effectType === "attribute_change") {
+    if (input.operation === "attribute_change") {
       try {
-        effect = TransitionEffect.create({
+        assertion = Assertion.create({
           id: this.idGenerator.generate(),
           narrativeTransitionId: transitionId,
           projectId,
-          effectType: "attribute_change",
+          operation: "attribute_change",
           targetEntityType: input.targetEntityType,
           targetEntityId: input.targetEntityId,
           fieldPath: input.fieldPath,
@@ -466,7 +466,7 @@ export class NarrativeTransitionService {
         mapNarrativeTransitionError(error);
       }
     } else {
-      // Flow 10 §Add Effect, the related endpoint — an effect whose endpoints do
+      // Flow 10 §Add Effect, the related endpoint — an assertion whose endpoints do
       // not exist is one that can never be applied.
       await this.assertEntityInProject(
         projectId,
@@ -493,11 +493,11 @@ export class NarrativeTransitionService {
       }
 
       try {
-        effect = TransitionEffect.create({
+        assertion = Assertion.create({
           id: this.idGenerator.generate(),
           narrativeTransitionId: transitionId,
           projectId,
-          effectType: input.effectType,
+          operation: input.operation,
           targetEntityType: input.targetEntityType,
           targetEntityId: input.targetEntityId,
           relationshipType: input.relationshipType,
@@ -530,17 +530,17 @@ export class NarrativeTransitionService {
         }
 
         try {
-          await repositories.transitionEffects.insert(effect);
+          await repositories.assertions.insert(assertion);
         } catch (error) {
           mapNarrativeTransitionError(error);
         }
       },
     );
 
-    return toEffectDetail(effect);
+    return toEffectDetail(assertion);
   }
 
-  async deleteEffect(
+  async deleteAssertion(
     projectId: string,
     effectId: string,
     input: MutateTransitionInput,
@@ -554,30 +554,30 @@ export class NarrativeTransitionService {
         // queue and then re-reads the predicate against what that apply
         // committed. "Zero rows removed" is never reported as success — the
         // adapter says which of the two reasons it was.
-        const outcome = await repositories.transitionEffects.deleteIfPending(
+        const outcome = await repositories.assertions.deleteIfPending(
           projectId,
           effectId,
         );
 
         if (outcome === "missing") {
-          throw new AppError(ErrorCode.NOT_FOUND, "Transition effect not found");
+          throw new AppError(ErrorCode.NOT_FOUND, "Transition assertion not found");
         }
 
         if (outcome === "applied") {
           throw new AppError(
             ErrorCode.CONFLICT,
-            "Applied effect cannot be deleted — declare a reversal instead",
+            "Applied assertion cannot be deleted — declare a reversal instead",
           );
         }
       },
     );
   }
 
-  async applyEffect(
+  async applyAssertion(
     projectId: string,
     effectId: string,
     input: MutateTransitionInput,
-  ): Promise<TransitionEffectDetail> {
+  ): Promise<AssertionDetail> {
     assertCanWrite(input.requestingMembership);
 
     // Endpoint existence is resolved BEFORE the transaction opens. The locator
@@ -591,7 +591,7 @@ export class NarrativeTransitionService {
       // Already applied before this request arrived. Idempotent success, not a
       // conflict (`flow_10:93`): the caller asked for a state that holds.
       return toEffectDetail(
-        await this.loadExistingEffect(projectId, effectId),
+        await this.loadExistingAssertion(projectId, effectId),
       );
     }
 
@@ -601,7 +601,7 @@ export class NarrativeTransitionService {
 
     return this.narrativeTransitionUnitOfWork.transaction(
       async (repositories, outboxEvents) =>
-        this.applyOneEffect(
+        this.applyOneAssertion(
           repositories,
           outboxEvents,
           projectId,
@@ -612,14 +612,14 @@ export class NarrativeTransitionService {
     );
   }
 
-  // Decision D9. Every pending effect of one transition, in ONE transaction:
+  // Decision D9. Every pending assertion of one transition, in ONE transaction:
   // all of them apply or none does. Partial success was rejected — a transition
   // half-applied by a single click is the state `partially_applied` already
   // exists to describe deliberately, and reporting "3 of 5 worked, retry the
   // rest" turns one atomic story beat into a job queue. The escape hatch for a
-  // single stuck effect is to delete it and apply again.
+  // single stuck assertion is to delete it and apply again.
   //
-  // Not a new primitive: it walks the same `applyOneEffect` the per-effect
+  // Not a new primitive: it walks the same `applyOneAssertion` the per-assertion
   // endpoint uses, so the row lock and the idempotency re-check are identical.
   async applyTransition(
     projectId: string,
@@ -634,34 +634,34 @@ export class NarrativeTransitionService {
     );
 
     const declared =
-      await this.transitionEffectRepository.findByTransitionId(transition.id);
+      await this.assertionRepository.findByTransitionId(transition.id);
 
-    for (const effect of declared) {
-      if (!effect.isApplied) {
-        await this.loadPendingEffectForApply(projectId, effect.id);
+    for (const assertion of declared) {
+      if (!assertion.isApplied) {
+        await this.loadPendingEffectForApply(projectId, assertion.id);
       }
     }
 
     // The whole vocabulary, read on the pooled client BEFORE the transaction —
     // same rule the endpoint checks follow: this reader is built over the pool,
     // so calling it inside the transaction would take a second connection while
-    // holding the first. One map for the whole loop, since several effects
+    // holding the first. One map for the whole loop, since several assertions
     // commonly share a predicate.
     const definitions =
       await this.relationshipDefinitionReader.findAllByProject(projectId);
 
     await this.narrativeTransitionUnitOfWork.transaction(
       async (repositories, outboxEvents) => {
-        const effects =
-          await repositories.transitionEffects.findByTransitionId(transitionId);
+        const assertions =
+          await repositories.assertions.findByTransitionId(transitionId);
 
         // Same order the delete guard locks in, so the two never deadlock.
-        for (const effect of effects) {
-          await this.applyOneEffect(
+        for (const assertion of assertions) {
+          await this.applyOneAssertion(
             repositories,
             outboxEvents,
             projectId,
-            effect.id,
+            assertion.id,
             input.requestingUserId,
             definitions,
           );
@@ -671,20 +671,20 @@ export class NarrativeTransitionService {
 
     return toTransitionDetail(
       transition,
-      await this.transitionEffectRepository.findByTransitionId(transition.id),
+      await this.assertionRepository.findByTransitionId(transition.id),
     );
   }
 
   // The shared body of both apply paths. Everything it does happens inside the
   // caller's transaction, starting with the row lock.
-  private async applyOneEffect(
+  private async applyOneAssertion(
     repositories: NarrativeTransitionRepositories,
     outboxEvents: OutboxEventRepository,
     projectId: string,
     effectId: string,
     requestingUserId: string,
     definitions: ReadonlyMap<string, RelationshipDefinition>,
-  ): Promise<TransitionEffectDetail> {
+  ): Promise<AssertionDetail> {
     // ONE clock read per action, and it happens here because the claim itself
     // needs the instant: the same `now` stamps `applied_at` on disk and, further
     // down, the aggregate's `markApplied()`. Two reads could straddle a tick.
@@ -692,34 +692,34 @@ export class NarrativeTransitionService {
 
     // Step 4b-5. The predicate rides inside the write, so this single statement
     // both takes the row lock and decides whether this caller is the one applying
-    // the effect. It replaces `findByIdForUpdate` + a separate `applied_at` check
+    // the assertion. It replaces `findByIdForUpdate` + a separate `applied_at` check
     // — the pair whose distance was the thing a reader had to remember.
-    const claim = await repositories.transitionEffects.claimForApply(
+    const claim = await repositories.assertions.claimForApply(
       projectId,
       effectId,
       now,
     );
 
     if (claim.status === "missing") {
-      throw new AppError(ErrorCode.NOT_FOUND, "Transition effect not found");
+      throw new AppError(ErrorCode.NOT_FOUND, "Transition assertion not found");
     }
 
     // The idempotency answer REQUIRED by `flow_10:101,115`: two concurrent
     // applies both saw pending, the loser waited in the row's lock queue, and
     // this is where it finds out. Success rather than 409 is deliberate — the
-    // effect IS applied, which is what the caller asked for; a second
+    // assertion IS applied, which is what the caller asked for; a second
     // ContentRevision is what must not happen.
     if (claim.status === "already-applied") {
-      return toEffectDetail(claim.effect);
+      return toEffectDetail(claim.assertion);
     }
 
-    const effect = claim.effect;
+    const assertion = claim.assertion;
 
-    if (effect.effectType === "attribute_change") {
+    if (assertion.operation === "attribute_change") {
       await this.applyAttributeChange(
         repositories,
         outboxEvents,
-        effect,
+        assertion,
         requestingUserId,
         now,
       );
@@ -727,7 +727,7 @@ export class NarrativeTransitionService {
       await this.applyRelationshipChange(
         repositories,
         outboxEvents,
-        effect,
+        assertion,
         requestingUserId,
         now,
         definitions,
@@ -735,35 +735,35 @@ export class NarrativeTransitionService {
     }
 
     try {
-      await repositories.transitionEffects.update(effect);
+      await repositories.assertions.update(assertion);
     } catch (error) {
       mapNarrativeTransitionError(error);
     }
 
-    return toEffectDetail(effect);
+    return toEffectDetail(assertion);
   }
 
   private async applyAttributeChange(
     repositories: NarrativeTransitionRepositories,
     outboxEvents: OutboxEventRepository,
-    effect: TransitionEffect,
+    assertion: Assertion,
     requestingUserId: string,
     now: Date,
   ): Promise<void> {
     // Decision D3's second half: the allowlist is checked again at apply, not
-    // only when the effect was declared. It is a Phase 7 table over columns that
+    // only when the assertion was declared. It is a Phase 7 table over columns that
     // will keep changing, so a field that stops being writable must stop being
-    // appliable — while the effect itself stays readable and deletable
-    // (`../../domain/transition/TransitionEffect.ts` create()).
+    // appliable — while the assertion itself stays readable and deletable
+    // (`../../domain/transition/Assertion.ts` create()).
     const domainField =
-      effect.fieldPath === null
+      assertion.fieldPath === null
         ? null
-        : domainAttributeFieldOf(effect.targetEntityType, effect.fieldPath);
+        : domainAttributeFieldOf(assertion.targetEntityType, assertion.fieldPath);
 
-    if (domainField === null || effect.newValue === null) {
+    if (domainField === null || assertion.newValue === null) {
       throw new AppError(
         ErrorCode.CONFLICT,
-        `Field ${String(effect.fieldPath)} is no longer writable by a narrative transition on ${effect.targetEntityType}`,
+        `Field ${String(assertion.fieldPath)} is no longer writable by a narrative transition on ${assertion.targetEntityType}`,
       );
     }
 
@@ -772,10 +772,10 @@ export class NarrativeTransitionService {
     let applied;
     try {
       applied = await repositories.contentAttributes.applyAttributeChange({
-        entityType: effect.targetEntityType,
-        entityId: effect.targetEntityId,
+        entityType: assertion.targetEntityType,
+        entityId: assertion.targetEntityId,
         domainField,
-        newValue: effect.newValue,
+        newValue: assertion.newValue,
         revisionId,
         changedByUserId: requestingUserId,
         now,
@@ -784,7 +784,7 @@ export class NarrativeTransitionService {
       mapNarrativeTransitionError(error);
     }
 
-    if (applied?.projectId !== effect.projectId) {
+    if (applied?.projectId !== assertion.projectId) {
       throw new AppError(ErrorCode.NOT_FOUND, "Target entity not found");
     }
 
@@ -800,7 +800,7 @@ export class NarrativeTransitionService {
     }
 
     try {
-      effect.markApplied({ contentRevisionId: revisionId, now });
+      assertion.markApplied({ contentRevisionId: revisionId, now });
     } catch (error) {
       mapNarrativeTransitionError(error);
     }
@@ -814,14 +814,14 @@ export class NarrativeTransitionService {
       id: this.idGenerator.generate(),
       eventType: CONTENT_UPDATED,
       eventVersion: 1,
-      aggregateType: effect.targetEntityType,
-      aggregateId: effect.targetEntityId,
-      projectId: effect.projectId,
+      aggregateType: assertion.targetEntityType,
+      aggregateId: assertion.targetEntityId,
+      projectId: assertion.projectId,
       triggeredByUserId: requestingUserId,
       payload: {
-        projectId: effect.projectId,
-        entityType: effect.targetEntityType,
-        entityId: effect.targetEntityId,
+        projectId: assertion.projectId,
+        entityType: assertion.targetEntityType,
+        entityId: assertion.targetEntityId,
         revisionId,
         revisionNumber: applied.revisionNumber,
         changedByUserId: requestingUserId,
@@ -834,15 +834,15 @@ export class NarrativeTransitionService {
   private async applyRelationshipChange(
     repositories: NarrativeTransitionRepositories,
     outboxEvents: OutboxEventRepository,
-    effect: TransitionEffect,
+    assertion: Assertion,
     requestingUserId: string,
     now: Date,
     definitions: ReadonlyMap<string, RelationshipDefinition>,
   ): Promise<void> {
-    const narrativeTransitionId = effect.narrativeTransitionId;
-    const relationshipType = effect.relationshipType;
-    const relatedEntityType = effect.relatedEntityType;
-    const relatedEntityId = effect.relatedEntityId;
+    const narrativeTransitionId = assertion.narrativeTransitionId;
+    const relationshipType = assertion.relationshipType;
+    const relatedEntityType = assertion.relatedEntityType;
+    const relatedEntityId = assertion.relatedEntityId;
 
     if (
       narrativeTransitionId === null ||
@@ -850,20 +850,20 @@ export class NarrativeTransitionService {
       relatedEntityType === null ||
       relatedEntityId === null
     ) {
-      // Unreachable through the domain, which refuses to build such an effect.
+      // Unreachable through the domain, which refuses to build such an assertion.
       // Kept because the alternative is non-null assertions on three fields, and
       // a stored row that somehow drifted deserves a 500 that says so rather
       // than a TypeError deeper in.
       throw new Error(
-        `Relationship effect ${effect.id} is missing its relationship fields or its parent transition`,
+        `Relationship assertion ${assertion.id} is missing its relationship fields or its parent transition`,
       );
     }
 
     // REACHABLE, unlike the guard above, and that is the difference worth
     // naming: declare checked this predicate against the vocabulary, but
-    // `transition_effects.relationship_type` carries no foreign key, so an
+    // `assertions.relationship_type` carries no foreign key, so an
     // author who deletes the predicate between declare and apply leaves an
-    // effect pointing at a name their project no longer has. A 400 that names it
+    // assertion pointing at a name their project no longer has. A 400 that names it
     // is the honest answer — the transition is still declarable, and redefining
     // the predicate makes it appliable again.
     const definition = definitions.get(relationshipType);
@@ -886,7 +886,7 @@ export class NarrativeTransitionService {
     // is the one thing a valid-time fold cannot be built without.
     //
     // Flat with nulls rather than two shapes: one routing key should mean one payload
-    // schema, and a consumer branching on `effectType` already knows which half to
+    // schema, and a consumer branching on `operation` already knows which half to
     // read. The LOG ROW stays authoritative — the anchor is copied here from the same
     // values in the same transaction, and an e2e assertion pins the copy to the row so
     // the two cannot drift apart in silence.
@@ -904,22 +904,22 @@ export class NarrativeTransitionService {
       anchorEntityId: null,
     };
 
-    if (effect.effectType === "relationship_add") {
+    if (assertion.operation === "relationship_add") {
       let relationship: ContentRelationship;
       try {
         // STEP 4b-3: the dual write is gone. This used to build the projection
-        // here, from this effect's fields, while `RelationshipService` built the
+        // here, from this assertion's fields, while `RelationshipService` built the
         // same projection from its own request — two constructions of one fold.
         // Now both call `foldAssertion()`, which reads the LOG ROW.
         //
-        // The effect row IS the assertion on this path: it is the log entry
+        // The assertion row IS the assertion on this path: it is the log entry
         // stating the fact, and applying it is what makes the fact hold. That is
-        // why the fold is handed `effect` — no separate assertion is written, and
+        // why the fold is handed `assertion` — no separate assertion is written, and
         // a generated id would point at a row that does not exist for the
         // composite foreign key to find.
         relationship = foldAssertion({
           id: this.idGenerator.generate(),
-          assertion: effect,
+          assertion,
           definition,
           createdByUserId: requestingUserId,
           now,
@@ -937,32 +937,32 @@ export class NarrativeTransitionService {
       // Stated even though it equals `effectId`: "this row is the assertion" is a
       // claim about the log, and a consumer should not have to know that this path
       // happens to conflate the two.
-      logged.assertionId = effect.id;
+      logged.assertionId = assertion.id;
     } else {
-      // Decision D4, now behind the shared fold (step 4b-3): the effect stores
+      // Decision D4, now behind the shared fold (step 4b-3): the assertion stores
       // endpoints as declared and no row id, so the projection row is found by its
       // natural identity — the canonical orientation of (type, endpoints), which is
       // what the six-column unique index keys on. That identity rule lives in
       // `relationshipProjection.ts` because it is the PROJECTION's rule, and it now
       // has one home instead of two.
       const existing = await findFoldOfFact(repositories.contentRelationships, {
-        projectId: effect.projectId,
+        projectId: assertion.projectId,
         relationType: relationshipType,
         definition,
         subject: {
-          entityType: effect.targetEntityType,
-          entityId: effect.targetEntityId,
+          entityType: assertion.targetEntityType,
+          entityId: assertion.targetEntityId,
         },
         object: { entityType: relatedEntityType, entityId: relatedEntityId },
       });
 
-      // Decision D5, the remove half: the link this effect would cut is not
+      // Decision D5, the remove half: the link this assertion would cut is not
       // there. Silently marking it applied would record that this transition
       // severed a relationship it never touched.
       if (existing === undefined) {
         throw new AppError(
           ErrorCode.CONFLICT,
-          "The relationship this effect would remove does not exist",
+          "The relationship this assertion would remove does not exist",
         );
       }
 
@@ -984,12 +984,12 @@ export class NarrativeTransitionService {
         narrativeTransitionId,
       );
 
-      // Unreachable through the foreign key, which refuses an effect whose parent is
+      // Unreachable through the foreign key, which refuses an assertion whose parent is
       // absent. Kept because a row that somehow drifted deserves an error naming the
       // invariant rather than a null dereference.
       if (parent === null) {
         throw new Error(
-          `Transition effect ${effect.id} names transition ${narrativeTransitionId}, which does not exist`,
+          `Transition assertion ${assertion.id} names transition ${narrativeTransitionId}, which does not exist`,
         );
       }
 
@@ -998,22 +998,22 @@ export class NarrativeTransitionService {
       // because it may be PARENTLESS: a narrative removal is allowed to end a fact
       // the CRUD endpoint asserted (decision 2026-08-19, the A-3 direction), and
       // `findById` cannot see such a row by design.
-      const asserted = await repositories.transitionEffects.findAssertionById(
-        effect.projectId,
+      const asserted = await repositories.assertions.findAssertionById(
+        assertion.projectId,
         existing.sourceAssertionId,
       );
 
       if (asserted === null) {
         throw new Error(
-          `Relationship ${existing.id} points at assertion ${existing.sourceAssertionId}, which does not exist in project ${effect.projectId}`,
+          `Relationship ${existing.id} points at assertion ${existing.sourceAssertionId}, which does not exist in project ${assertion.projectId}`,
         );
       }
 
-      let termination: TransitionEffect;
+      let termination: Assertion;
       try {
-        termination = TransitionEffect.terminateFact({
+        termination = Assertion.terminateFact({
           id: this.idGenerator.generate(),
-          projectId: effect.projectId,
+          projectId: assertion.projectId,
           narrativeTransitionId,
           target: asserted,
           definition,
@@ -1029,7 +1029,7 @@ export class NarrativeTransitionService {
         // Log first, fold second — the same order the CRUD retraction uses. A fold
         // removed before its operation row exists is a fact that disappeared with
         // nothing to explain it, and inside one transaction the order costs nothing.
-        await repositories.transitionEffects.insert(termination);
+        await repositories.assertions.insert(termination);
         await repositories.contentRelationships.delete(
           existing.id,
           existing.version,
@@ -1047,7 +1047,7 @@ export class NarrativeTransitionService {
     try {
       // No revision pointer: a relationship change writes no ContentRevision at
       // all (`16:105`, `flow_10:117`), and the domain refuses one here.
-      effect.markApplied({ now });
+      assertion.markApplied({ now });
     } catch (error) {
       mapNarrativeTransitionError(error);
     }
@@ -1069,20 +1069,20 @@ export class NarrativeTransitionService {
     // at all. See the header comment above `class RelationshipService`.
     await outboxEvents.insert({
       id: this.idGenerator.generate(),
-      eventType: NARRATIVE_EFFECT_APPLIED,
+      eventType: NARRATIVE_ASSERTION_APPLIED,
       eventVersion: 1,
       aggregateType: "narrative_transition",
       aggregateId: narrativeTransitionId,
-      projectId: effect.projectId,
+      projectId: assertion.projectId,
       triggeredByUserId: requestingUserId,
       payload: {
-        projectId: effect.projectId,
-        narrativeTransitionId: effect.narrativeTransitionId,
-        effectId: effect.id,
-        effectType: effect.effectType,
+        projectId: assertion.projectId,
+        narrativeTransitionId: assertion.narrativeTransitionId,
+        effectId: assertion.id,
+        operation: assertion.operation,
         relationshipType,
-        targetEntityType: effect.targetEntityType,
-        targetEntityId: effect.targetEntityId,
+        targetEntityType: assertion.targetEntityType,
+        targetEntityId: assertion.targetEntityId,
         relatedEntityType,
         relatedEntityId,
         appliedByUserId: requestingUserId,
@@ -1093,55 +1093,55 @@ export class NarrativeTransitionService {
         // two different event contracts.
         ...logged,
       },
-      routingKey: NARRATIVE_EFFECT_APPLIED,
+      routingKey: NARRATIVE_ASSERTION_APPLIED,
       exchange: "saas.events",
     });
   }
 
-  // Returns null when the effect is already applied, so the caller can answer
+  // Returns null when the assertion is already applied, so the caller can answer
   // idempotently without opening a transaction. Everything it checks is
   // re-checked under the lock — this pass exists to keep the pooled-client reads
   // (locator) out of the transaction, not to replace the authoritative ones.
   private async loadPendingEffectForApply(
     projectId: string,
     effectId: string,
-  ): Promise<TransitionEffect | null> {
-    const effect = await this.loadExistingEffect(projectId, effectId);
+  ): Promise<Assertion | null> {
+    const assertion = await this.loadExistingAssertion(projectId, effectId);
 
-    if (effect.isApplied) {
+    if (assertion.isApplied) {
       return null;
     }
 
     await this.assertEntityInProject(
       projectId,
-      effect.targetEntityType,
-      effect.targetEntityId,
+      assertion.targetEntityType,
+      assertion.targetEntityId,
       "Target",
     );
 
-    if (effect.relatedEntityType !== null && effect.relatedEntityId !== null) {
+    if (assertion.relatedEntityType !== null && assertion.relatedEntityId !== null) {
       await this.assertEntityInProject(
         projectId,
-        effect.relatedEntityType,
-        effect.relatedEntityId,
+        assertion.relatedEntityType,
+        assertion.relatedEntityId,
         "Related",
       );
     }
 
-    return effect;
+    return assertion;
   }
 
-  private async loadExistingEffect(
+  private async loadExistingAssertion(
     projectId: string,
     effectId: string,
-  ): Promise<TransitionEffect> {
-    const effect = await this.transitionEffectRepository.findById(effectId);
+  ): Promise<Assertion> {
+    const assertion = await this.assertionRepository.findById(effectId);
 
-    if (effect?.projectId !== projectId) {
-      throw new AppError(ErrorCode.NOT_FOUND, "Transition effect not found");
+    if (assertion?.projectId !== projectId) {
+      throw new AppError(ErrorCode.NOT_FOUND, "Transition assertion not found");
     }
 
-    return effect;
+    return assertion;
   }
 
   private async loadExistingTransition(
@@ -1161,7 +1161,7 @@ export class NarrativeTransitionService {
   // Flow 10 §Declare step 6. A reversal only means something against a
   // transition that actually happened: reversing a `declared` one would be a
   // record of undoing nothing, and the writer's real intent there is to delete
-  // the pending effects.
+  // the pending assertions.
   private async assertReversible(
     projectId: string,
     reversesTransitionId: string,
@@ -1172,7 +1172,7 @@ export class NarrativeTransitionService {
     );
 
     const status = deriveNarrativeTransitionStatus(
-      await this.transitionEffectRepository.findByTransitionId(reversed.id),
+      await this.assertionRepository.findByTransitionId(reversed.id),
     );
 
     if (status === "declared") {
@@ -1202,7 +1202,7 @@ export class NarrativeTransitionService {
     }
   }
 
-  private async withEffects(
+  private async withAssertions(
     transitions: readonly NarrativeTransition[],
   ): Promise<NarrativeTransitionDetail[]> {
     const details: NarrativeTransitionDetail[] = [];
@@ -1216,7 +1216,7 @@ export class NarrativeTransitionService {
       details.push(
         toTransitionDetail(
           transition,
-          await this.transitionEffectRepository.findByTransitionId(
+          await this.assertionRepository.findByTransitionId(
             transition.id,
           ),
         ),
@@ -1228,47 +1228,47 @@ export class NarrativeTransitionService {
 }
 
 // Same class of guard as the one in applyRelationshipChange, and here for the
-// same reason: `PrismaTransitionEffectRepository.findById` scopes its query to
-// rows that HAVE a parent, so every effect this service returns has one. The
+// same reason: `PrismaAssertionRepository.findById` scopes its query to
+// rows that HAVE a parent, so every assertion this service returns has one. The
 // type cannot express a repository's scope, and the alternatives are worse — a
 // non-null assertion hides the assumption from the compiler, `?? ""` puts a lie
-// on the wire, and widening `TransitionEffectDetail` would ask every client to
+// on the wire, and widening `AssertionDetail` would ask every client to
 // handle a case these routes cannot produce. A row that somehow drifted deserves
 // a 500 that names it.
 //
 // Deliberately NOT in the DTO mapper: translation must not have a branch that
 // can fail. That mistake was made once already and cut before it ran
 // (`notes/phase-11-validation.md` §Domain baru validation).
-function toEffectDetail(effect: TransitionEffect): TransitionEffectDetail {
-  const narrativeTransitionId = effect.narrativeTransitionId;
+function toEffectDetail(assertion: Assertion): AssertionDetail {
+  const narrativeTransitionId = assertion.narrativeTransitionId;
 
   if (narrativeTransitionId === null) {
     throw new Error(
-      `Transition effect ${effect.id} has no parent transition; it is an assertion, not an effect of this aggregate`,
+      `Transition assertion ${assertion.id} has no parent transition; it is an assertion, not an assertion of this aggregate`,
     );
   }
 
   return {
-    id: effect.id,
+    id: assertion.id,
     narrativeTransitionId,
-    projectId: effect.projectId,
-    effectType: effect.effectType,
-    targetEntityType: effect.targetEntityType,
-    targetEntityId: effect.targetEntityId,
-    fieldPath: effect.fieldPath,
-    newValue: effect.newValue,
-    relationshipType: effect.relationshipType,
-    relatedEntityType: effect.relatedEntityType,
-    relatedEntityId: effect.relatedEntityId,
-    appliedAt: effect.appliedAt,
-    contentRevisionId: effect.contentRevisionId,
-    createdAt: effect.createdAt,
+    projectId: assertion.projectId,
+    operation: assertion.operation,
+    targetEntityType: assertion.targetEntityType,
+    targetEntityId: assertion.targetEntityId,
+    fieldPath: assertion.fieldPath,
+    newValue: assertion.newValue,
+    relationshipType: assertion.relationshipType,
+    relatedEntityType: assertion.relatedEntityType,
+    relatedEntityId: assertion.relatedEntityId,
+    appliedAt: assertion.appliedAt,
+    contentRevisionId: assertion.contentRevisionId,
+    createdAt: assertion.createdAt,
   };
 }
 
 function toTransitionDetail(
   transition: NarrativeTransition,
-  effects: readonly TransitionEffect[],
+  assertions: readonly Assertion[],
 ): NarrativeTransitionDetail {
   return {
     id: transition.id,
@@ -1279,8 +1279,8 @@ function toTransitionDetail(
     description: transition.description,
     declaredByUserId: transition.declaredByUserId,
     reversesTransitionId: transition.reversesTransitionId,
-    status: deriveNarrativeTransitionStatus(effects),
-    effects: effects.map((effect) => toEffectDetail(effect)),
+    status: deriveNarrativeTransitionStatus(assertions),
+    assertions: assertions.map((assertion) => toEffectDetail(assertion)),
     createdAt: transition.createdAt,
     updatedAt: transition.updatedAt,
   };
@@ -1290,7 +1290,7 @@ export function createNarrativeTransitionService({
   clock,
   idGenerator,
   narrativeTransitionRepository,
-  transitionEffectRepository,
+  assertionRepository,
   contentEntityLocator,
   narrativeTransitionUnitOfWork,
   relationshipDefinitionReader,
@@ -1298,7 +1298,7 @@ export function createNarrativeTransitionService({
   clock: Clock;
   idGenerator: IdGenerator;
   narrativeTransitionRepository: NarrativeTransitionRepository;
-  transitionEffectRepository: TransitionEffectRepository;
+  assertionRepository: AssertionRepository;
   contentEntityLocator: ContentEntityLocator;
   narrativeTransitionUnitOfWork: NarrativeTransitionUnitOfWork;
   relationshipDefinitionReader: RelationshipDefinitionReader;
@@ -1307,7 +1307,7 @@ export function createNarrativeTransitionService({
     clock,
     idGenerator,
     narrativeTransitionRepository,
-    transitionEffectRepository,
+    assertionRepository,
     contentEntityLocator,
     narrativeTransitionUnitOfWork,
     relationshipDefinitionReader,

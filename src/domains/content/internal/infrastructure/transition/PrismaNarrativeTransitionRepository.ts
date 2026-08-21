@@ -12,9 +12,9 @@ import type {
 } from "../../domain/transition/NarrativeTransition.js";
 import type { NarrativeTransitionRepository } from "../../domain/transition/NarrativeTransitionRepository.js";
 
-// `$queryRaw` is gone from this type for the same reason it left the effect
+// `$queryRaw` is gone from this type for the same reason it left the assertion
 // adapter at step 4b-5: it carried the aggregate-root `SELECT ... FOR UPDATE`, and
-// that lock was removed on purpose. What keeps a concurrent `addEffect` from
+// that lock was removed on purpose. What keeps a concurrent `addAssertion` from
 // slipping a child past a delete's guard now is stated in `delete()` below — the
 // per-child predicate plus the FK refusing the parent while any child survives.
 // Keeping the raw-SQL door open would leave the old mechanism reachable while the
@@ -98,7 +98,7 @@ export class PrismaNarrativeTransitionRepository
     // no second meaning to split out, so the follow-up lookup the relationship
     // repository performs would answer a question nobody asked.
     //
-    // A P2003 here is a Restrict violation from a surviving child effect. Until
+    // A P2003 here is a Restrict violation from a surviving child assertion. Until
     // step 4b-5 it was deliberately NOT translated: the aggregate-root lock made
     // it unreachable, so hitting it meant a caller had skipped something and the
     // raw error was the signal.

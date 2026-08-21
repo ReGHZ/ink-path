@@ -2,12 +2,12 @@ import { normalizeOptionalText } from "../../../../../shared/domain/normalizeOpt
 import { DomainError } from "../../../../../shared/errors/DomainError.js";
 import { DomainErrorCode } from "../../../../../shared/errors/DomainErrorCode.js";
 
-import type { TransitionEffect } from "./TransitionEffect.js";
+import type { Assertion } from "./Assertion.js";
 import type { ContentEntityType } from "../support/ContentRevision.js";
 
 // Event-centric record of a change in the story world: "in this scene, X
 // happened" (`narrative_transitions`, `prisma/narrative-transition.prisma:13-36`).
-// Aggregate root over 1:N TransitionEffect (`16:42-52`).
+// Aggregate root over 1:N Assertion (`16:42-52`).
 //
 // It is NOT the cause. The cause is a Scene, Event or Chapter that already
 // exists; this row records the consequences of it (keputusan #3,
@@ -54,20 +54,20 @@ export const NARRATIVE_TRANSITION_STATUSES = [
 export type NarrativeTransitionStatus =
   (typeof NARRATIVE_TRANSITION_STATUSES)[number];
 
-// A transition with no effects at all is `declared`, not `fully_applied`: the
-// "every effect is applied" reading of an empty set is vacuously true and
+// A transition with no assertions at all is `declared`, not `fully_applied`: the
+// "every assertion is applied" reading of an empty set is vacuously true and
 // exactly wrong here — nothing has happened to the world yet. The doc states the
 // three cases in the same order and with the same bias (`16:71-75`).
 export function deriveNarrativeTransitionStatus(
-  effects: readonly TransitionEffect[],
+  assertions: readonly Assertion[],
 ): NarrativeTransitionStatus {
-  const appliedCount = effects.filter((effect) => effect.isApplied).length;
+  const appliedCount = assertions.filter((assertion) => assertion.isApplied).length;
 
   if (appliedCount === 0) {
     return "declared";
   }
 
-  return appliedCount === effects.length ? "fully_applied" : "partially_applied";
+  return appliedCount === assertions.length ? "fully_applied" : "partially_applied";
 }
 
 export type NarrativeTransitionProperties = {
@@ -97,7 +97,7 @@ export type CreateNarrativeTransitionProperties = {
 
 // Only the human labels are mutable. The source entity, the reversal link and
 // the declaring user are the row's factual content and are set once: changing
-// which scene caused a transition after its effects were applied would rewrite
+// which scene caused a transition after its assertions were applied would rewrite
 // causality that `ContentRevision` rows already point back at.
 //
 // Note there is no `version` column on this table

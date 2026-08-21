@@ -19,7 +19,7 @@ import {
 } from "../support/relationshipDefinition.js";
 
 // One intended consequence of a narrative transition, on one entity
-// (`transition_effects`, `prisma/narrative-transition.prisma:38-60`). Flow 10
+// (`assertions`, `prisma/narrative-transition.prisma:38-60`). Flow 10
 // (`02-system-design/03_flow_10_narrative_transition.md`) plus
 // `03-database-design/16_narrative_transition_tables.md:90-127`.
 //
@@ -27,7 +27,7 @@ import {
 // `field_path` + `new_value`, the two `relationship_*` types use
 // `relationship_type` + `related_entity_*`, and every one of those columns is
 // nullable because the other variant does not need it. The only CHECK the
-// database carries is on `effect_type` itself (`:111`); per-variant completeness
+// database carries is on `operation` itself (`:111`); per-variant completeness
 // is explicitly left to the application layer (`:112-116`). That is what this
 // entity is for. A service-level check would not have been enough — 7.7 is not
 // the only writer this table will ever have, and an invariant that lives in a
@@ -43,7 +43,7 @@ import {
 // APPEND-ONLY. `applied_at` goes null → timestamp exactly once and never back
 // (`05-implementation-policy/05_append_only_invariants.md:52-64`). markApplied()
 // below refuses the second call, but that refusal is a backstop, not the
-// mechanism: an already-applied effect must be detected by the CLAIM the service
+// mechanism: an already-applied assertion must be detected by the CLAIM the service
 // takes — `claimForApply` answers `already-applied` when its conditional write
 // matched no row — and answered as an idempotent no-op, never by catching this
 // error (`flow_10:101,115`). Named the `FOR UPDATE` lock until gerbang G2 (G2-2);
@@ -78,29 +78,29 @@ export type DeclarableEffectType = (typeof TRANSITION_EFFECT_TYPES)[number];
 
 export type AssertionOperationType = (typeof ASSERTION_OPERATION_TYPES)[number];
 
-// What a row in `transition_effects` may be. `DeclarableEffectType` is the
-// narrower name to reach for when the subject really is a Phase 7 effect.
-export type TransitionEffectType =
+// What a row in `assertions` may be. `DeclarableEffectType` is the
+// narrower name to reach for when the subject really is a Phase 7 assertion.
+export type AssertionOperation =
   | DeclarableEffectType
   | AssertionOperationType;
 
 // Which kinds each operation is defined over — the mirror of the CHECK
-// constraints `transition_effects_terminate_targets_assertion` and
+// constraints `assertions_terminate_targets_assertion` and
 // `..._retract_targets_assertion_or_terminate`, and mirrored on purpose: the
 // database refuses the row, this refuses to BUILD it, and a caller gets a domain
 // error naming the rule instead of a constraint-violation stack trace.
 //
 // Listed positively, exactly as the DDL is, so a future member of the enum is
 // refused until someone decides where it belongs rather than admitted by silence.
-const TERMINATE_TARGET_TYPES: readonly TransitionEffectType[] =
+const TERMINATE_TARGET_TYPES: readonly AssertionOperation[] =
   TRANSITION_EFFECT_TYPES;
 
-const RETRACT_TARGET_TYPES: readonly TransitionEffectType[] = [
+const RETRACT_TARGET_TYPES: readonly AssertionOperation[] = [
   ...TRANSITION_EFFECT_TYPES,
   "terminate",
 ];
 
-export type TransitionEffectProperties = {
+export type AssertionProperties = {
   id: string;
   // NULL since step 4b: an assertion written straight through relationship CRUD
   // belongs to no transition. The column has been nullable since the 2026-08-18
@@ -118,7 +118,7 @@ export type TransitionEffectProperties = {
   // the Validation domain). Whoever inserts sets it from the parent; this entity
   // cannot verify the two agree, because the parent is a different aggregate.
   projectId: string;
-  effectType: TransitionEffectType;
+  operation: AssertionOperation;
   targetEntityType: ContentEntityType;
   targetEntityId: string;
   fieldPath: string | null;
@@ -127,7 +127,7 @@ export type TransitionEffectProperties = {
   // Blocker 4 of the frozen addendum, and the other half of `has_provenance`:
   // an assertion with no parent transition must say WHICH PREDICATE it asserts.
   // Null for `attribute_change`, which names a field rather than a predicate —
-  // and which is why such an effect always needs a transition.
+  // and which is why such an assertion always needs a transition.
   relationshipDefinitionId: string | null;
   relatedEntityType: ContentEntityType | null;
   relatedEntityId: string | null;
@@ -148,16 +148,16 @@ export type TransitionEffectProperties = {
   //
   // The kind is carried rather than looked up for the reason C-1 settled: it is
   // what lets the composite foreign key hold the claim to account, and it cannot
-  // drift because `effect_type` is never updated.
+  // drift because `operation` is never updated.
   targetAssertionId: string | null;
-  targetEffectType: TransitionEffectType | null;
+  targetOperation: AssertionOperation | null;
 
   appliedAt: Date | null;
   contentRevisionId: string | null;
   createdAt: Date;
 };
 
-type BaseCreateTransitionEffectProperties = {
+type BaseCreateAssertionProperties = {
   id: string;
   narrativeTransitionId: string | null;
   projectId: string;
@@ -176,18 +176,18 @@ type BaseCreateTransitionEffectProperties = {
 // `CreateContentRelationshipProperties.relationType`: an author-owned symbol has
 // no compile-time extent. Entity types stay narrowed — those are route
 // constants, never free text.
-export type CreateTransitionEffectProperties =
-  | (BaseCreateTransitionEffectProperties & {
-      effectType: "attribute_change";
+export type CreateAssertionProperties =
+  | (BaseCreateAssertionProperties & {
+      operation: "attribute_change";
       fieldPath: string;
       newValue: string;
     })
-  | (BaseCreateTransitionEffectProperties & {
-      effectType: "relationship_add" | "relationship_remove";
+  | (BaseCreateAssertionProperties & {
+      operation: "relationship_add" | "relationship_remove";
       relationshipType: string;
       // The project's row for `relationshipType`. Required on the DECLARE path
-      // for the reason the whole check exists here: an effect that
-      // `ContentRelationship.create()` would refuse is an effect that can never
+      // for the reason the whole check exists here: an assertion that
+      // `ContentRelationship.create()` would refuse is an assertion that can never
       // be applied, and the caller has to have resolved the predicate anyway to
       // know it exists at all.
       definition: RelationshipDefinition;
@@ -199,30 +199,30 @@ export type CreateTransitionEffectProperties =
 // relationship variants: a relationship change produces no `ContentRevision` at
 // all (`16:105`, `flow_10:117`), so a pointer there would be a lie about
 // provenance rather than a harmless extra.
-export type MarkTransitionEffectAppliedProperties = {
+export type MarkAssertionAppliedProperties = {
   contentRevisionId?: string | null;
   now: Date;
 };
 
-export class TransitionEffect {
-  private constructor(private readonly props: TransitionEffectProperties) {
-    TransitionEffect.validate(props);
+export class Assertion {
+  private constructor(private readonly props: AssertionProperties) {
+    Assertion.validate(props);
   }
 
-  static create(props: CreateTransitionEffectProperties): TransitionEffect {
+  static create(props: CreateAssertionProperties): Assertion {
     // Rule that lives on the WRITE path only, and deliberately not in
     // validate() — same split `ContentRelationship` makes for canonical order
     // (`../support/ContentRelationship.ts:333-353`). The relation type registry
     // is frozen in a policy document, so validate() may enforce it on the read
     // path; the writable-field allowlist is a Phase 7 decision over columns that
     // will keep changing, and enforcing it on the read path would mean that
-    // narrowing the allowlist later turns every effect already declared against
+    // narrowing the allowlist later turns every assertion already declared against
     // a removed field into a row that can no longer be READ — and therefore no
     // longer deleted either, since deleting one requires reading `applied_at`
     // first. Apply re-checks it (decision D3), so a field that stops being
     // writable stops being appliable without trapping anything.
     if (
-      props.effectType === "attribute_change" &&
+      props.operation === "attribute_change" &&
       !isWritableAttributeField(props.targetEntityType, props.fieldPath)
     ) {
       throw new DomainError(
@@ -234,8 +234,8 @@ export class TransitionEffect {
     // Rules 1 and 3, on the declare path, against the predicate's own definition.
     // Both are the twins of the checks in `ContentRelationship.create()`; what
     // they add here is TIME — refusing at declare rather than at apply, so an
-    // effect that could never be applied is never stored as a promise.
-    if (props.effectType !== "attribute_change") {
+    // assertion that could never be applied is never stored as a promise.
+    if (props.operation !== "attribute_change") {
       if (props.definition.predicate !== props.relationshipType) {
         throw new DomainError(
           DomainErrorCode.DOMAIN_VALIDATION_FAILED,
@@ -272,9 +272,9 @@ export class TransitionEffect {
       //
       // Two consequences worth stating, since the storage decision rests on them:
       //
-      //   The effect stores its endpoints as the writer declared them.
-      //   `target_entity_*` is indexed as "which entity does this effect touch"
-      //   (`16:122-123`, the pending-effects partial index), so swapping the
+      //   The assertion stores its endpoints as the writer declared them.
+      //   `target_entity_*` is indexed as "which entity does this assertion touch"
+      //   (`16:122-123`, the pending-assertions partial index), so swapping the
       //   sides at declaration time would break the query those columns exist
       //   for. The row that apply eventually writes IS canonicalised, by
       //   `ContentRelationship.create()` — that belongs to the row's identity,
@@ -299,36 +299,36 @@ export class TransitionEffect {
       }
     }
 
-    return new TransitionEffect({
+    return new Assertion({
       id: props.id,
       narrativeTransitionId: props.narrativeTransitionId,
       projectId: props.projectId,
-      effectType: props.effectType,
+      operation: props.operation,
       targetEntityType: props.targetEntityType,
       targetEntityId: props.targetEntityId,
-      fieldPath: props.effectType === "attribute_change" ? props.fieldPath : null,
+      fieldPath: props.operation === "attribute_change" ? props.fieldPath : null,
       // Stored verbatim, not trimmed or normalised: the target aggregate's own
       // updateDetails() decides what a value means for its field (Event trims
       // its title, `normalizeOptionalText` empties blank optionals), and doing
       // half of that here would produce a stored intent that differs from what
       // apply eventually writes.
-      newValue: props.effectType === "attribute_change" ? props.newValue : null,
+      newValue: props.operation === "attribute_change" ? props.newValue : null,
       relationshipType:
-        props.effectType === "attribute_change" ? null : props.relationshipType,
+        props.operation === "attribute_change" ? null : props.relationshipType,
       relationshipDefinitionId:
-        props.effectType === "attribute_change" ? null : props.definition.id,
+        props.operation === "attribute_change" ? null : props.definition.id,
       relatedEntityType:
-        props.effectType === "attribute_change" ? null : props.relatedEntityType,
+        props.operation === "attribute_change" ? null : props.relatedEntityType,
       relatedEntityId:
-        props.effectType === "attribute_change" ? null : props.relatedEntityId,
-      // A declared effect carries no anchor of its own — its story time is its
+        props.operation === "attribute_change" ? null : props.relatedEntityId,
+      // A declared assertion carries no anchor of its own — its story time is its
       // parent transition's — and acts on no other row. Both are what the two
       // named constructors below add, each for its own reason.
       anchorEntityType: null,
       anchorEntityId: null,
       targetAssertionId: null,
-      targetEffectType: null,
-      // Every effect is born pending. There is no "declare it already applied"
+      targetOperation: null,
+      // Every assertion is born pending. There is no "declare it already applied"
       // path: apply is what writes this column, inside the transaction that
       // performs the mutation (`16:152-182`).
       appliedAt: null,
@@ -352,17 +352,17 @@ export class TransitionEffect {
   // came from (validate() refuses it, mirroring the `has_provenance` CHECK).
   static assertFact(
     props: Extract<
-      CreateTransitionEffectProperties,
-      { effectType: "relationship_add" | "relationship_remove" }
+      CreateAssertionProperties,
+      { operation: "relationship_add" | "relationship_remove" }
     > & { narrativeTransitionId: null },
-  ): TransitionEffect {
-    const effect = TransitionEffect.create(props);
+  ): Assertion {
+    const assertion = Assertion.create(props);
 
     // Through the same factory first, so every rule create() enforces — arity,
     // the pair matrix, hierarchy, self-relationship — is enforced here too and
     // cannot drift apart from it.
-    return TransitionEffect.reconstitute({
-      ...effect.toSnapshot(),
+    return Assertion.reconstitute({
+      ...assertion.toSnapshot(),
       appliedAt: props.now,
     });
   }
@@ -394,14 +394,14 @@ export class TransitionEffect {
     // deliberately not narrowed to it: `retract` is defined over any FACT and
     // over `terminate` too, and narrowing here would put the enum's future in
     // this signature instead of in RETRACT_TARGET_TYPES.
-    target: TransitionEffect;
+    target: Assertion;
     // Provenance, and it must be present: this row has no parent transition, so
     // `has_provenance` is satisfied only by naming the predicate whose claim is
     // being withdrawn. Handed in rather than read off the target so the caller
     // has to have resolved it — the same rule the declare path follows.
     definition: RelationshipDefinition;
     now: Date;
-  }): TransitionEffect {
+  }): Assertion {
     if (props.target.projectId !== props.projectId) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
@@ -450,11 +450,11 @@ export class TransitionEffect {
     // subject of the claim being withdrawn — the same entity the assertion is
     // indexed under, so "every row touching this entity" keeps returning the
     // withdrawal alongside the claim.
-    return TransitionEffect.reconstitute({
+    return Assertion.reconstitute({
       id: props.id,
       narrativeTransitionId: null,
       projectId: props.projectId,
-      effectType: "retract",
+      operation: "retract",
       targetEntityType: props.target.targetEntityType,
       targetEntityId: props.target.targetEntityId,
       fieldPath: null,
@@ -472,7 +472,7 @@ export class TransitionEffect {
       anchorEntityType: null,
       anchorEntityId: null,
       targetAssertionId: props.target.id,
-      targetEffectType: props.target.effectType,
+      targetOperation: props.target.operation,
       // In force the moment it is written, like `assertFact()`: there is no
       // second step that could set this, and a pending row would read as
       // "someone declared this and never applied it".
@@ -490,7 +490,7 @@ export class TransitionEffect {
   // `retractFact()`. The table allows a null anchor because a `retract` must have
   // none; a termination without one would store a cessation whose "when" no reader
   // can answer, and the three-valued reader (§8.2) would have to fold it as
-  // "unknown" forever. A narrative effect can always name the moment — its parent
+  // "unknown" forever. A narrative assertion can always name the moment — its parent
   // transition is declared ON a scene or chapter — so the one caller that exists
   // has no excuse to omit it, and no caller without a moment should be using this.
   //
@@ -509,7 +509,7 @@ export class TransitionEffect {
     // The fact whose valid range ends. Not narrowed to `relationship_add`:
     // `terminate` is defined over any FACT (TERMINATE_TARGET_TYPES), and narrowing
     // here would put the enum's future in this signature.
-    target: TransitionEffect;
+    target: Assertion;
     definition: RelationshipDefinition;
     // The story moment. Taken from the parent transition's source entity by the
     // caller — passed in rather than read off the target, because the target's own
@@ -517,7 +517,7 @@ export class TransitionEffect {
     anchorEntityType: NarrativeTransitionSourceType;
     anchorEntityId: string;
     now: Date;
-  }): TransitionEffect {
+  }): Assertion {
     if (props.target.projectId !== props.projectId) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
@@ -532,7 +532,7 @@ export class TransitionEffect {
     if (props.target.id === props.id) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "An effect cannot terminate itself",
+        "An assertion cannot terminate itself",
       );
     }
 
@@ -561,11 +561,11 @@ export class TransitionEffect {
       );
     }
 
-    return TransitionEffect.reconstitute({
+    return Assertion.reconstitute({
       id: props.id,
       narrativeTransitionId: props.narrativeTransitionId,
       projectId: props.projectId,
-      effectType: "terminate",
+      operation: "terminate",
       // The subject travels with the operation, like the retraction: this column is
       // NOT NULL, and the honest value is the subject of the fact being ended, so
       // "every row touching this entity" returns the ending beside the claim.
@@ -581,9 +581,9 @@ export class TransitionEffect {
       anchorEntityType: props.anchorEntityType,
       anchorEntityId: props.anchorEntityId,
       targetAssertionId: props.target.id,
-      targetEffectType: props.target.effectType,
+      targetOperation: props.target.operation,
       // Applied the moment it is written. The DECLARED intent that led here is the
-      // `relationship_remove` effect, which has its own `applied_at`; this row is
+      // `relationship_remove` assertion, which has its own `applied_at`; this row is
       // the consequence, and a pending consequence would be a fact that never
       // ended while its cause reports done.
       appliedAt: props.now,
@@ -592,8 +592,8 @@ export class TransitionEffect {
     });
   }
 
-  static reconstitute(props: TransitionEffectProperties): TransitionEffect {
-    return new TransitionEffect(props);
+  static reconstitute(props: AssertionProperties): Assertion {
+    return new Assertion(props);
   }
 
   get id(): string {
@@ -608,8 +608,8 @@ export class TransitionEffect {
     return this.props.projectId;
   }
 
-  get effectType(): TransitionEffectType {
-    return this.props.effectType;
+  get operation(): AssertionOperation {
+    return this.props.operation;
   }
 
   get targetEntityType(): ContentEntityType {
@@ -659,8 +659,8 @@ export class TransitionEffect {
     return this.props.targetAssertionId;
   }
 
-  get targetEffectType(): TransitionEffectType | null {
-    return this.props.targetEffectType;
+  get targetOperation(): AssertionOperation | null {
+    return this.props.targetOperation;
   }
 
   get appliedAt(): Date | null {
@@ -676,7 +676,7 @@ export class TransitionEffect {
   }
 
   // The append-only guard reads this, in two places that must not be confused:
-  // the service refuses to DELETE an applied effect (409, `05_append_only_
+  // the service refuses to DELETE an applied assertion (409, `05_append_only_
   // invariants.md:56-59`), and it returns an idempotent no-op instead of
   // applying twice. Deleting a row is a repository act, so no method here can
   // prevent it — this getter is the whole of what the domain can offer, and the
@@ -689,34 +689,34 @@ export class TransitionEffect {
   // a second apply is not a no-op to be reported, it is a state this aggregate
   // must never reach. The service is expected to have checked isApplied under
   // the row lock already; reaching this throw means that check was skipped.
-  markApplied(input: MarkTransitionEffectAppliedProperties): void {
+  markApplied(input: MarkAssertionAppliedProperties): void {
     if (this.isApplied) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Transition effect is already applied and cannot be applied again",
+        "Transition assertion is already applied and cannot be applied again",
       );
     }
 
-    const nextProperties: TransitionEffectProperties = {
+    const nextProperties: AssertionProperties = {
       ...this.props,
       appliedAt: input.now,
       contentRevisionId: input.contentRevisionId ?? null,
     };
 
-    TransitionEffect.validate(nextProperties);
+    Assertion.validate(nextProperties);
 
     Object.assign(this.props, nextProperties);
   }
 
-  toSnapshot(): TransitionEffectProperties {
+  toSnapshot(): AssertionProperties {
     return { ...this.props };
   }
 
-  private static validate(props: TransitionEffectProperties): void {
+  private static validate(props: AssertionProperties): void {
     if (props.id.trim() === "") {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Transition effect id is required",
+        "Transition assertion id is required",
       );
     }
 
@@ -732,14 +732,14 @@ export class TransitionEffect {
       );
     }
 
-    // Twin of the `transition_effects_has_provenance` CHECK: every row must be
+    // Twin of the `assertions_has_provenance` CHECK: every row must be
     // able to answer "where did this fact come from", and there are exactly two
     // valid answers — a transition, or the predicate it asserts. An
     // `attribute_change` names no predicate (it carries `field_path` + value),
     // so a parentless one could answer neither.
     if (
       props.narrativeTransitionId === null &&
-      props.effectType === "attribute_change"
+      props.operation === "attribute_change"
     ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
@@ -757,7 +757,7 @@ export class TransitionEffect {
     ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "An effect must belong to a narrative transition or name a relationship definition",
+        "An assertion must belong to a narrative transition or name a relationship definition",
       );
     }
 
@@ -791,39 +791,39 @@ export class TransitionEffect {
       );
     }
 
-    switch (props.effectType) {
+    switch (props.operation) {
       case "attribute_change":
-        TransitionEffect.validateAttributeChange(props);
+        Assertion.validateAttributeChange(props);
         break;
 
       case "relationship_add":
       case "relationship_remove":
-        TransitionEffect.validateRelationshipChange(props);
+        Assertion.validateRelationshipChange(props);
         break;
 
       case "terminate":
       case "retract":
-        TransitionEffect.validateAssertionOperation(props);
+        Assertion.validateAssertionOperation(props);
         break;
 
       default: {
-        const exhaustiveCheck: never = props.effectType;
+        const exhaustiveCheck: never = props.operation;
         throw new DomainError(
           DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-          `Invalid transition effect type: ${String(exhaustiveCheck)}`,
+          `Invalid transition assertion type: ${String(exhaustiveCheck)}`,
         );
       }
     }
 
-    TransitionEffect.validateAnchor(props);
-    TransitionEffect.validateTargeting(props);
-    TransitionEffect.validateAppliedState(props);
+    Assertion.validateAnchor(props);
+    Assertion.validateTargeting(props);
+    Assertion.validateAppliedState(props);
   }
 
   // `anchor_complete`, and it applies to every row rather than to one variant:
   // an assertion may carry a story anchor, an operation may carry its own, and a
-  // declared effect carries none. What none of them may be is HALF anchored.
-  private static validateAnchor(props: TransitionEffectProperties): void {
+  // declared assertion carries none. What none of them may be is HALF anchored.
+  private static validateAnchor(props: AssertionProperties): void {
     if ((props.anchorEntityType === null) !== (props.anchorEntityId === null)) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
@@ -852,9 +852,9 @@ export class TransitionEffect {
   // The three targeting CHECKs, in the order they answer three different
   // questions: does this row point at another one, WHAT KIND is that row, and is
   // that kind one this operation is defined over.
-  private static validateTargeting(props: TransitionEffectProperties): void {
+  private static validateTargeting(props: AssertionProperties): void {
     const isOperation =
-      props.effectType === "terminate" || props.effectType === "retract";
+      props.operation === "terminate" || props.operation === "retract";
 
     // `target_matches_operation`, written as the same equivalence the DDL uses so
     // neither direction can be relaxed without the other: an operation with no
@@ -864,21 +864,21 @@ export class TransitionEffect {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
         isOperation
-          ? `A ${props.effectType} must name the assertion it acts on`
-          : `A ${props.effectType} must not point at another assertion`,
+          ? `A ${props.operation} must name the assertion it acts on`
+          : `A ${props.operation} must not point at another assertion`,
       );
     }
 
     // `target_kind_complete`. Without it the allowlist below would be vacuously
     // true for a row whose target kind went unstated — the exact way C-1 hid.
-    if ((props.targetAssertionId === null) !== (props.targetEffectType === null)) {
+    if ((props.targetAssertionId === null) !== (props.targetOperation === null)) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "A target assertion and its effect type must be present together",
+        "A target assertion and its assertion type must be present together",
       );
     }
 
-    if (props.targetAssertionId === null || props.targetEffectType === null) {
+    if (props.targetAssertionId === null || props.targetOperation === null) {
       return;
     }
 
@@ -894,7 +894,7 @@ export class TransitionEffect {
     if (props.targetAssertionId === props.id) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "An effect cannot terminate or retract itself",
+        "An assertion cannot terminate or retract itself",
       );
     }
 
@@ -905,14 +905,14 @@ export class TransitionEffect {
     // would be double negation and would force retractions to be resolved
     // transitively.
     const allowed =
-      props.effectType === "terminate"
+      props.operation === "terminate"
         ? TERMINATE_TARGET_TYPES
         : RETRACT_TARGET_TYPES;
 
-    if (!allowed.includes(props.targetEffectType)) {
+    if (!allowed.includes(props.targetOperation)) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `A ${props.effectType} is not defined over a ${props.targetEffectType} row`,
+        `A ${props.operation} is not defined over a ${props.targetOperation} row`,
       );
     }
   }
@@ -921,12 +921,12 @@ export class TransitionEffect {
   // variant's payload would put a second copy of the claim in the log, free to
   // disagree with the row it acts on.
   private static validateAssertionOperation(
-    props: TransitionEffectProperties,
+    props: AssertionProperties,
   ): void {
     if (props.fieldPath !== null || props.newValue !== null) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `A ${props.effectType} must not carry attribute change fields`,
+        `A ${props.operation} must not carry attribute change fields`,
       );
     }
 
@@ -937,18 +937,18 @@ export class TransitionEffect {
     ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `A ${props.effectType} must not restate the fact it acts on`,
+        `A ${props.operation} must not restate the fact it acts on`,
       );
     }
   }
 
   private static validateAttributeChange(
-    props: TransitionEffectProperties,
+    props: AssertionProperties,
   ): void {
     if (props.fieldPath === null || props.fieldPath.trim() === "") {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Attribute change effect requires a field path",
+        "Attribute change assertion requires a field path",
       );
     }
 
@@ -959,7 +959,7 @@ export class TransitionEffect {
     if (props.newValue === null || props.newValue.trim() === "") {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Attribute change effect requires a new value",
+        "Attribute change assertion requires a new value",
       );
     }
 
@@ -970,32 +970,32 @@ export class TransitionEffect {
     ) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Attribute change effect must not carry relationship fields",
+        "Attribute change assertion must not carry relationship fields",
       );
     }
   }
 
   private static validateRelationshipChange(
-    props: TransitionEffectProperties,
+    props: AssertionProperties,
   ): void {
     if (props.fieldPath !== null || props.newValue !== null) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Relationship effect must not carry attribute change fields",
+        "Relationship assertion must not carry attribute change fields",
       );
     }
 
     if (props.relationshipType === null) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Relationship effect requires a relationship type",
+        "Relationship assertion requires a relationship type",
       );
     }
 
     if (props.relatedEntityType === null || props.relatedEntityId === null) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Relationship effect requires a related entity",
+        "Relationship assertion requires a related entity",
       );
     }
 
@@ -1017,7 +1017,7 @@ export class TransitionEffect {
     // file, and only the two that need no definition row are still checked here.
     // Every check below has a twin in `../support/ContentRelationship.ts`, and
     // the twin is what actually guards the table; this pair only moves the
-    // rejection from apply time to declare time — an effect that create() would
+    // rejection from apply time to declare time — an assertion that create() would
     // refuse is a promise the system already knows it cannot keep.
     //
     // Rules 1 and 3 moved to create() in step 4 for the reason spelled out in
@@ -1049,7 +1049,7 @@ export class TransitionEffect {
   }
 
   private static validateAppliedState(
-    props: TransitionEffectProperties,
+    props: AssertionProperties,
   ): void {
     if (props.contentRevisionId !== null && props.contentRevisionId.trim() === "") {
       throw new DomainError(
@@ -1058,22 +1058,22 @@ export class TransitionEffect {
       );
     }
 
-    // A pending effect has produced nothing yet, so it cannot point at a
+    // A pending assertion has produced nothing yet, so it cannot point at a
     // revision. This is the pairing the soft pointer needs most: the column has
     // no FK (`16:105,117` — ContentRevision stays frozen and gains no back-ref),
     // so nothing below this layer will ever notice an incoherent pair.
     if (props.appliedAt === null && props.contentRevisionId !== null) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Pending transition effect must not reference a content revision",
+        "Pending transition assertion must not reference a content revision",
       );
     }
 
-    if (props.effectType !== "attribute_change") {
+    if (props.operation !== "attribute_change") {
       if (props.contentRevisionId !== null) {
         throw new DomainError(
           DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-          "Relationship effect must not reference a content revision",
+          "Relationship assertion must not reference a content revision",
         );
       }
 
@@ -1088,7 +1088,7 @@ export class TransitionEffect {
     if (props.appliedAt !== null && props.contentRevisionId === null) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        "Applied attribute change effect requires a content revision id",
+        "Applied attribute change assertion requires a content revision id",
       );
     }
   }
