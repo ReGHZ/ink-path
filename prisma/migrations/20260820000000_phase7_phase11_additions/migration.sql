@@ -1,19 +1,19 @@
--- Peleburan D-3 (2026-08-20) — SATU migrasi aditif menggantikan DELAPAN.
+-- D-3 squash (2026-08-20) — ONE additive migration replacing EIGHT.
 --
--- Tiga migrasi baseline (`init_extensions`, `init_schema`, `init_constraints`)
--- SENGAJA TIDAK DISENTUH: mereka bukti asal-usul schema 6-domain, dan
--- `init_constraints` memegang 23 CHECK + 13 index parsial yang tidak bisa
--- diturunkan Prisma dari `schema.prisma`. Yang dilebur hanya yang datang
--- SESUDAHNYA, dan kedelapan itu terbukti MURNI ADITIF: nol `DROP COLUMN`, nol
--- rename, satu-satunya pelemahan adalah `DROP NOT NULL` di
--- `transition_effects.narrative_transition_id`.
+-- The three baseline migrations (`init_extensions`, `init_schema`,
+-- `init_constraints`) are DELIBERATELY UNTOUCHED: they are the evidence log of
+-- where the 6-domain schema came from, and `init_constraints` holds 23 CHECKs +
+-- 13 partial indexes that Prisma cannot derive from `schema.prisma`. Only what
+-- came AFTER them is squashed, and those eight are provably PURELY ADDITIVE:
+-- zero `DROP COLUMN`, zero renames, the single weakening being `DROP NOT NULL`
+-- on `transition_effects.narrative_transition_id`.
 --
--- Karena itu peleburannya VERBATIM, bukan di-regenerate. `prisma migrate diff`
--- tidak dipakai dengan sengaja: ia tidak memodelkan CHECK constraint maupun
--- index parsial, jadi meregenerate baseline dari `schema.prisma` akan
--- MENGHILANGKAN 32 CHECK dan 15 index parsial tanpa satu pun error.
+-- That is why the squash is VERBATIM rather than regenerated. `prisma migrate
+-- diff` is deliberately not used: it models neither CHECK constraints nor
+-- partial indexes, so regenerating a baseline from `schema.prisma` would DROP
+-- 32 CHECKs and 15 partial indexes without a single error.
 --
--- Yang digabung, dalam urutan aslinya:
+-- What was merged, in its original order:
 --   1. 20260716053704_add_version_columns
 --   2. 20260803065140_add_outbox_status_locked_at_index
 --   3. 20260818023920_add_relationship_definitions
@@ -23,9 +23,10 @@
 --   7. 20260818140000_relationship_projection_source_assertion
 --   8. 20260819120000_evaluation_edge_provenance_and_predicate_fk
 --
--- Bukti kesetaraan: `pg_dump --schema-only` atas DB hasil 11 migrasi lama vs DB
--- hasil 4 migrasi ini dibandingkan baris-per-baris (nol selisih). Preseden D-3
--- + izin menulis ulang migrasi pre-deploy: `06-migration-planning/01`.
+-- Equivalence evidence: `pg_dump --schema-only` over the database built from the
+-- 11 old migrations versus the one built from these 4, compared line by line
+-- (zero difference). The D-3 precedent and the pre-deploy licence to rewrite
+-- migrations: `06-migration-planning/01`.
 
 
 -- ============================================================
@@ -473,28 +474,30 @@ ALTER TABLE "evaluation_edges" ADD CONSTRAINT "evaluation_edges_project_id_relat
 
 
 -- ============================================================
--- Rename terminologi: transition effect → ASSERTION (2026-08-20)
+-- Terminology rename: transition effect -> ASSERTION (2026-08-20)
 -- ============================================================
 --
--- Tabelnya lahir sebagai "efek transisi" dan sekarang bukan itu lagi: sejak
--- langkah 4b ia log assertion, dan barisnya bisa lahir dari CRUD tanpa induk
--- transisi (`narrative_transition_id` nullable di migrasi ini). Kolom yang
--- MENUNJUK-nya sudah lebih dulu bernama benar (`source_assertion_id` di
--- `content_relationships` dan `evaluation_edges`, relasi `AssertionTarget`),
--- jadi nama tabel + enum-lah yang ketinggalan.
+-- The table was born as "transition effects" and is not that any more: since
+-- step 4b it is the assertion log, and a row can be born from CRUD with no
+-- parent transition (`narrative_transition_id` became nullable in this very
+-- migration). The columns POINTING at it were already named correctly
+-- (`source_assertion_id` on `content_relationships` and `evaluation_edges`, the
+-- `AssertionTarget` relation), so it was the table and enum name lagging behind.
 --
--- Rename ditempel di sini, BUKAN dengan mengubah `init_schema`: tiga migrasi
--- baseline dipertahankan sebagai bukti asal-usul (keputusan user 2026-08-20).
+-- The rename is appended HERE rather than applied by editing `init_schema`: the
+-- three baseline migrations are kept as the evidence of where the schema came
+-- from (user decision, 2026-08-20).
 --
--- Postgres TIDAK ikut mengganti nama constraint/index saat tabel di-rename,
--- jadi kesebelas constraint + kesepuluh index ikut di-rename satu-satu. Kalau
--- dilewat, `pg_dump` akan menampilkan nama lama di tabel bernama baru — dan
--- nama itulah yang muncul di pesan error Postgres saat ada yang melanggarnya.
+-- Postgres does NOT rename constraints or indexes along with a table, so all
+-- eleven constraints and ten indexes are renamed one by one. Skipped, `pg_dump`
+-- would show the old names on a table with a new one — and those are the names
+-- that appear in Postgres error messages when something violates them.
 --
--- Yang SENGAJA tidak ikut: routing key `narrative.effect.*` (kontrak event,
--- punya test kontrak sendiri), nilai enum (`attribute_change`,
--- `relationship_add`, `relationship_remove`, `terminate`, `retract` — itu
--- semantik, bukan istilah), dan tabel `narrative_transitions` (ia memang transisi).
+-- DELIBERATELY not renamed: the routing key `narrative.effect.*` (an event
+-- contract with its own contract test), the enum VALUES (`attribute_change`,
+-- `relationship_add`, `relationship_remove`, `terminate`, `retract` — semantics,
+-- not terminology), and the `narrative_transitions` table (it really is a
+-- transition).
 
 ALTER TABLE "transition_effects" RENAME TO "assertions";
 ALTER TYPE "TransitionEffectType" RENAME TO "AssertionOperation";

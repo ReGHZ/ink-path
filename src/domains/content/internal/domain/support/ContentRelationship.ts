@@ -1,6 +1,7 @@
 import {
   canonicalizeEndpoints,
   isDedicatedHierarchyPair,
+  unaryPredicateHasNoLogHomeYet,
   isPairAllowedBy,
   type RelationEndpoint,
   type RelationshipDefinition,
@@ -127,7 +128,7 @@ export class ContentRelationship {
     if (!props.definition.objectRequired) {
       throw new DomainError(
         DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-        `Predicate ${props.relationType} takes no object and cannot be stored as a relationship`,
+        unaryPredicateHasNoLogHomeYet(props.relationType),
       );
     }
 

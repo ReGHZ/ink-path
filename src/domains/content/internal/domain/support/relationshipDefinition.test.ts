@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   canonicalizeEndpoints,
+  draftRelationshipDefinition,
+  symbolFromLabel,
   isDedicatedHierarchyPair,
   isPairAllowedBy,
 } from "./relationshipDefinition.js";
@@ -530,5 +532,271 @@ describe("relationship definitions — canonicalisation (§7.4)", () => {
       source: map,
       target: scene,
     });
+  });
+});
+
+describe("draftRelationshipDefinition", () => {
+  const binary = {
+    predicate: "mentors",
+    directionality: "directional" as const,
+    objectRequired: true,
+    inverseLabel: "mentored_by",
+    displayLabel: "mentors",
+    inverseDisplayLabel: "mentored by",
+    signatures: [
+      {
+        subjectEntityType: "character" as ContentEntityType,
+        objectEntityType: "character" as ContentEntityType,
+      },
+    ],
+  };
+
+  it("accepts a binary predicate and trims what the author typed", () => {
+    const draft = draftRelationshipDefinition({
+      ...binary,
+      predicate: "  mentors  ",
+      inverseLabel: "  mentored_by  ",
+      displayLabel: "  mentors  ",
+      inverseDisplayLabel: "  mentored by  ",
+    });
+
+    expect(draft.predicate).toBe("mentors");
+    expect(draft.inverseLabel).toBe("mentored_by");
+    expect(draft.displayLabel).toBe("mentors");
+    expect(draft.inverseDisplayLabel).toBe("mentored by");
+    expect(draft.signatures).toEqual(binary.signatures);
+  });
+
+  it("accepts a unary predicate — the kind the rule engine's canonical example needs", () => {
+    const draft = draftRelationshipDefinition({
+      predicate: "dead",
+      directionality: "directional",
+      objectRequired: false,
+      inverseLabel: "dead",
+      displayLabel: "mati",
+      inverseDisplayLabel: "mati",
+      signatures: [
+        { subjectEntityType: "character", objectEntityType: null },
+      ],
+    });
+
+    expect(draft.objectRequired).toBe(false);
+    expect(draft.signatures[0]?.objectEntityType).toBeNull();
+  });
+
+  it.each([
+    ["Mentors", "capital"],
+    ["9lives", "leading digit"],
+    ["mentors-of", "hyphen"],
+    ["mentors of", "space"],
+    ["", "empty"],
+  ])("refuses the predicate name %s (%s)", (predicate) => {
+    expect(() =>
+      draftRelationshipDefinition({ ...binary, predicate }),
+    ).toThrow(/lower snake_case/);
+  });
+
+  it("refuses a blank inverse label instead of inventing one", () => {
+    expect(() =>
+      draftRelationshipDefinition({ ...binary, inverseLabel: "   " }),
+    ).toThrow(/inverse label/);
+  });
+
+  it("refuses a definition with no signature", () => {
+    expect(() =>
+      draftRelationshipDefinition({ ...binary, signatures: [] }),
+    ).toThrow(/at least one signature/);
+  });
+
+  it("refuses an object-less signature on a predicate that takes an object", () => {
+    expect(() =>
+      draftRelationshipDefinition({
+        ...binary,
+        signatures: [
+          { subjectEntityType: "character", objectEntityType: null },
+        ],
+      }),
+    ).toThrow(/every signature needs one/);
+  });
+
+  it("refuses an object on a predicate that takes none", () => {
+    expect(() =>
+      draftRelationshipDefinition({
+        ...binary,
+        objectRequired: false,
+        signatures: [
+          { subjectEntityType: "character", objectEntityType: "faction" },
+        ],
+      }),
+    ).toThrow(/no signature may name one/);
+  });
+
+  it.each([
+    ["layer", "layer"],
+    ["map", "map"],
+    ["chapter", "scene"],
+    ["scene", "chapter"],
+  ])(
+    "refuses the structural hierarchy pair %s/%s at DEFINE time, not only at assert time",
+    (subjectEntityType, objectEntityType) => {
+      expect(() =>
+        draftRelationshipDefinition({
+          ...binary,
+          signatures: [
+            {
+              subjectEntityType: subjectEntityType as ContentEntityType,
+              objectEntityType: objectEntityType as ContentEntityType,
+            },
+          ],
+        }),
+      ).toThrow(/structural hierarchy/);
+    },
+  );
+
+  it("refuses the same signature twice", () => {
+    expect(() =>
+      draftRelationshipDefinition({
+        ...binary,
+        signatures: [
+          { subjectEntityType: "character", objectEntityType: "faction" },
+          { subjectEntityType: "character", objectEntityType: "faction" },
+        ],
+      }),
+    ).toThrow(/declared twice/);
+  });
+
+  it("refuses the mirror of a non-directional signature — one meaning, one row", () => {
+    expect(() =>
+      draftRelationshipDefinition({
+        ...binary,
+        directionality: "non_directional",
+        signatures: [
+          { subjectEntityType: "character", objectEntityType: "faction" },
+          { subjectEntityType: "faction", objectEntityType: "character" },
+        ],
+      }),
+    ).toThrow(/already covered by its mirror/);
+  });
+
+  it("KEEPS both directions when the predicate IS directional", () => {
+    const draft = draftRelationshipDefinition({
+      ...binary,
+      signatures: [
+        { subjectEntityType: "character", objectEntityType: "faction" },
+        { subjectEntityType: "faction", objectEntityType: "character" },
+      ],
+    });
+
+    expect(draft.signatures).toHaveLength(2);
+  });
+});
+
+describe("symbolFromLabel", () => {
+  it.each([
+    ["mentors", "mentors"],
+    ["Mentors", "mentors"],
+    ["menikah dengan", "menikah_dengan"],
+    ["  member   of  ", "member_of"],
+    ["ally-of", "ally_of"],
+    ["café patron", "cafe_patron"],
+    ["Zoë's ally", "zoe_s_ally"],
+  ])("derives %s into the symbol %s", (label, expected) => {
+    expect(symbolFromLabel(label)).toBe(expected);
+  });
+
+  it.each([
+    ["結婚", "Japanese"],
+    ["الزواج", "Arabic"],
+    ["брак", "Cyrillic"],
+    ["結婚 の 相手", "Japanese with spaces"],
+    ["   ", "blank"],
+    ["1st_wife", "leading digit"],
+  ])(
+    "returns null for %s (%s) instead of refusing the author's word",
+    (label) => {
+      expect(symbolFromLabel(label)).toBeNull();
+    },
+  );
+
+  it("never returns a symbol the database CHECK would reject", () => {
+    const labels = [
+      "mentors",
+      "menikah dengan",
+      "café patron",
+      "A  B",
+      "__x__",
+      "x1",
+    ];
+
+    for (const label of labels) {
+      const symbol = symbolFromLabel(label);
+
+      if (symbol !== null) {
+        expect(symbol).toMatch(/^[a-z][a-z0-9_]*$/);
+      }
+    }
+  });
+});
+
+describe("draftRelationshipDefinition — display text", () => {
+  const base = {
+    predicate: "mentors",
+    directionality: "directional" as const,
+    objectRequired: true,
+    inverseLabel: "mentored_by",
+    displayLabel: "mentors",
+    inverseDisplayLabel: "mentored by",
+    signatures: [
+      {
+        subjectEntityType: "character" as ContentEntityType,
+        objectEntityType: "character" as ContentEntityType,
+      },
+    ],
+  };
+
+  it.each([
+    ["結婚", "した相手"],
+    ["брак", "супруг"],
+    ["menikah dengan", "pasangan dari"],
+  ])(
+    "accepts display text in any script (%s / %s) — the symbol stays ASCII",
+    (displayLabel, inverseDisplayLabel) => {
+      const draft = draftRelationshipDefinition({
+        ...base,
+        displayLabel,
+        inverseDisplayLabel,
+      });
+
+      expect(draft.displayLabel).toBe(displayLabel);
+      expect(draft.inverseDisplayLabel).toBe(inverseDisplayLabel);
+      expect(draft.predicate).toBe("mentors");
+    },
+  );
+
+  it.each([
+    ["displayLabel", "display label"],
+    ["inverseDisplayLabel", "inverse display label"],
+  ])("refuses a blank %s", (field, message) => {
+    expect(() =>
+      draftRelationshipDefinition({ ...base, [field]: "   " }),
+    ).toThrow(new RegExp(message));
+  });
+});
+
+describe("symbolFromLabel — the generated-symbol namespace is reserved", () => {
+  it.each(["p_1a2b3c4d", "p_0", "p_abcdefabcdef"])(
+    "refuses to derive %s from a label, so a generated symbol cannot be taken",
+    (label) => {
+      expect(symbolFromLabel(label)).toBeNull();
+    },
+  );
+
+  it("still derives labels that merely START with p", () => {
+    expect(symbolFromLabel("patron of")).toBe("patron_of");
+    expect(symbolFromLabel("p_zzz")).toBe("p_zzz");
+  });
+
+  it("collapses punctuation, so two labels CAN share one symbol — a real conflict", () => {
+    expect(symbolFromLabel("mati (fisik)")).toBe(symbolFromLabel("mati fisik"));
   });
 });

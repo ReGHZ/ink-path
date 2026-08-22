@@ -40,6 +40,13 @@ export type RelationshipDefinitionSignatureSeed = {
   objectEntityType: ContentEntityType | null;
 };
 
+// Default display text is DERIVED from the symbol (`member_of` -> "member of"),
+// neither hand-written nineteen times nor translated: these nineteen rows are a
+// default seed, and the real wording is the author's decision, not this repo's.
+export function displayLabelFromSymbol(symbol: string): string {
+  return symbol.replaceAll('_', " ");
+}
+
 export type RelationshipDefinitionSeed = {
   predicate: string;
   objectRequired: boolean;

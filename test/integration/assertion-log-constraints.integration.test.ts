@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
+import { displayLabelFromSymbol } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
 import { NarrativeTransition } from "../../src/domains/content/internal/domain/transition/NarrativeTransition.js";
 import { PrismaNarrativeTransitionRepository } from "../../src/domains/content/internal/infrastructure/transition/PrismaNarrativeTransitionRepository.js";
 import { Project } from "../../src/domains/project/internal/domain/Project.js";
@@ -117,6 +118,8 @@ beforeEach(async () => {
       objectRequired: false,
       directionality: "directional",
       inverseLabel: "dead",
+      displayLabel: displayLabelFromSymbol("dead"),
+      inverseDisplayLabel: displayLabelFromSymbol("dead"),
       signatures: {
         create: [
           { subjectEntityType: "character", objectEntityType: null },
@@ -133,6 +136,8 @@ beforeEach(async () => {
       objectRequired: false,
       directionality: "directional",
       inverseLabel: "dead",
+      displayLabel: displayLabelFromSymbol("dead"),
+      inverseDisplayLabel: displayLabelFromSymbol("dead"),
     },
   });
   otherProjectDefinitionId = neighbour.id;

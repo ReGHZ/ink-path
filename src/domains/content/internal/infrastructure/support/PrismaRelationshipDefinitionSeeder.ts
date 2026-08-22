@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { RELATIONSHIP_DEFINITION_SEED } from "../../domain/support/relationshipDefinitionSeed.js";
+import {
+  displayLabelFromSymbol,
+  RELATIONSHIP_DEFINITION_SEED,
+} from "../../domain/support/relationshipDefinitionSeed.js";
 
 import type { PrismaClient } from "../../../../../generated/prisma/client.js";
 
@@ -69,6 +72,9 @@ export async function seedRelationshipDefinitions(
       objectRequired: definition.objectRequired,
       directionality: definition.directionality,
       inverseLabel: definition.inverseLabel,
+      // Derived from the symbol, not translated — the author decides the wording.
+      displayLabel: displayLabelFromSymbol(definition.predicate),
+      inverseDisplayLabel: displayLabelFromSymbol(definition.inverseLabel),
       transitive: definition.transitive,
     })),
     skipDuplicates: true,

@@ -3,6 +3,7 @@ import { createCharacterRoutes } from "../internal/interface/story/characterRout
 import { createFactionRoutes } from "../internal/interface/story/factionRoutes.js";
 import { createPlotRoutes } from "../internal/interface/story/plotRoutes.js";
 import { createSceneRoutes } from "../internal/interface/story/sceneRoutes.js";
+import { createRelationshipDefinitionRoutes } from "../internal/interface/support/relationshipDefinitionRoutes.js";
 import { createRelationshipRoutes } from "../internal/interface/support/relationshipRoutes.js";
 import { createNarrativeTransitionRoutes } from "../internal/interface/transition/narrativeTransitionRoutes.js";
 import { createEventRoutes } from "../internal/interface/world/eventRoutes.js";
@@ -86,6 +87,15 @@ export function mountContentModule(
   // (`/:projectId/characters/:characterId/relationships` vs
   // `/:projectId/characters/:characterId`), so Hono distinguishes them by shape,
   // not by registration order. Nothing here shadows anything above it.
+  router.route(
+    "/",
+    createRelationshipDefinitionRoutes({
+      relationshipDefinitionController: container.resolve(
+        "relationshipDefinitionController",
+      ),
+    }),
+  );
+
   router.route(
     "/",
     createRelationshipRoutes({

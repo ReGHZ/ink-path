@@ -1,6 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { RELATIONSHIP_DEFINITION_SEED } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
+import {
+  displayLabelFromSymbol,
+  RELATIONSHIP_DEFINITION_SEED,
+} from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
 import {
   seedRelationshipDefinitions,
   type RelationshipDefinitionSeedResult,
@@ -73,6 +76,8 @@ async function seedOneDefinition(predicate: string): Promise<string> {
       objectRequired: true,
       directionality: "directional",
       inverseLabel: `${predicate}_by`,
+      displayLabel: displayLabelFromSymbol(predicate),
+      inverseDisplayLabel: displayLabelFromSymbol(`${predicate}_by`),
     },
   });
 
@@ -370,6 +375,8 @@ describe("relationship definition seeder", () => {
             objectRequired: true,
             directionality: "directional",
             inverseLabel: "x",
+            displayLabel: "x",
+            inverseDisplayLabel: "x",
           },
         }),
       ).rejects.toThrow(/relationship_definitions_predicate_format/);
@@ -451,6 +458,8 @@ describe("relationship definition seeder", () => {
             objectRequired: true,
             directionality: "directional",
             inverseLabel: "x",
+            displayLabel: "x",
+            inverseDisplayLabel: "x",
             subclassOfId: parentId,
           },
         }),
@@ -469,6 +478,8 @@ describe("relationship definition seeder", () => {
             objectRequired: true,
             directionality: "directional",
             inverseLabel: "x",
+            displayLabel: "x",
+            inverseDisplayLabel: "x",
             subclassOfId: parentId,
           },
         }),

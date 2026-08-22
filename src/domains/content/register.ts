@@ -21,6 +21,10 @@ import {
   type SceneService,
 } from "./internal/application/story/SceneService.js";
 import {
+  createRelationshipDefinitionService,
+  type RelationshipDefinitionService,
+} from "./internal/application/support/RelationshipDefinitionService.js";
+import {
   createRelationshipService,
   type RelationshipService,
 } from "./internal/application/support/RelationshipService.js";
@@ -59,6 +63,7 @@ import { createPlotUnitOfWork } from "./internal/infrastructure/story/PrismaPlot
 import { createSceneRepository } from "./internal/infrastructure/story/PrismaSceneRepository.js";
 import { createSceneUnitOfWork } from "./internal/infrastructure/story/PrismaSceneUnitOfWork.js";
 import { createContentRelationshipRepository } from "./internal/infrastructure/support/PrismaContentRelationshipRepository.js";
+import { createRelationshipDefinitionCatalog } from "./internal/infrastructure/support/PrismaRelationshipDefinitionCatalog.js";
 import { createRelationshipDefinitionReader } from "./internal/infrastructure/support/PrismaRelationshipDefinitionReader.js";
 import { createAssertionRepository } from "./internal/infrastructure/transition/PrismaAssertionRepository.js";
 import { createNarrativeTransitionRepository } from "./internal/infrastructure/transition/PrismaNarrativeTransitionRepository.js";
@@ -95,6 +100,10 @@ import {
   type RelationshipController,
 } from "./internal/interface/support/RelationshipController.js";
 import {
+  createRelationshipDefinitionController,
+  type RelationshipDefinitionController,
+} from "./internal/interface/support/RelationshipDefinitionController.js";
+import {
   createNarrativeTransitionController,
   type NarrativeTransitionController,
 } from "./internal/interface/transition/NarrativeTransitionController.js";
@@ -118,6 +127,7 @@ import {
 import type { ContentEntityLocator } from "./internal/application/ports/ContentEntityLocator.js";
 import type { ContentUnitOfWork } from "./internal/application/ports/ContentUnitOfWork.js";
 import type { NarrativeTransitionUnitOfWork } from "./internal/application/ports/NarrativeTransitionUnitOfWork.js";
+import type { RelationshipDefinitionCatalog } from "./internal/application/ports/RelationshipDefinitionCatalog.js";
 import type { RelationshipDefinitionReader } from "./internal/application/ports/RelationshipDefinitionReader.js";
 import type { RelationshipUnitOfWork } from "./internal/application/ports/RelationshipUnitOfWork.js";
 import type { ChapterRepository } from "./internal/domain/story/ChapterRepository.js";
@@ -198,6 +208,12 @@ export type ContentDomainCradle = {
   relationshipUnitOfWork: RelationshipUnitOfWork;
   relationshipService: RelationshipService;
   relationshipController: RelationshipController;
+  // WRITE side of the vocabulary (slice 2026-08-20): a port separate from the
+  // reader because the audience differs — the reader serves the machinery, the
+  // catalog serves the author's vocabulary screen.
+  relationshipDefinitionCatalog: RelationshipDefinitionCatalog;
+  relationshipDefinitionService: RelationshipDefinitionService;
+  relationshipDefinitionController: RelationshipDefinitionController;
   // Phase 7.6-7.7. `narrativeTransitionUnitOfWork` has no
   // `ContentUnitOfWork<T>` twin above it because it is not generic over one
   // entity repository: applying an assertion touches whichever of the nine the
@@ -281,6 +297,15 @@ export function registerContentDomain(
       createRelationshipDefinitionReader,
     ).singleton(),
     relationshipUnitOfWork: asFunction(createRelationshipUnitOfWork).singleton(),
+    relationshipDefinitionCatalog: asFunction(
+      createRelationshipDefinitionCatalog,
+    ).singleton(),
+    relationshipDefinitionService: asFunction(
+      createRelationshipDefinitionService,
+    ).singleton(),
+    relationshipDefinitionController: asFunction(
+      createRelationshipDefinitionController,
+    ).singleton(),
     contentRelationshipRepository: asFunction(
       createContentRelationshipRepository,
     ).singleton(),

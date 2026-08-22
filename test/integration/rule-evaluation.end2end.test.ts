@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
+import { displayLabelFromSymbol } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
 import { seedRelationshipDefinitions } from "../../src/domains/content/internal/infrastructure/support/PrismaRelationshipDefinitionSeeder.js";
 import { createAppContainer } from "../../src/infrastructure/container.js";
 import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
@@ -180,6 +181,8 @@ async function declarePredicate(
       objectRequired,
       directionality: "directional",
       inverseLabel: `${predicate}_by`,
+      displayLabel: displayLabelFromSymbol(predicate),
+      inverseDisplayLabel: displayLabelFromSymbol(`${predicate}_by`),
       signatures: {
         create: [
           {

@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
+import { displayLabelFromSymbol } from "../../src/domains/content/internal/domain/support/relationshipDefinitionSeed.js";
 import { createAppContainer } from "../../src/infrastructure/container.js";
 import { deleteEvaluationFold } from "../helpers/foldCleanup.js";
 import { seedProjectVocabulary } from "../helpers/relationshipVocabulary.js";
@@ -1067,6 +1068,8 @@ describe("Content relationship end-to-end", () => {
           objectRequired: true,
           directionality: "directional",
           inverseLabel: "haunted_by",
+          displayLabel: displayLabelFromSymbol("haunts"),
+          inverseDisplayLabel: displayLabelFromSymbol("haunted_by"),
           signatures: {
             create: [
               { subjectEntityType: "character", objectEntityType: "character" },

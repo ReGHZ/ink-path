@@ -264,6 +264,10 @@ describe("Project-scoped route protection", () => {
         "narrativeTransitionRoutes (nested list)",
         "/scenes/:sceneId/narrative-transitions",
       ],
+      // Project vocabulary (slice 2026-08-20). One flat collection, one marker:
+      // POST and GET share the same path, so there is no second shape that could
+      // keep a lone marker green while half the router is unmounted.
+      ["relationshipDefinitionRoutes", "/relationship-definitions"],
       // First route of the Validation domain. One surface, one marker — unlike
       // the pairs above, this router owns a single collection with no nested
       // form that a lone fragment could keep green.

@@ -14,6 +14,7 @@ import {
 } from "../support/ContentRevision.js";
 import {
   isDedicatedHierarchyPair,
+  unaryPredicateHasNoLogHomeYet,
   isPairAllowedBy,
   type RelationshipDefinition,
 } from "../support/relationshipDefinition.js";
@@ -246,7 +247,7 @@ export class Assertion {
       if (!props.definition.objectRequired) {
         throw new DomainError(
           DomainErrorCode.DOMAIN_VALIDATION_FAILED,
-          `Predicate ${props.relationshipType} takes no object and cannot be stored as a relationship`,
+          unaryPredicateHasNoLogHomeYet(props.relationshipType),
         );
       }
 

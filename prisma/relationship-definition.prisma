@@ -58,6 +58,13 @@ model RelationshipDefinition {
   // all 19 rows, matching `inverseLabelOf()` in the current registry.
   inverseLabel String @map("inverse_label")
 
+  // Display text, SPLIT from the symbols above (migration
+  // `20260820100000_relationship_definition_display_labels`). Script-free — the
+  // Phase 5 precedent: this system never assumes a language. Editable without
+  // touching a single fact, because no foreign key points at it.
+  displayLabel        String @map("display_label")
+  inverseDisplayLabel String @map("inverse_display_label")
+
   // Formal property applied by the ENGINE when matching an atom, never by an
   // author-written derivation rule (`07_validation_ast_schema.md` §2): with
   // `transitive = true`, `master_of(A, C)` matches through the closure of
@@ -94,6 +101,16 @@ model RelationshipDefinition {
   // exists at all: two folds over one log, one vocabulary.
   evaluationEdges EvaluationEdge[]
 
+  // Uniqueness has TWO owners, and only one of them fits here.
+  //   * the SYMBOL, below — machine identity, what every fact names.
+  //   * the LABEL, in migration
+  //     `20260822090000_relationship_definition_display_label_unique`:
+  //     `(project_id, lower(normalize(btrim(display_label), NFKC)))`, declared
+  //     there because Prisma has no syntax for an index over an EXPRESSION.
+  // The symbol alone is NOT enough: it is derived from the label, and for a
+  // label no ASCII survives the derivation mints an opaque `p_xxx` that is
+  // unique by construction — so `結婚` typed twice used to produce two rows that
+  // read identically on screen (gate B8-2).
   @@unique([projectId, predicate])
   @@unique([id, projectId])
   @@index([projectId])
